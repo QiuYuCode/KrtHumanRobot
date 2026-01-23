@@ -3,5 +3,5 @@ name = "krthumanrobot"
 version = "0.1.0"
 description = "人形机器人功能包"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.10"
 dependencies = []
