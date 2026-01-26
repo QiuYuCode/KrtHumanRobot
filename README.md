@@ -13,7 +13,12 @@
 原因是通过 jsetson 安装的 sdk 版本低于 realsense-ros 最新分支要求的 2.57
 系统默认的 sdk 版本是 2.56.4 
 
+```bash
+git submodule add -b 4.56.4 https://github.com/realsenseai/realsense-ros.git
+```
+
 ### 参考资料
 
-1. [RealSense ros 代码](https://github.com/realsenseai/realsense-ros)
-2. [Jetson 安装 realsense sdk](https://github.com/realsenseai/librealsense/blob/master/doc/installation_jetson.md)
+1. [RealSense ros 最新分支代码](https://github.com/realsenseai/realsense-ros)
+2. [RealSense ros 4.56.4分支代码](https://github.com/realsenseai/realsense-ros/tree/r/4.56.4)
+3. [Jetson 安装 realsense sdk](https://github.com/realsenseai/librealsense/blob/master/doc/installation_jetson.md)
