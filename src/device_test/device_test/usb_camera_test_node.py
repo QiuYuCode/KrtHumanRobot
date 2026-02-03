@@ -46,6 +46,9 @@ class USBCameraTestNode(Node):
         self.cap = None
         self._init_camera()
 
+        # 退出标志
+        self.should_exit = False
+        
         # 创建定时器
         timer_period = 1.0 / self.fps
         self.timer = self.create_timer(timer_period, self.timer_callback)
@@ -74,13 +77,17 @@ class USBCameraTestNode(Node):
 
     def _init_camera(self):
         """初始化摄像头"""
-        # 使用 V4L2 后端而非 GStreamer
-        self.cap = cv2.VideoCapture(self.device_id, cv2.CAP_V4L2)
+        # 使用设备路径
+        device_path = f'/dev/video{self.device_id}'
+        self.get_logger().info(f'尝试打开: {device_path}')
+        
+        self.cap = cv2.VideoCapture(device_path)
         if not self.cap.isOpened():
-            self.get_logger().error(f'无法打开摄像头 /dev/video{self.device_id}')
+            self.get_logger().error(f'无法打开摄像头 {device_path}')
+            self.get_logger().error('请检查: 1) 设备是否存在 2) 是否被其他程序占用 3) 用户是否在video组')
             return False
 
-        # 设置 MJPG 格式（大多数USB摄像头支持）
+        # 设置 MJPG 格式（大多数USB摄像头支持，提高帧率）
         fourcc = cv2.VideoWriter_fourcc(*'MJPG')
         self.cap.set(cv2.CAP_PROP_FOURCC, fourcc)
         
@@ -105,6 +112,9 @@ class USBCameraTestNode(Node):
 
     def timer_callback(self):
         """定时器回调，读取并发布图像"""
+        if self.should_exit:
+            return
+            
         if self.cap is None or not self.cap.isOpened():
             return
 
@@ -140,7 +150,13 @@ class USBCameraTestNode(Node):
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 self.get_logger().info('用户请求退出')
-                rclpy.shutdown()
+                self.should_exit = True
+                self.timer.cancel()
+                # 清理资源
+                if self.cap is not None:
+                    self.cap.release()
+                cv2.destroyAllWindows()
+                raise SystemExit(0)
 
     def destroy_node(self):
         """清理资源"""
@@ -157,11 +173,14 @@ def main(args=None):
 
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass  # 忽略已经shutdown的情况
 
 
 if __name__ == '__main__':

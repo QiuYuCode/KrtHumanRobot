@@ -68,6 +68,9 @@ class RealSenseTestNode(Node):
         self.ir_cap = None
         self._init_cameras()
 
+        # 退出标志
+        self.should_exit = False
+        
         # 创建定时器
         timer_period = 1.0 / self.fps
         self.timer = self.create_timer(timer_period, self.timer_callback)
@@ -143,6 +146,9 @@ class RealSenseTestNode(Node):
 
     def timer_callback(self):
         """定时器回调，读取并发布图像"""
+        if self.should_exit:
+            return
+            
         frames = []
         
         # RGB
@@ -237,7 +243,16 @@ class RealSenseTestNode(Node):
             key = cv2.waitKey(1) & 0xFF
             if key == ord('q'):
                 self.get_logger().info('用户请求退出')
-                rclpy.shutdown()
+                self.should_exit = True
+                self.timer.cancel()
+                if self.rgb_cap is not None:
+                    self.rgb_cap.release()
+                if self.depth_cap is not None:
+                    self.depth_cap.release()
+                if self.ir_cap is not None:
+                    self.ir_cap.release()
+                cv2.destroyAllWindows()
+                raise SystemExit(0)
 
     def destroy_node(self):
         """清理资源"""
@@ -263,11 +278,14 @@ def main(args=None):
 
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, SystemExit):
         pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        try:
+            rclpy.shutdown()
+        except Exception:
+            pass
 
 
 if __name__ == '__main__':
