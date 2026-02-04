@@ -1,0 +1,9 @@
+# Goal - 重置手部
+uint8 adapter_index  # 0=左手, 1=右手
+---
+# Result - 重置结果
+bool success
+string message
+---
+# Feedback - 重置进度
+string status

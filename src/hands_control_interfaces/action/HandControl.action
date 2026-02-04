@@ -1,0 +1,16 @@
+# Goal - 手部控制目标
+uint8 adapter_index  # 0=左手, 1=右手
+uint8 finger_id      # 手指ID: 1, 2, 3；0 表示所有手指
+int32 position       # 目标位置 (0-1000)
+int32 speed          # 速度 (0-1000)
+uint8 force          # 力度 (0x00-0xFF)
+uint8 wait_time      # 等待时间 (0-255) * 100ms
+---
+# Result - 执行结果
+bool success
+string message
+int32[] final_positions  # 所有手指的最终位置
+---
+# Feedback - 实时反馈
+int32[] current_positions  # 当前所有手指位置
+float32 progress          # 执行进度 (0.0-1.0)
