@@ -12,20 +12,24 @@ class HandControlClient(Node):
         """初始化客户端节点."""
         super().__init__('hand_control_client')
 
-        self._hand_control_client = ActionClient(
-            self,
-            HandControl,
-            'hand_control'
-        )
+        self._hand_control_clients = {
+            0: ActionClient(self, HandControl, '/left/hand_control'),
+            1: ActionClient(self, HandControl, '/right/hand_control'),
+        }
+        self._reset_hand_clients = {
+            0: ActionClient(self, ResetHand, '/left/reset_hand'),
+            1: ActionClient(self, ResetHand, '/right/reset_hand'),
+        }
 
-        self._reset_hand_client = ActionClient(
-            self,
-            ResetHand,
-            'reset_hand'
-        )
+    def _get_clients(self, adapter_index):
+        """根据 adapter_index 获取对应的 action clients."""
+        if adapter_index not in [0, 1]:
+            raise ValueError(f'无效的 adapter_index: {adapter_index} (只支持 0 或 1)')
+        return self._hand_control_clients[adapter_index], self._reset_hand_clients[adapter_index]
 
     def send_hand_control_goal(self, adapter_index, finger_id, position, speed=600, force=0x55, wait_time=10):
         """发送手部控制目标."""
+        hand_client, _ = self._get_clients(adapter_index)
         goal_msg = HandControl.Goal()
         goal_msg.adapter_index = adapter_index
         goal_msg.finger_id = finger_id
@@ -40,9 +44,9 @@ class HandControlClient(Node):
             f'位置={position}, 速度={speed}'
         )
 
-        self._hand_control_client.wait_for_server()
+        hand_client.wait_for_server()
 
-        self._send_goal_future = self._hand_control_client.send_goal_async(
+        self._send_goal_future = hand_client.send_goal_async(
             goal_msg,
             feedback_callback=self.feedback_callback
         )
@@ -51,15 +55,16 @@ class HandControlClient(Node):
 
     def send_reset_goal(self, adapter_index):
         """发送手部重置目标."""
+        _, reset_client = self._get_clients(adapter_index)
         goal_msg = ResetHand.Goal()
         goal_msg.adapter_index = adapter_index
 
         hand_name = '左手' if adapter_index == 0 else '右手'
         self.get_logger().info(f'发送重置目标: {hand_name}')
 
-        self._reset_hand_client.wait_for_server()
+        reset_client.wait_for_server()
 
-        self._send_goal_future = self._reset_hand_client.send_goal_async(
+        self._send_goal_future = reset_client.send_goal_async(
             goal_msg,
             feedback_callback=self.reset_feedback_callback
         )
