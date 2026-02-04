@@ -42,27 +42,27 @@ ros2 run hands_control hand_control_client
 source install/setup.bash
 
 # 左手手指 1 移动
-ros2 action send_goal /hand_control hands_control_interfaces/action/HandControl \
+ros2 action send_goal /left/hand_control hands_control_interfaces/action/HandControl \
     "{adapter_index: 0, finger_id: 1, position: 1000, speed: 600, force: 85, wait_time: 10}" \
     --feedback
 
 # 左手所有手指闭合
-ros2 action send_goal /hand_control hands_control_interfaces/action/HandControl \
+ros2 action send_goal /left/hand_control hands_control_interfaces/action/HandControl \
     "{adapter_index: 0, finger_id: 0, position: 1000, speed: 600, force: 85, wait_time: 10}" \
     --feedback
 
 # 右手所有手指张开
-ros2 action send_goal /hand_control hands_control_interfaces/action/HandControl \
+ros2 action send_goal /right/hand_control hands_control_interfaces/action/HandControl \
     "{adapter_index: 1, finger_id: 0, position: 0, speed: 600, force: 85, wait_time: 10}" \
     --feedback
 
 # 右手手指 2 移动
-ros2 action send_goal /hand_control hands_control_interfaces/action/HandControl \
+ros2 action send_goal /right/hand_control hands_control_interfaces/action/HandControl \
     "{adapter_index: 1, finger_id: 2, position: 800, speed: 500, force: 85, wait_time: 10}" \
     --feedback
 
 # 重置左手
-ros2 action send_goal /reset_hand hands_control_interfaces/action/ResetHand \
+ros2 action send_goal /left/reset_hand hands_control_interfaces/action/ResetHand \
     "{adapter_index: 0}" --feedback
 ```
 

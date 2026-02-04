@@ -26,16 +26,32 @@ def generate_launch_description():
         description='Right hand device ID (default: 0x02)'
     )
 
-    # 创建节点
-    hand_control_server = Node(
+    # 创建节点（左右手各一个 Action Server）
+    left_hand_control_server = Node(
         package='hands_control',
         executable='hand_control_server',
         name='hand_control_server',
+        namespace='left',
         output='screen',
         parameters=[{
             'adapter_type': LaunchConfiguration('adapter_type'),
-            'left_hand_device_id': LaunchConfiguration('left_hand_device_id'),
-            'right_hand_device_id': LaunchConfiguration('right_hand_device_id'),
+            'adapter_index': 0,
+            'device_id': LaunchConfiguration('left_hand_device_id'),
+            'hand_name': '左手',
+        }]
+    )
+
+    right_hand_control_server = Node(
+        package='hands_control',
+        executable='hand_control_server',
+        name='hand_control_server',
+        namespace='right',
+        output='screen',
+        parameters=[{
+            'adapter_type': LaunchConfiguration('adapter_type'),
+            'adapter_index': 1,
+            'device_id': LaunchConfiguration('right_hand_device_id'),
+            'hand_name': '右手',
         }]
     )
 
@@ -43,5 +59,6 @@ def generate_launch_description():
         adapter_type_arg,
         left_device_id_arg,
         right_device_id_arg,
-        hand_control_server,
+        left_hand_control_server,
+        right_hand_control_server,
     ])

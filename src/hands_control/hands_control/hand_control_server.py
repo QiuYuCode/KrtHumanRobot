@@ -4,7 +4,7 @@ import threading
 import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
-from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 
 try:
     from dexhand import DexHand021S
@@ -17,7 +17,7 @@ from hands_control_interfaces.action import HandControl, ResetHand
 
 
 class HandControlServer(Node):
-    """灵巧手控制服务器，支持双手独立控制."""
+    """灵巧手控制服务器，单手实例."""
 
     def __init__(self):
         """初始化节点和灵巧手连接."""
@@ -29,53 +29,44 @@ class HandControlServer(Node):
 
         # 参数声明
         self.declare_parameter('adapter_type', 'ZLG_MINI')
-        self.declare_parameter('left_hand_device_id', 0x01)
-        self.declare_parameter('right_hand_device_id', 0x02)
+        self.declare_parameter('adapter_index', 0)
+        self.declare_parameter('device_id', 0x01)
+        self.declare_parameter('hand_name', '')
 
         adapter_type_str = self.get_parameter('adapter_type').value
-        self.left_device_id = self.get_parameter('left_hand_device_id').value
-        self.right_device_id = self.get_parameter('right_hand_device_id').value
+        self.adapter_index = int(self.get_parameter('adapter_index').value)
+        self.device_id = int(self.get_parameter('device_id').value)
+        self.hand_name = self.get_parameter('hand_name').value
 
         # 转换 adapter_type
         self.adapter_type = self._parse_adapter_type(adapter_type_str)
 
-        # 初始化两只手
-        self.hands = {}
-        self.hand_locks = {}
+        # 初始化单手
+        self.comm_lock = threading.Lock()
 
         try:
-            # 左手 (adapter_index=0)
-            self.hands[0] = DexHand021S(
+            self.hand = DexHand021S(
                 adapter_type=self.adapter_type,
-                adapter_index=0
+                adapter_index=self.adapter_index
             )
-            self.hands[0].listen(enable=True)
-            self.hands[0].enable_realtime_response(
-                device_id=self.left_device_id,
+            self.hand.listen(enable=True)
+            self.hand.enable_realtime_response(
+                device_id=self.device_id,
                 enable=True
             )
-            self.hand_locks[0] = threading.Lock()
-            self.get_logger().info(f'左手初始化成功 (adapter_index=0, device_id={self.left_device_id})')
-
-            # 右手 (adapter_index=1)
-            self.hands[1] = DexHand021S(
-                adapter_type=self.adapter_type,
-                adapter_index=1
+            if not self.hand_name:
+                self.hand_name = '左手' if self.adapter_index == 0 else '右手'
+            self.get_logger().info(
+                f'{self.hand_name}初始化成功 '
+                f'(adapter_index={self.adapter_index}, device_id={self.device_id})'
             )
-            self.hands[1].listen(enable=True)
-            self.hands[1].enable_realtime_response(
-                device_id=self.right_device_id,
-                enable=True
-            )
-            self.hand_locks[1] = threading.Lock()
-            self.get_logger().info(f'右手初始化成功 (adapter_index=1, device_id={self.right_device_id})')
 
         except Exception as e:
             self.get_logger().error(f'灵巧手初始化失败: {str(e)}')
             return
 
         # 创建 action servers
-        callback_group = ReentrantCallbackGroup()
+        callback_group = MutuallyExclusiveCallbackGroup()
 
         self._hand_control_server = ActionServer(
             self,
@@ -103,10 +94,6 @@ class HandControlServer(Node):
         }
         return adapter_map.get(adapter_type_str, AdapterType.ZLG_MINI)
 
-    def _get_device_id(self, adapter_index):
-        """获取设备 ID."""
-        return self.left_device_id if adapter_index == 0 else self.right_device_id
-
     def _read_all_positions(self, hand, device_id):
         """读取所有手指位置，强制转换为 int."""
         positions = []
@@ -133,15 +120,12 @@ class HandControlServer(Node):
         wait_time = goal.wait_time
 
         # 验证参数
-        if adapter_index not in [0, 1]:
+        if adapter_index != self.adapter_index:
             result.success = False
-            result.message = f'无效的 adapter_index: {adapter_index} (只支持 0 或 1)'
-            goal_handle.abort()
-            return result
-
-        if adapter_index not in self.hands:
-            result.success = False
-            result.message = f'手部 {adapter_index} 未初始化'
+            result.message = (
+                f'adapter_index 不匹配: 目标={adapter_index}, '
+                f'节点={self.adapter_index}'
+            )
             goal_handle.abort()
             return result
 
@@ -151,13 +135,13 @@ class HandControlServer(Node):
             goal_handle.abort()
             return result
 
-        hand = self.hands[adapter_index]
-        device_id = self._get_device_id(adapter_index)
-        hand_name = '左手' if adapter_index == 0 else '右手'
+        hand = self.hand
+        device_id = self.device_id
+        hand_name = self.hand_name
         target_fingers = [0x01, 0x02, 0x03] if finger_id == 0 else [finger_id]
 
         try:
-            with self.hand_locks[adapter_index]:
+            with self.comm_lock:
                 # 清除错误并移动手指
                 for fid in target_fingers:
                     hand.clear_error(device_id, fid)
@@ -223,24 +207,21 @@ class HandControlServer(Node):
         adapter_index = goal.adapter_index
 
         # 验证参数
-        if adapter_index not in [0, 1]:
+        if adapter_index != self.adapter_index:
             result.success = False
-            result.message = f'无效的 adapter_index: {adapter_index}'
+            result.message = (
+                f'adapter_index 不匹配: 目标={adapter_index}, '
+                f'节点={self.adapter_index}'
+            )
             goal_handle.abort()
             return result
 
-        if adapter_index not in self.hands:
-            result.success = False
-            result.message = f'手部 {adapter_index} 未初始化'
-            goal_handle.abort()
-            return result
-
-        hand = self.hands[adapter_index]
-        device_id = self._get_device_id(adapter_index)
-        hand_name = '左手' if adapter_index == 0 else '右手'
+        hand = self.hand
+        device_id = self.device_id
+        hand_name = self.hand_name
 
         try:
-            with self.hand_locks[adapter_index]:
+            with self.comm_lock:
                 # 清除所有手指的错误
                 feedback_msg.status = f'清除 {hand_name} 错误'
                 goal_handle.publish_feedback(feedback_msg)
