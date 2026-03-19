@@ -29,6 +29,10 @@ class MicTestNode(Node):
         self.declare_parameter('channels', 1)
         self.declare_parameter('duration', 5)  # 录音时长（秒）
         self.declare_parameter('use_pulseaudio', True)
+        self.declare_parameter('auto_start', True)
+        self.declare_parameter('loop', False)
+        self.declare_parameter('loop_interval', 3)
+        self.declare_parameter('volume', 1.0)  # 播放音量 0.0~1.0
 
         # 获取参数
         self.device = self.get_parameter('device').value
@@ -36,6 +40,10 @@ class MicTestNode(Node):
         self.channels = self.get_parameter('channels').value
         self.duration = self.get_parameter('duration').value
         self.use_pulseaudio = self.get_parameter('use_pulseaudio').value
+        self.auto_start = self.get_parameter('auto_start').value
+        self.loop = self.get_parameter('loop').value
+        self.loop_interval = self.get_parameter('loop_interval').value
+        self.volume = max(0.0, min(1.0, self.get_parameter('volume').value))
 
         # 创建发布者
         self.status_pub = self.create_publisher(String, 'mic/status', 10)
@@ -53,11 +61,15 @@ class MicTestNode(Node):
         self.get_logger().info('麦克风测试节点已启动')
         self.get_logger().info(f'设备: {self.device}')
         self.get_logger().info(f'采样率: {self.sample_rate}Hz, 通道: {self.channels}')
-        self.get_logger().info('按 Enter 开始录音测试...')
 
-        # 启动命令监听线程
-        self.command_thread = threading.Thread(target=self._command_listener, daemon=True)
-        self.command_thread.start()
+        if self.auto_start:
+            self.get_logger().info('自动开始录音测试...')
+            self.start_recording()
+        else:
+            self.get_logger().info('按 Enter 开始录音测试...')
+            self.command_thread = threading.Thread(
+                target=self._command_listener, daemon=True)
+            self.command_thread.start()
 
     def _list_devices(self):
         """列出可用的音频输入设备"""
@@ -159,16 +171,29 @@ class MicTestNode(Node):
             msg = String()
             msg.data = 'idle'
             self.status_pub.publish(msg)
-            self.get_logger().info('按 Enter 开始新的录音测试...')
+            if self.loop and rclpy.ok():
+                self.get_logger().info(
+                    f'{self.loop_interval}秒后开始下一轮录音...')
+                time.sleep(self.loop_interval)
+                if rclpy.ok():
+                    self.start_recording()
+            else:
+                self.get_logger().info('录音测试完成')
 
     def _play_audio(self, file_path):
         """播放音频文件"""
         output_device = 'alsa_output.usb-C-Media_Electronics_Inc._USB_Audio_Device-00.analog-stereo'
+        pa_volume = str(int(self.volume * 65536))
         try:
-            subprocess.run(['paplay', '-d', output_device, file_path], check=True)
+            subprocess.run(
+                ['paplay', '-d', output_device,
+                 '--volume=' + pa_volume, file_path],
+                check=True)
         except Exception:
             try:
-                subprocess.run(['paplay', file_path], check=True)
+                subprocess.run(
+                    ['paplay', '--volume=' + pa_volume, file_path],
+                    check=True)
             except Exception:
                 try:
                     subprocess.run(['aplay', file_path], check=True)

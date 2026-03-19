@@ -13,7 +13,7 @@ def generate_launch_description():
     # 声明参数
     device_id_arg = DeclareLaunchArgument(
         'device_id',
-        default_value='0',
+        default_value='4',
         description='USB摄像头设备ID (/dev/videoX 中的 X)'
     )
 

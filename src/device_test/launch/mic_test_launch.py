@@ -35,6 +35,30 @@ def generate_launch_description():
         description='录音时长 (秒)'
     )
 
+    auto_start_arg = DeclareLaunchArgument(
+        'auto_start',
+        default_value='true',
+        description='启动后自动开始录音'
+    )
+
+    loop_arg = DeclareLaunchArgument(
+        'loop',
+        default_value='false',
+        description='是否循环录音测试'
+    )
+
+    loop_interval_arg = DeclareLaunchArgument(
+        'loop_interval',
+        default_value='3',
+        description='循环录音间隔 (秒)'
+    )
+
+    volume_arg = DeclareLaunchArgument(
+        'volume',
+        default_value='1.0',
+        description='播放音量 (0.0~1.0)'
+    )
+
     # 创建节点
     mic_test_node = Node(
         package='device_test',
@@ -46,6 +70,10 @@ def generate_launch_description():
             'sample_rate': LaunchConfiguration('sample_rate'),
             'channels': LaunchConfiguration('channels'),
             'duration': LaunchConfiguration('duration'),
+            'auto_start': LaunchConfiguration('auto_start'),
+            'loop': LaunchConfiguration('loop'),
+            'loop_interval': LaunchConfiguration('loop_interval'),
+            'volume': LaunchConfiguration('volume'),
         }]
     )
 
@@ -54,5 +82,9 @@ def generate_launch_description():
         sample_rate_arg,
         channels_arg,
         duration_arg,
+        auto_start_arg,
+        loop_arg,
+        loop_interval_arg,
+        volume_arg,
         mic_test_node,
     ])
