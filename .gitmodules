@@ -8,3 +8,7 @@
 	path = src/ranger_ros2
 	url = https://github.com/agilexrobotics/ranger_ros2.git
 	branch = air_delta
+[submodule "src/agx_arm_ros"]
+	path = src/agx_arm_ros
+	url = https://github.com/agilexrobotics/agx_arm_ros.git
+	branch = ros2
