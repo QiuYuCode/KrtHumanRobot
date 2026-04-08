@@ -1,0 +1,19 @@
+# Goal
+string group_name
+int32 repeat_count
+string arm_target
+---
+# Result
+bool success
+string message
+int32 finished_cycles
+string failed_step
+---
+# Feedback
+int32 current_cycle
+int32 total_cycles
+int32 current_step
+int32 total_steps
+string arm_target
+string step_name
+string state

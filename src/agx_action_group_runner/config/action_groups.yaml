@@ -1,0 +1,28 @@
+groups:
+  demo_pick_place:
+    repeat_count: 3
+    steps:
+      - name: arm_home
+        type: move_j
+        payload_file: move_j_home.yaml
+        timeout_sec: 8.0
+
+      - name: approach_pose
+        type: move_p
+        payload_file: move_p_approach.yaml
+        timeout_sec: 10.0
+
+      - name: grip_half_close
+        type: joint_states
+        payload_file: gripper_half_close.yaml
+        timeout_sec: 3.0
+        hold_sec: 0.2
+
+  demo_dual_sync:
+    repeat_count: 2
+    steps:
+      - name: dual_move_j
+        type: move_j
+        left_payload_file: left_move_j_sync.yaml
+        right_payload_file: right_move_j_sync.yaml
+        timeout_sec: 8.0

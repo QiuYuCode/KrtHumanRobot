@@ -1,0 +1,9 @@
+teach_record_replay:
+  ros__parameters:
+    arm_namespace: "/left_arm"
+    sample_rate_hz: 20.0
+    min_joint_delta_rad: 0.01
+    auto_replay_once: true
+    replay_group_prefix: "teach_replay"
+    output_dir: ""
+    prefer_offline_teach: true
