@@ -30,6 +30,62 @@ git submodule add -b 4.56.4 https://github.com/realsenseai/realsense-ros.git
 1. [zlg 转换器驱动下载地址](https://manual.zlg.cn/web/#/146)
 2. [DexHand 官方文档](https://dexrobot.feishu.cn/docx/ATs0dq9TAolpKpxXaZvcY8t7nZd)
 
+## 四、CAN 设备绑定规则（udev + bitrate 初始化）
+
+该工作通过组合两部分实现“固定 CAN 接口命名 + 自动设置 CAN bitrate”：
+
+1. `/etc/udev/rules.d/99-can-names.rules`：udev 在内核新增网络接口时匹配设备并重命名
+2. `/usr/local/sbin/can-link-up.sh`：在接口出现后执行 `ip link` 完成 down/up 与 bitrate 配置
+
+### 1）udev 规则做什么
+
+`99-can-names.rules` 针对 `ACTION=="add"` 且 `SUBSYSTEM=="net"`、`KERNEL=="can*"` 的网卡事件生效。
+规则进一步用 `ENV{ID_SERIAL_SHORT}` 区分不同 CAN 适配器，并将其重命名为固定接口名（例如 `can_chassis` / `can_right` / `can_left`）。
+
+同时，udev 会在匹配成功时触发：
+
+`RUN+="/usr/local/sbin/can-link-up.sh <接口名> <bitrate>"`
+
+从而在接口创建时就完成链路初始化。
+
+### 2）`can-link-up.sh` 做什么
+
+脚本接收两个参数：
+- 第 1 个参数：要初始化的接口名（例如 `can_chassis`）
+- 第 2 个参数：CAN bitrate（例如 `500000`）
+
+脚本内容如下：
+
+```bash
+#!/usr/bin/env bash
+set -euo pipefail
+IFACE="${1:?missing interface}"
+BITRATE="${2:?missing bitrate}"
+IP_BIN="$(command -v ip)"
+# udev时序下接口可能刚创建，短重试提高成功率
+for _ in {1..15}; do
+  if "$IP_BIN" link show "$IFACE" >/dev/null 2>&1; then
+    "$IP_BIN" link set "$IFACE" down 2>/dev/null || true
+    "$IP_BIN" link set "$IFACE" up type can bitrate "$BITRATE"
+    exit 0
+  fi
+  sleep 0.2
+done
+exit 1
+```
+
+脚本内部会最多重试 15 次（每次间隔 `0.2s`）等待接口真正可见（`ip link show <iface>` 成功）。
+一旦接口出现，它会按顺序执行：
+
+1. `ip link set <iface> down`
+2. `ip link set <iface> up type can bitrate <bitrate>`
+
+这样可避免 udev 触发时接口尚未完全建立导致的失败。
+
+### 3）整体效果
+
+插入/重启 CAN 适配器后，系统会自动把不同物理设备绑定为稳定的 CAN 接口名，并自动应用对应的 bitrate，减少手动配置和接口名漂移问题。
+
 ## 测试程序
 
 `device_test` 功能包用于测试外部设备（摄像头、麦克风、扬声器）。
