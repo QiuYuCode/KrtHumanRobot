@@ -29,6 +29,9 @@ ROS 2 功能包，用于通过 Action 接口控制两个 DexHand021S 灵巧手�
 git clone https://github.com/DexRobot/dexhand_sdk_python.git
 cd dexhand_sdk_python
 
+# 必须拉取 C++ SDK 子模块，否则会缺少 libdexhand.so
+git submodule update --init --recursive
+
 # 安装
 pip3 install -e .
 ```
@@ -205,6 +208,10 @@ pip3 install -e /path/to/dexhand_sdk_python
 - 检查 ZLG 适配器是否正确连接
 - 确认设备 ID 配置正确
 - 查看驱动是否安装 (参考 [ZLG 手册](https://manual.zlg.cn/web/#/146))
+- 确认 DexHand C++ SDK 子模块已拉取：
+```bash
+ls /path/to/dexhand_sdk_python/cpp/sdk/lib/linux/x86_64/libdexhand.so
+```
 
 ### 3. 权限问题
 ```bash

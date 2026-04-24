@@ -8,6 +8,10 @@
 cd /tmp
 git clone https://github.com/DexRobot/dexhand_sdk_python.git
 cd dexhand_sdk_python
+
+# 必须拉取 C++ SDK 子模块，否则会缺少 libdexhand.so
+git submodule update --init --recursive
+
 pip3 install -e .
 ```
 
@@ -212,10 +216,14 @@ pip3 install -e /path/to/dexhand_sdk_python
 1. ZLG 适配器是否连接
 2. 设备 ID 是否正确
 3. 驱动是否安装
+4. DexHand C++ SDK 子模块是否已拉取（缺失会报 libdexhand.so 找不到）
 
 ```bash
 # 查看日志
 ros2 launch hands_control hand_control_launch.py
+
+# 检查 dexhand 动态库是否存在
+ls /path/to/dexhand_sdk_python/cpp/sdk/lib/linux/x86_64/libdexhand.so
 
 # 应该看到:
 # [INFO] [hand_control_server]: 左手初始化成功 (adapter_index=0, device_id=1)
