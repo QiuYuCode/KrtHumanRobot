@@ -17,6 +17,11 @@ from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 
+# 点云转激光的切片高度（相对地面，米）。
+# 地面不平、地面毛刺被误判为障碍时调大 SCAN_MIN_HEIGHT（如 0.20）
+SCAN_MIN_HEIGHT = 0.15
+SCAN_MAX_HEIGHT = 1.2
+
 
 def generate_launch_description():
     fast_lio_share = get_package_share_directory('fast_lio')
@@ -97,8 +102,8 @@ def generate_launch_description():
         parameters=[{
             'target_frame': 'base_footprint',
             'transform_tolerance': 0.05,
-            'min_height': 0.15,
-            'max_height': 1.2,
+            'min_height': SCAN_MIN_HEIGHT,
+            'max_height': SCAN_MAX_HEIGHT,
             'angle_min': -3.14159,
             'angle_max': 3.14159,
             'angle_increment': 0.0058,  # ~0.33 度
