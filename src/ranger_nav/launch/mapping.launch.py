@@ -16,19 +16,16 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
-
-# 雷达在底盘 base_footprint 坐标系下的安装位置（米），按实际安装测量修改
-LIDAR_X = 0.40
-LIDAR_Y = 0.0
-LIDAR_Z = 0.40
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
     fast_lio_share = get_package_share_directory('fast_lio')
     livox_share = get_package_share_directory('livox_ros_driver2')
     agx_share = get_package_share_directory('agx_bringup')
+    ranger_nav_share = get_package_share_directory('ranger_nav')
 
     use_rviz = LaunchConfiguration('rviz')
     declare_rviz = DeclareLaunchArgument(
@@ -81,12 +78,18 @@ def generate_launch_description():
         name='static_tf_odom_camera_init',
         arguments=['0', '0', '0', '0', '0', '0', 'odom', 'camera_init'],
     )
-    tf_body_base = Node(
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='static_tf_body_base',
-        arguments=[str(-LIDAR_X), str(-LIDAR_Y), str(-LIDAR_Z),
-                   '0', '0', '0', 'body', 'base_footprint'],
+
+    # URDF: body -> base_footprint -> base_link（雷达偏移在 urdf 中配置）
+    robot_description = ParameterValue(
+        Command(['xacro ', os.path.join(
+            ranger_nav_share, 'urdf', 'ranger_mini.urdf.xacro')]),
+        value_type=str,
+    )
+    robot_state_publisher = Node(
+        package='robot_state_publisher',
+        executable='robot_state_publisher',
+        parameters=[{'robot_description': robot_description}],
+        output='screen',
     )
 
     return LaunchDescription([
@@ -96,5 +99,5 @@ def generate_launch_description():
         rviz_node,
         chassis_node,
         tf_odom_camera_init,
-        tf_body_base,
+        robot_state_publisher,
     ])
