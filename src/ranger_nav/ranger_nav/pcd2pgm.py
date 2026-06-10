@@ -5,7 +5,7 @@
 
 用法:
     ros2 run ranger_nav pcd2pgm --pcd ~/maps/scans.pcd --out ~/maps/map \
-        --lidar-height 0.40 --z-min 0.15 --z-max 1.2 --resolution 0.05
+        --lidar-height 0.30 --z-min 0.15 --z-max 1.2 --resolution 0.05
 """
 from __future__ import annotations
 
@@ -82,7 +82,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument('--pcd', required=True, help='输入 PCD 文件路径')
     parser.add_argument('--out', required=True, help='输出前缀，生成 <out>.pgm 与 <out>.yaml')
     parser.add_argument('--resolution', type=float, default=0.05, help='栅格分辨率 (m)')
-    parser.add_argument('--lidar-height', type=float, default=0.40,
+    parser.add_argument('--lidar-height', type=float, default=0.30,
                         help='建图时雷达离地高度 (m)，用于推算地面位置')
     parser.add_argument('--z-min', type=float, default=0.15,
                         help='障碍物切片下限，相对地面 (m)')

@@ -1,0 +1,70 @@
+<?xml version="1.0"?>
+<!--
+  Ranger Mini 底盘 + Livox MID360 简化 URDF。
+
+  TF 约束：FAST-LIO 发布 camera_init -> body（body 即雷达系），
+  因此本 URDF 以 body 为根 link，由 robot_state_publisher 发布
+  body -> base_footprint -> base_link，取代 launch 中手写的静态 TF。
+
+  雷达安装位置（base_footprint 系下，按实际测量修改）只需改这里：
+  lidar_x / lidar_y / lidar_z。
+-->
+<robot xmlns:xacro="http://ros.org/wiki/xacro" name="ranger_mini">
+
+  <!-- 雷达在 base_footprint 坐标系下的安装位置（米） -->
+  <xacro:property name="lidar_x" value="0.2"/>
+  <xacro:property name="lidar_y" value="0.0"/>
+  <!-- 顶板上表面 0.25 + MID360 底面到光心 0.047 -->
+  <xacro:property name="lidar_z" value="0.30"/>
+
+  <!-- Ranger Mini 外形尺寸（米）：长 x 宽 x 高，底盘离地间隙 -->
+  <xacro:property name="chassis_length" value="0.552"/>
+  <xacro:property name="chassis_width" value="0.500"/>
+  <xacro:property name="chassis_height" value="0.250"/>
+  <xacro:property name="ground_clearance" value="0.043"/>
+
+  <material name="dark_grey">
+    <color rgba="0.25 0.25 0.25 1.0"/>
+  </material>
+  <material name="livox_blue">
+    <color rgba="0.1 0.3 0.8 1.0"/>
+  </material>
+
+  <!-- 根 link：MID360 雷达（FAST-LIO 的 body 系） -->
+  <link name="body">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <cylinder radius="0.032" length="0.06"/>
+      </geometry>
+      <material name="livox_blue"/>
+    </visual>
+  </link>
+
+  <joint name="body_to_base_footprint" type="fixed">
+    <parent link="body"/>
+    <child link="base_footprint"/>
+    <origin xyz="${-lidar_x} ${-lidar_y} ${-lidar_z}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 底盘中心在地面的投影 -->
+  <link name="base_footprint"/>
+
+  <joint name="base_footprint_to_base_link" type="fixed">
+    <parent link="base_footprint"/>
+    <child link="base_link"/>
+    <origin xyz="0 0 ${ground_clearance + chassis_height / 2}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 底盘本体（box 简化模型） -->
+  <link name="base_link">
+    <visual>
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="${chassis_length} ${chassis_width} ${chassis_height}"/>
+      </geometry>
+      <material name="dark_grey"/>
+    </visual>
+  </link>
+
+</robot>

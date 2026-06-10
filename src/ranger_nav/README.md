@@ -5,12 +5,19 @@ Ranger 底盘 + Livox MID360 + FAST-LIO 的 3D 建图与 Nav2 导航集成包。
 ## TF 树
 
 ```
-map --(AMCL)--> odom --(静态)--> camera_init --(FAST-LIO)--> body --(静态)--> base_footprint
+map --(AMCL)--> odom --(静态)--> camera_init --(FAST-LIO)--> body --(URDF)--> base_footprint --> base_link
 ```
 
-雷达安装位置在 `launch/mapping.launch.py` 与 `launch/navigation.launch.py`
-顶部的 `LIDAR_X/Y/Z` 常量中配置（默认雷达位于底盘中心正上方 0.40 m），
-**两个文件务必保持一致，并按实际测量值修改**。
+雷达安装位置与底盘尺寸统一在 `urdf/ranger_mini.urdf.xacro` 中配置
+（`lidar_x/y/z` 属性，当前为底盘中心前方 0.20 m、离地 0.30 m），
+由 `robot_state_publisher` 发布 `body -> base_footprint -> base_link` TF，
+**按实际测量值修改 xacro 即可，无需改 launch**。
+
+Nav2 的长方形底盘碰撞模型在 `config/nav2_params.yaml` 的
+`footprint` 参数中配置（local/global costmap 各一处，需保持一致）。
+
+RViz 中添加 **RobotModel** 显示项（Description Topic 选
+`/robot_description`）即可看到底盘与雷达模型。
 
 ## 使用流程
 
@@ -33,7 +40,7 @@ ros2 service call /map_save std_srvs/srv/Trigger
 
 ```bash
 ros2 run ranger_nav pcd2pgm --pcd ~/maps/scans.pcd --out ~/maps/map \
-    --lidar-height 0.40 --z-min 0.15 --z-max 1.2 --resolution 0.05
+    --lidar-height 0.30 --z-min 0.15 --z-max 1.2 --resolution 0.05
 ```
 
 生成 `~/maps/map.pgm` 和 `~/maps/map.yaml`。
