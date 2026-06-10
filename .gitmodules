@@ -12,3 +12,10 @@
 	path = src/agx_arm_ros
 	url = https://github.com/agilexrobotics/agx_arm_ros.git
 	branch = ros2
+[submodule "src/FAST_LIO_ROS2"]
+	path = src/FAST_LIO_ROS2
+	url = https://github.com/Ericsii/FAST_LIO_ROS2.git
+	branch = ros2
+[submodule "src/spark-fast-lio"]
+	path = src/spark-fast-lio
+	url = https://github.com/MIT-SPARK/spark-fast-lio.git
