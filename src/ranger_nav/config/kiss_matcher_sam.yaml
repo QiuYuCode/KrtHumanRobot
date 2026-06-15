@@ -1,0 +1,39 @@
+# KISS-Matcher-SAM 参数（MID360 室内建图，基于官方 slam_config.yaml 调整）
+/**:
+  ros__parameters:
+    loop_pub_hz: 0.1
+    loop_detector_hz: 2.0
+    loop_nnsearch_hz: 2.0
+    loop_pub_delayed_time: 30.0
+    map_update_hz: 0.2
+    vis_hz: 1.0
+
+    store_voxelized_scan: false
+    voxel_resolution: 0.25          # MID360 点云较密，室内用 0.25 m
+    map_voxel_resolution: 0.5       # 可视化地图分辨率
+    save_voxel_resolution: 0.15     # 保存地图分辨率（pcd2pgm 输入）
+
+    keyframe:
+      keyframe_threshold: 1.0       # 室内场景关键帧间距 1 m
+      num_submap_keyframes: 1
+
+    loop:
+      verbose: true
+      is_multilayer_env: false      # 单层室内
+      loop_detection_radius: 5.0    # 小场景收紧半径，降低误回环概率
+      loop_detection_timediff_threshold: 90.0
+    local_reg:
+      num_threads: 6                # Jetson 留出核给 FAST-LIO
+      correspondences_number: 20
+      max_num_iter: 32
+      scale_factor_for_corr_dist: 5.0
+      overlap_threshold: 55.0       # 扫描间匹配（num_submap_keyframes=1）官方建议用高值
+    global_reg:
+      enable: true
+      num_inliers_threshold: 15    # 收紧全局配准接受门槛，宁缺毋滥
+
+    result:
+      save_map_pcd: true            # 保存回环优化后的全局地图
+      save_map_bag: false
+      save_in_kitti_format: false
+      seq_name: "ranger"

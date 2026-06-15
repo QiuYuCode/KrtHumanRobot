@@ -1,11 +1,29 @@
 # ranger_nav
 
-Ranger 底盘 + Livox MID360 + FAST-LIO 的 3D 建图与 Nav2 导航集成包。
+Ranger 底盘 + Livox MID360 双方案 3D 建图与 Nav2 导航集成包。
+
+## 建图方案（两套并行）
+
+| | 方式 B：纯里程计 | 方式 A：回环建图 |
+|--|------------------|------------------|
+| Launch | `mapping.launch.py` | `mapping_sam.launch.py` |
+| LIO | `fast_lio` | `spark_fast_lio` |
+| 回环 | 无 | `kiss_matcher_ros` |
+| 保存 | `/map_save` → `~/maps/scans.pcd` | `/km_sam/save_dir` → `~/maps/ranger/ranger_map.pcd` |
 
 ## TF 树
 
+**方式 B（fast_lio）：**
+
 ```
 map --(AMCL)--> odom --(静态)--> camera_init --(FAST-LIO)--> body --(URDF)--> base_footprint --> base_link
+```
+
+**方式 A（spark + SAM）：**
+
+```
+map --(SAM)--> base_sam
+odom --(spark)--> body --(URDF)--> base_footprint --> base_link
 ```
 
 雷达安装位置与底盘尺寸统一在 `urdf/ranger_mini.urdf.xacro` 中配置
@@ -22,6 +40,35 @@ RViz 中添加 **RobotModel** 显示项（Description Topic 选
 ## 使用流程
 
 ### 1. 建图
+
+**方式 A：spark_fast_lio + KISS-Matcher-SAM（长走廊/大场景，需回环）**
+
+```bash
+ros2 launch ranger_nav mapping_sam.launch.py
+
+# 另开终端，键盘遥控建图（尽量走回起点形成回环）
+ros2 run teleop_twist_keyboard teleop_twist_keyboard
+
+# 保存回环优化后的全局地图（生成 ~/maps/ranger/ranger_map.pcd）
+ros2 topic pub --once /km_sam/save_dir std_msgs/msg/String "data: '$HOME/maps'"
+```
+
+底层 launch：`mapping_spark.launch.py`（spark + livox + 底盘）。SAM 订阅 `/odometry` + `/cloud_registered`（世界系）。
+回环参数：`config/kiss_matcher_sam.yaml`；LIO 参数：`config/spark_fast_lio_mid360.yaml`。
+
+**RViz 无点云 / Global Status: Error 排查：**
+
+1. 确认 spark 在跑：`ros2 topic hz /odometry`、`ros2 topic hz /cloud_registered` 应有数据。
+   - 若 `/livox/lidar` 是 CustomMsg 但 spark 只订阅 PointCloud2，需重新编译 spark_fast_lio
+     （须链接 `livox_ros_driver2`）。
+   - 若 spark 节点已退出，检查终端是否有 `Invalid visualization frame`——
+     `common.visualization_frame` 必须是 `imu`/`lidar`/`base`，不能填 TF 名 `body`。
+2. 确认 SAM 已初始化：终端应出现 `The first node comes. Initialization complete.`；
+   `ros2 topic hz /km_sam/curr_scan` 应有输出。
+3. RViz Fixed Frame 保持 `map`；若仍黑屏，选中 **Current scan** 点 **Focus Camera** 重置视角。
+4. **Global map** 需遥控移动约 1 m（`keyframe_threshold`）后才会累积显示。
+
+**方式 B：纯 FAST-LIO 里程计（小场景、快速验证）**
 
 ```bash
 ros2 launch ranger_nav mapping.launch.py
@@ -105,5 +152,6 @@ ros2 run ranger_nav pcd2pgm --pcd ~/maps/scans.pcd --out ~/maps/map \
 
 ## 依赖
 
-- 已编译：`fast_lio`、`livox_ros_driver2`、`agx_bringup`
-- 系统包：`ros-humble-nav2-bringup`、`ros-humble-pointcloud-to-laserscan`
+- 方式 B：`fast_lio`、`livox_ros_driver2`、`agx_bringup`
+- 方式 A：另需 `spark_fast_lio`、`kiss_matcher_ros`
+- 导航：`ros-humble-nav2-bringup`、`ros-humble-pointcloud-to-laserscan`

@@ -3,7 +3,7 @@
 <package format="3">
   <name>ranger_nav</name>
   <version>0.1.0</version>
-  <description>Ranger 底盘 + MID360 + FAST-LIO 的 3D 建图与 Nav2 导航集成包</description>
+  <description>Ranger 底盘 + MID360 双方案建图（fast_lio / spark+SAM）与 Nav2 导航集成包</description>
   <maintainer email="nvidia@todo.todo">nvidia</maintainer>
   <license>MIT</license>
 
@@ -11,6 +11,8 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>fast_lio</exec_depend>
+  <exec_depend>spark_fast_lio</exec_depend>
+  <exec_depend>kiss_matcher_ros</exec_depend>
   <exec_depend>livox_ros_driver2</exec_depend>
   <exec_depend>agx_bringup</exec_depend>
   <exec_depend>nav2_bringup</exec_depend>
