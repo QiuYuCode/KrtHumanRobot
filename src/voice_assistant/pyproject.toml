@@ -1,0 +1,33 @@
+[project]
+name = "voice-assistant"
+version = "0.1.0"
+description = "语音助手 Python 依赖（ROS 2 包由 colcon 管理）"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "python-dotenv>=1.0.0",
+    "loguru>=0.7.0",
+    "pyyaml>=6.0",
+    "numpy>=1.21,<2",
+    "sounddevice>=0.5.5",
+    "sherpa-onnx",
+    "websocket-client>=1.8.0",
+    "langchain-core",
+    "langchain-ollama",
+    "langchain-openai>=1.1.8",
+    "ollama>=0.6.1",
+]
+
+[project.optional-dependencies]
+online = ["langchain-openai", "langchain-anthropic"]
+arm = ["pyagxarm"]
+hand = ["dexhand-sdk-python"]
+
+[tool.uv.sources]
+sherpa-onnx = { path = "../../../sherpa-onnx" }
+pyagxarm = { path = "../../../pyAgxArm" }
+dexhand-sdk-python = { path = "../../../dexhand_sdk_python" }
+
+[[tool.uv.index]]
+url = "https://uv.agentsmirror.com/pypi/simple"
+default = true

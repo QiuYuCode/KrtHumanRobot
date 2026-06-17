@@ -242,3 +242,9 @@ AMENT_IGNORE
 # Custom rules (everything added below won't be overriden by 'Generate .gitignore File' if you use 'Update' option)
 
 .vscode/
+
+# voice_assistant: 语音模型与运行日志不入库
+src/voice_assistant/voice_assistant/model/voice_models/
+src/voice_assistant/voice_assistant/logs/
+src/voice_assistant/.venv/
+src/voice_assistant/captures/

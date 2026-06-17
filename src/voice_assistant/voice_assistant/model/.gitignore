@@ -1,0 +1,4 @@
+# 模型文件体积大，不入库；仅保留本 .gitignore 与 README.md
+*
+!.gitignore
+!README.md
