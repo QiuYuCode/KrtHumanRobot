@@ -1,11 +1,21 @@
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
+import json
+import time
 import uuid
+import wave
+from email.utils import formatdate
+from io import BytesIO
 from pathlib import Path
+from urllib.parse import urlencode
 
 import numpy as np
 import rclpy
 import sherpa_onnx
+import websocket  # type: ignore[import-not-found]
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from voice_interfaces.action import PlayAudio
@@ -18,6 +28,8 @@ class VoiceTtsNode(Node):
 
     def __init__(self) -> None:
         super().__init__("voice_tts")
+        self.declare_parameter("tts_backend", "local")
+        self.declare_parameter("cloud_tts_fallback_to_local", True)
         self.declare_parameter("tts_model_dir", "")
         self.declare_parameter("tts_speaker_id", 0)
         self.declare_parameter("tts_speed", 1.0)
@@ -27,6 +39,16 @@ class VoiceTtsNode(Node):
         self.declare_parameter("tts_clause_pause", 0.15)
         self.declare_parameter("onnx_provider", "cpu")
         self.declare_parameter("num_threads", 2)
+        self.declare_parameter("iflytek_tts_app_id", "")
+        self.declare_parameter("iflytek_tts_api_key", "")
+        self.declare_parameter("iflytek_tts_api_secret", "")
+        self.declare_parameter("iflytek_tts_vcn", "x4_yezi")
+        self.declare_parameter("iflytek_tts_aue", "raw")
+        self.declare_parameter("iflytek_tts_auf", "audio/L16;rate=16000")
+        self.declare_parameter("iflytek_tts_speed", 50)
+        self.declare_parameter("iflytek_tts_tte", "UTF8")
+        self.declare_parameter("iflytek_tts_request_text_encoding", "utf-8")
+        self.declare_parameter("iflytek_tts_max_bytes", 8000)
 
         self._tts = self._init_local_tts()
         self._play_client = ActionClient(self, PlayAudio, "/voice/playback/play")
@@ -133,12 +155,18 @@ class VoiceTtsNode(Node):
             )
             sample_rate = int(audio.sample_rate)
             if sentence_pause is None:
+                sentence_pause_sec = float(
+                    self.get_parameter("tts_sentence_pause").value
+                )
+                clause_pause_sec = float(
+                    self.get_parameter("tts_clause_pause").value
+                )
                 sentence_pause = np.zeros(
-                    int(sample_rate * float(self.get_parameter("tts_sentence_pause").value)),
+                    int(sample_rate * sentence_pause_sec),
                     dtype=np.float32,
                 )
                 clause_pause = np.zeros(
-                    int(sample_rate * float(self.get_parameter("tts_clause_pause").value)),
+                    int(sample_rate * clause_pause_sec),
                     dtype=np.float32,
                 )
             combined.append(np.asarray(audio.samples, dtype=np.float32))
@@ -154,8 +182,151 @@ class VoiceTtsNode(Node):
             out = np.clip(out * gain, -1.0, 1.0)
         return out, sample_rate
 
-    def _build_play_goal(self, samples: np.ndarray, sample_rate: int, priority: int) -> PlayAudio.Goal:
-        pcm_bytes = self._float32_to_pcm16(samples)
+    @staticmethod
+    def _build_ws_url(api_key: str, api_secret: str) -> str:
+        base_url = "wss://tts-api.xfyun.cn/v2/tts"
+        host = "tts-api.xfyun.cn"
+        path = "/v2/tts"
+        date = formatdate(timeval=None, localtime=False, usegmt=True)
+        signature_origin = f"host: {host}\ndate: {date}\nGET {path} HTTP/1.1"
+        signature_sha = hmac.new(
+            api_secret.encode("utf-8"),
+            signature_origin.encode("utf-8"),
+            digestmod=hashlib.sha256,
+        ).digest()
+        signature = base64.b64encode(signature_sha).decode("utf-8")
+        authorization_origin = (
+            f'api_key="{api_key}", algorithm="hmac-sha256", '
+            f'headers="host date request-line", signature="{signature}"'
+        )
+        authorization = base64.b64encode(
+            authorization_origin.encode("utf-8")
+        ).decode("utf-8")
+        query = urlencode({"host": host, "date": date, "authorization": authorization})
+        return f"{base_url}?{query}"
+
+    @staticmethod
+    def _sample_rate_from_auf(auf: str) -> int:
+        marker = "rate="
+        if marker not in auf:
+            return 16000
+        try:
+            return int(auf.split(marker, 1)[1].split(";", 1)[0])
+        except ValueError:
+            return 16000
+
+    @staticmethod
+    def _wav_to_pcm16(audio: bytes) -> tuple[bytes, int]:
+        with wave.open(BytesIO(audio), "rb") as wav:
+            sample_rate = int(wav.getframerate())
+            channels = int(wav.getnchannels())
+            sample_width = int(wav.getsampwidth())
+            frames = wav.readframes(wav.getnframes())
+        if sample_width != 2:
+            raise RuntimeError(f"不支持的 WAV 采样宽度: {sample_width}")
+        if channels == 1:
+            return frames, sample_rate
+        pcm = np.frombuffer(frames, dtype=np.int16).reshape(-1, channels)
+        mono = np.mean(pcm.astype(np.float32), axis=1).astype(np.int16)
+        return mono.tobytes(), sample_rate
+
+    def _split_text_by_cloud_limit(self, text: str) -> list[str]:
+        encoding = str(self.get_parameter("iflytek_tts_request_text_encoding").value)
+        max_bytes = int(self.get_parameter("iflytek_tts_max_bytes").value)
+        max_bytes = max(1, max_bytes)
+        chunks: list[str] = []
+        for segment, _pause_type in self._split_text(text):
+            buf: list[str] = []
+            buf_size = 0
+            for ch in segment:
+                ch_size = len(ch.encode(encoding))
+                if buf and buf_size + ch_size > max_bytes:
+                    chunks.append("".join(buf))
+                    buf = []
+                    buf_size = 0
+                buf.append(ch)
+                buf_size += ch_size
+            if buf:
+                chunks.append("".join(buf))
+        return chunks
+
+    def _generate_iflytek_tts(self, text: str) -> tuple[bytes, int]:
+        app_id = str(self.get_parameter("iflytek_tts_app_id").value)
+        api_key = str(self.get_parameter("iflytek_tts_api_key").value)
+        api_secret = str(self.get_parameter("iflytek_tts_api_secret").value)
+        if not (app_id and api_key and api_secret):
+            raise RuntimeError("讯飞 TTS 密钥缺失")
+
+        aue = str(self.get_parameter("iflytek_tts_aue").value)
+        auf = str(self.get_parameter("iflytek_tts_auf").value)
+        encoding = str(self.get_parameter("iflytek_tts_request_text_encoding").value)
+        sample_rate = self._sample_rate_from_auf(auf)
+        pcm_chunks: list[bytes] = []
+        text_chunks = self._split_text_by_cloud_limit(text)
+        if not text_chunks:
+            return b"", sample_rate
+
+        for text_chunk in text_chunks:
+            ws = websocket.create_connection(
+                self._build_ws_url(api_key, api_secret),
+                timeout=10,
+            )
+            try:
+                ws.send(
+                    json.dumps(
+                        {
+                            "common": {"app_id": app_id},
+                            "business": {
+                                "aue": aue,
+                                "auf": auf,
+                                "vcn": str(self.get_parameter("iflytek_tts_vcn").value),
+                                "speed": int(
+                                    self.get_parameter("iflytek_tts_speed").value
+                                ),
+                                "tte": str(self.get_parameter("iflytek_tts_tte").value),
+                            },
+                            "data": {
+                                "status": 2,
+                                "text": base64.b64encode(
+                                    text_chunk.encode(encoding)
+                                ).decode("utf-8"),
+                            },
+                        },
+                        ensure_ascii=False,
+                    )
+                )
+                audio_parts: list[bytes] = []
+                while True:
+                    resp = json.loads(ws.recv())
+                    if int(resp.get("code", -1)) != 0:
+                        raise RuntimeError(f"讯飞 TTS 错误: {resp}")
+                    data = resp.get("data", {}) or {}
+                    audio = data.get("audio", "")
+                    if audio:
+                        audio_parts.append(base64.b64decode(audio))
+                    if int(data.get("status", 1)) == 2:
+                        break
+                audio_bytes = b"".join(audio_parts)
+                if aue.lower() in ("raw", "pcm", "pcm16"):
+                    pcm_chunks.append(audio_bytes)
+                elif aue.lower() in ("lame", "mp3"):
+                    raise RuntimeError("讯飞 TTS 返回 MP3，当前播放链路仅支持 PCM16")
+                else:
+                    pcm_bytes, wav_rate = self._wav_to_pcm16(audio_bytes)
+                    sample_rate = wav_rate
+                    pcm_chunks.append(pcm_bytes)
+            finally:
+                ws.close()
+            time.sleep(0.02)
+
+        return b"".join(pcm_chunks), sample_rate
+
+    def _build_play_goal_from_pcm(
+        self,
+        pcm_bytes: bytes,
+        sample_rate: int,
+        priority: int,
+    ) -> PlayAudio.Goal:
         chunk = VoiceAudioFrame()
         chunk.encoding = "pcm16"
         chunk.sample_rate = int(sample_rate)
@@ -167,21 +338,64 @@ class VoiceTtsNode(Node):
         goal.preempt_lower_priority = True
         return goal
 
-    def _handle_synthesize(self, request: SynthesizeSpeech.Request, response: SynthesizeSpeech.Response):
+    def _build_play_goal(
+        self,
+        samples: np.ndarray,
+        sample_rate: int,
+        priority: int,
+    ) -> PlayAudio.Goal:
+        return self._build_play_goal_from_pcm(
+            self._float32_to_pcm16(samples),
+            sample_rate,
+            priority,
+        )
+
+    def _synthesize_pcm16(self, text: str) -> tuple[bytes, int, str]:
+        backend = str(self.get_parameter("tts_backend").value).strip() or "local"
+        if backend == "iflytek_cloud":
+            try:
+                pcm_bytes, sample_rate = self._generate_iflytek_tts(text)
+                return pcm_bytes, sample_rate, "iflytek_cloud"
+            except Exception as exc:
+                if not bool(self.get_parameter("cloud_tts_fallback_to_local").value):
+                    raise
+                self.get_logger().warning(f"讯飞云 TTS 失败，回退本地 TTS: {exc}")
+        elif backend != "local":
+            if not bool(self.get_parameter("cloud_tts_fallback_to_local").value):
+                raise RuntimeError(f"不支持的 TTS 后端: {backend}")
+            self.get_logger().warning(f"不支持的 TTS 后端 {backend!r}，回退本地 TTS")
+
+        if not self._ensure_tts_ready():
+            raise RuntimeError("本地 TTS 未初始化")
+        samples, sample_rate = self._generate_local_tts(text)
+        return self._float32_to_pcm16(samples), sample_rate, "local"
+
+    def _handle_synthesize(
+        self,
+        request: SynthesizeSpeech.Request,
+        response: SynthesizeSpeech.Response,
+    ):
         try:
-            if not self._ensure_tts_ready():
-                raise RuntimeError("本地 TTS 未初始化")
-            samples, sample_rate = self._generate_local_tts(request.text)
-            if len(samples) == 0:
+            pcm_bytes, sample_rate, backend_used = self._synthesize_pcm16(request.text)
+            if len(pcm_bytes) == 0:
                 raise RuntimeError("TTS 未生成有效音频")
             if not self._play_client.wait_for_server(timeout_sec=1.0):
                 raise RuntimeError("playback action 不可用")
-            goal = self._build_play_goal(samples, sample_rate, int(request.priority))
+            goal = self._build_play_goal_from_pcm(
+                pcm_bytes, sample_rate, int(request.priority)
+            )
             self._play_client.send_goal_async(goal)
             response.accepted = True
             response.request_id = str(uuid.uuid4())
-            response.estimated_duration_sec = float(len(samples) / float(sample_rate))
+            response.estimated_duration_sec = float(
+                len(pcm_bytes) / 2.0 / float(sample_rate)
+            )
             response.error_message = ""
+            self.get_logger().info(
+                "TTS 已提交播放: "
+                f"backend={backend_used} "
+                f"duration={response.estimated_duration_sec:.2f}s"
+            )
         except Exception as exc:
             response.accepted = False
             response.request_id = ""

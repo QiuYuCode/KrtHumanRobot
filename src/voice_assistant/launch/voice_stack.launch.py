@@ -184,6 +184,10 @@ def _launch_setup(context, *args, **kwargs):
             "voice_tts.tts_node",
             "voice_tts",
             {
+                "tts_backend": cfg.get("tts_backend", "local"),
+                "cloud_tts_fallback_to_local": bool(
+                    cfg.get("cloud_tts_fallback_to_local", True)
+                ),
                 "tts_model_dir": cfg.get("tts_model_dir", ""),
                 "tts_speaker_id": int(cfg.get("tts_speaker_id", 0)),
                 "tts_speed": float(cfg.get("tts_speed", 1.0)),
@@ -191,6 +195,24 @@ def _launch_setup(context, *args, **kwargs):
                 "tts_max_chars_per_chunk": int(cfg.get("tts_max_chars_per_chunk", 80)),
                 "tts_sentence_pause": float(cfg.get("tts_sentence_pause", 0.40)),
                 "tts_clause_pause": float(cfg.get("tts_clause_pause", 0.15)),
+                "iflytek_tts_app_id": os.environ.get(
+                    "XFYUN_TTS_APPID", os.environ.get("XFYUN_APPID", "")
+                ),
+                "iflytek_tts_api_key": os.environ.get(
+                    "XFYUN_TTS_API_KEY", os.environ.get("XFYUN_API_KEY", "")
+                ),
+                "iflytek_tts_api_secret": os.environ.get(
+                    "XFYUN_TTS_API_SECRET", os.environ.get("XFYUN_API_SECRET", "")
+                ),
+                "iflytek_tts_vcn": cfg.get("iflytek_tts_vcn", "x4_yezi"),
+                "iflytek_tts_aue": cfg.get("iflytek_tts_aue", "raw"),
+                "iflytek_tts_auf": cfg.get("iflytek_tts_auf", "audio/L16;rate=16000"),
+                "iflytek_tts_speed": int(cfg.get("iflytek_tts_speed", 50)),
+                "iflytek_tts_tte": cfg.get("iflytek_tts_tte", "UTF8"),
+                "iflytek_tts_request_text_encoding": cfg.get(
+                    "iflytek_tts_request_text_encoding", "utf-8"
+                ),
+                "iflytek_tts_max_bytes": int(cfg.get("iflytek_tts_max_bytes", 8000)),
                 "num_threads": int(num_threads),
                 "onnx_provider": onnx_provider,
             },

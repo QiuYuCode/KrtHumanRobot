@@ -120,6 +120,41 @@ ros2 launch voice_assistant voice_full.launch.py
 
 对麦克风说「你好小特」：终端出现 `唤醒成功!`，并 TTS 播报「我在，请说。」
 
+### 讯飞云语音验收
+
+默认配置仍使用本地 sherpa-onnx：`asr_backend: local`、`tts_backend: local`。
+云端能力通过配置和环境变量显式启用，密钥不要写入 YAML。
+
+无密钥回退验证：
+
+```bash
+cp src/voice_assistant/config/voice_assistant.yaml /tmp/voice_assistant_cloud_tts.yaml
+python3 - <<'PY'
+from pathlib import Path
+
+path = Path("/tmp/voice_assistant_cloud_tts.yaml")
+text = path.read_text(encoding="utf-8")
+text = text.replace("tts_backend: local", "tts_backend: iflytek_cloud")
+path.write_text(text, encoding="utf-8")
+PY
+ros2 launch voice_assistant voice_full.launch.py config_file:=/tmp/voice_assistant_cloud_tts.yaml
+```
+
+调用 `/voice/tts/synthesize` 或唤醒后播报时，日志应出现“讯飞云 TTS 失败，回退本地 TTS”，并最终正常播放。
+
+有密钥云端 TTS 验证：
+
+```bash
+export XFYUN_TTS_APPID=你的讯飞AppID
+export XFYUN_TTS_API_KEY=你的讯飞APIKey
+export XFYUN_TTS_API_SECRET=你的讯飞APISecret
+ros2 launch voice_assistant voice_full.launch.py config_file:=/tmp/voice_assistant_cloud_tts.yaml
+```
+
+启动提示音和对话回复应由讯飞云 TTS 合成。若只设置通用变量，也兼容 `XFYUN_APPID`、`XFYUN_API_KEY`、`XFYUN_API_SECRET`。
+
+云 ASR/TTS 联合验证时，将临时配置里的 `asr_backend` 与 `tts_backend` 都切到 `iflytek_cloud`，并同时设置 `XFYUN_IAT_*` 与 `XFYUN_TTS_*`。完成多轮“唤醒 -> 识别 -> 回复 -> 播放”，检查节点不退出且没有重复 playback server。
+
 ## 配置
 
 默认：`config/voice_assistant.yaml`（安装后 `share/voice_assistant/config/`）。
