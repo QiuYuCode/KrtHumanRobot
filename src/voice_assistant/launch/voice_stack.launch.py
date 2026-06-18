@@ -48,6 +48,45 @@ def _resolve_path(value: str, base_dir: Path) -> str:
     return str((base_dir / path).resolve())
 
 
+def _clean_env_value(value: str) -> str:
+    return value.strip().strip('"').strip("'").strip()
+
+
+def _load_env_file(dotenv_path: Path) -> None:
+    if not dotenv_path.is_file():
+        return
+    with open(dotenv_path, encoding="utf-8") as handle:
+        for raw_line in handle:
+            line = raw_line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            if line.startswith("export "):
+                line = line[len("export ") :].strip()
+            key, value = line.split("=", 1)
+            key = key.strip()
+            if not key or key in os.environ:
+                continue
+            os.environ[key] = _clean_env_value(value)
+
+
+def _load_voice_assistant_env(share: str) -> None:
+    share_path = Path(share)
+    install_prefix = share_path.parent.parent
+    candidates = []
+    override = os.environ.get("VOICE_ASSISTANT_DOTENV", "").strip()
+    if override:
+        candidates.append(Path(override).expanduser())
+    candidates.extend(
+        [
+            install_prefix.parent / "src" / "voice_assistant" / ".env",
+            Path.cwd() / "src" / "voice_assistant" / ".env",
+            Path.cwd() / ".env",
+        ]
+    )
+    for candidate in candidates:
+        _load_env_file(candidate)
+
+
 def _load_stack_config(config_file: str) -> dict:
     if config_file and Path(config_file).is_file():
         yaml_path = Path(config_file)
@@ -97,9 +136,10 @@ def _make_uv_process(
 
 def _launch_setup(context, *args, **kwargs):
     config_file = LaunchConfiguration("config_file").perform(context)
+    share = get_package_share_directory("voice_assistant")
+    _load_voice_assistant_env(share)
     cfg = _load_stack_config(config_file)
 
-    share = get_package_share_directory("voice_assistant")
     run_script = os.path.join(share, "scripts", "run_voice_stack_node.sh")
 
     sample_rate = str(cfg.get("sample_rate", 16000))

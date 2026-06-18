@@ -124,6 +124,8 @@ ros2 launch voice_assistant voice_full.launch.py
 
 默认配置仍使用本地 sherpa-onnx：`asr_backend: local`、`tts_backend: local`。
 云端能力通过配置和环境变量显式启用，密钥不要写入 YAML。
+`voice_stack.launch.py` 会自动读取 `src/voice_assistant/.env`；
+也可以用 `VOICE_ASSISTANT_DOTENV=/path/to/.env` 指定其他密钥文件。
 
 无密钥回退验证：
 
@@ -144,10 +146,10 @@ ros2 launch voice_assistant voice_full.launch.py config_file:=/tmp/voice_assista
 
 有密钥云端 TTS 验证：
 
+确认 `.env` 中已有 `XFYUN_TTS_APPID`、`XFYUN_TTS_API_KEY`、
+`XFYUN_TTS_API_SECRET` 后启动：
+
 ```bash
-export XFYUN_TTS_APPID=你的讯飞AppID
-export XFYUN_TTS_API_KEY=你的讯飞APIKey
-export XFYUN_TTS_API_SECRET=你的讯飞APISecret
 ros2 launch voice_assistant voice_full.launch.py config_file:=/tmp/voice_assistant_cloud_tts.yaml
 ```
 
