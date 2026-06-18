@@ -47,7 +47,7 @@ tts_max_chars_per_chunk: 80
 tts_sentence_pause: 0.40
 tts_clause_pause: 0.15
 # "local" | "iflytek_cloud" | "mimo_cloud"
-tts_backend: iflytek_cloud
+tts_backend: local
 cloud_tts_fallback_to_local: true
 
 # --- 小米 MiMo 云 TTS (复用 llm_base_url / LLM_API_KEY) ---
@@ -152,9 +152,9 @@ right_gripper:
 
 # --- LLM ---
 # provider: "ollama" | "openai" | "deepseek" | "anthropic"
-llm_provider: openai
-llm_model: mimo-v2.5
-llm_base_url: https://token-plan-cn.xiaomimimo.com/v1
+llm_provider: ollama
+llm_model: qwen2.5:0.5b
+llm_base_url: http://localhost:11434
 llm_max_history: 10
 llm_request_timeout: 30.0
 llm_system_prompt: |

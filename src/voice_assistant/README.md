@@ -52,15 +52,38 @@ ln -sf /path/to/smart-voice-robot/model/voice_models \
 
 ## 运行
 
+| Launch | 作用 | 唤醒后是否有语音回复 |
+|--------|------|---------------------|
+| `voice_stack.launch.py` | 仅底层：采集/KWS/VAD/ASR/TTS/播放 | **否**（无行为树） |
+| `voice_full.launch.py` | voice_stack + bt_manager | **是**（推荐） |
+| `voice_assistant.launch.py` | 仅行为树（需另起 voice_stack） | 是 |
+
+**唤醒词**（见 `model/voice_models/.../keywords.txt`）：你好小特、小特小特、小特同学、小科小科、小科同学。
+
 ```bash
 cd /home/nvidia/WorkSpace/KrtHumanRobot
 source install/setup.bash
 
-# 推荐：launch（内部调用 uv）
+# 仅验 KWS/采集（终端会打印 KWS 命中，但不会播报）
+ros2 launch voice_assistant voice_stack.launch.py
+
+# 完整唤醒闭环（推荐）
+ros2 launch voice_assistant voice_full.launch.py
+
+# 仅行为树（voice_stack 需另起）
 ros2 launch voice_assistant voice_assistant.launch.py
 
 # 或直接脚本
 bash src/voice_assistant/scripts/run_voice_node.sh
+```
+
+> **不要**用 `ros2 run voice_xxx ...` 或 colcon 入口直接跑语音节点，它们走系统 Python，**缺少 uv 依赖**（`sherpa_onnx`、`sounddevice` 等）。`voice_stack.launch.py` 与 `voice_assistant.launch.py` 内部均通过 `uv run` 启动。
+
+启动前确认 uv 依赖就绪：
+
+```bash
+cd src/voice_assistant
+uv run python -c "import sounddevice, sherpa_onnx; print('deps OK')"
 ```
 
 环境变量（launch 已自动设置，手动运行时可用）：
@@ -74,7 +97,28 @@ bash src/voice_assistant/scripts/run_voice_node.sh
 
 说明：旧 Web 监控面板已移除，统一使用 `py_trees_ros_tree_watcher` 观测树状态。
 
-> `ros2 run voice_assistant voice_node` 走系统 Python，**缺少 uv 依赖，不推荐**。请用 launch 或 `run_voice_node.sh`。
+> `ros2 run voice_assistant voice_node` 走系统 Python，**缺少 uv 依赖，不推荐**。请用 launch 或 `run_voice_node.sh` / `run_voice_stack_node.sh`。
+
+### voice_stack 栈级验收
+
+```bash
+ros2 launch voice_assistant voice_stack.launch.py
+# 另开终端：
+ros2 topic hz /voice/audio/raw              # 应约 10Hz，否则检查麦克风/input_device_hint
+ros2 topic echo /voice/kws/events --once    # 对麦说「你好小特」，应看到 KWS 命中日志与消息
+ros2 topic list | grep voice
+ros2 service list | grep voice
+```
+
+通过标准：7 个进程无 `ModuleNotFoundError`；启动日志含 `[Audio] 输入设备:`；topic 含 `/voice/audio/raw`、`/voice/kws/events`、`/voice/vad/events`；service 含 `/voice/asr/recognize`、`/voice/tts/synthesize`。
+
+### 完整唤醒验收
+
+```bash
+ros2 launch voice_assistant voice_full.launch.py
+```
+
+对麦克风说「你好小特」：终端出现 `唤醒成功!`，并 TTS 播报「我在，请说。」
 
 ## 配置
 
