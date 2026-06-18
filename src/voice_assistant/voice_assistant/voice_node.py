@@ -87,7 +87,7 @@ class VoiceAssistantNode(Node):
             SynthesizeSpeech, "/voice/tts/synthesize"
         )
         root = create_tree(self._config)
-        self._tree = BehaviourTree(root, unicode_tree_debug=monitor_enabled)
+        self._tree = BehaviourTree(root, unicode_tree_debug=False)
         self._tree.setup(node=self, timeout=30.0)
         self.set_parameters([
             Parameter(

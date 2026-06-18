@@ -38,17 +38,32 @@ class _without_proxy_env:
                 os.environ[key] = value
 
 
-def _create_llm(config: RobotConfig):
-    """根据 config.llm_provider 创建对应的 LangChain Chat Model 实例。"""
-    provider = config.llm_provider.lower()
+def _is_local_base_url(base_url: str | None) -> bool:
+    """判断 base_url 是否指向本机服务。"""
+    return bool(base_url) and (
+        "localhost" in base_url or "127.0.0.1" in base_url
+    )
+
+
+def _create_chat_model(
+    *,
+    provider: str,
+    model: str,
+    base_url: str = "",
+    api_key: str = "",
+    timeout: float | None = None,
+    max_retries: int | None = None,
+):
+    """创建 LangChain Chat Model，支持 OpenAI-compatible 云端和本地 Ollama。"""
+    provider = provider.lower()
 
     if provider == "ollama":
         with _without_proxy_env():
             from langchain_ollama import ChatOllama
 
             return ChatOllama(
-                model=config.llm_model,
-                base_url=config.llm_base_url,
+                model=model,
+                base_url=base_url,
                 client_kwargs={"trust_env": False},
                 sync_client_kwargs={"trust_env": False},
                 async_client_kwargs={"trust_env": False},
@@ -57,39 +72,82 @@ def _create_llm(config: RobotConfig):
     elif provider == "openai":
         from langchain_openai import ChatOpenAI
 
-        base_url = config.llm_base_url
-        if not base_url or "localhost" in base_url or "127.0.0.1" in base_url:
-            base_url = None
+        resolved_base_url = (
+            None if _is_local_base_url(base_url) else (base_url or None)
+        )
 
         return ChatOpenAI(
-            model=config.llm_model,
-            api_key=config.llm_api_key,
-            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            base_url=resolved_base_url,
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
     elif provider == "deepseek":
         from langchain_openai import ChatOpenAI
 
-        base_url = config.llm_base_url
-        if not base_url or "localhost" in base_url or "127.0.0.1" in base_url:
-            base_url = "https://api.deepseek.com"
+        resolved_base_url = base_url
+        if not resolved_base_url or _is_local_base_url(resolved_base_url):
+            resolved_base_url = "https://api.deepseek.com"
 
         return ChatOpenAI(
-            model=config.llm_model,
-            api_key=config.llm_api_key,
-            base_url=base_url,
+            model=model,
+            api_key=api_key,
+            base_url=resolved_base_url,
+            timeout=timeout,
+            max_retries=max_retries,
         )
 
     elif provider == "anthropic":
         from langchain_anthropic import ChatAnthropic
 
-        return ChatAnthropic(
-            model=config.llm_model,
-            api_key=config.llm_api_key,
-        )
+        kwargs = {"model": model, "api_key": api_key}
+        if timeout is not None:
+            kwargs["timeout"] = timeout
+        if max_retries is not None:
+            kwargs["max_retries"] = max_retries
+        return ChatAnthropic(**kwargs)
 
     else:
         raise ValueError(f"不支持的 LLM provider: {provider}")
+
+
+def _create_llm(config: RobotConfig):
+    """根据 config.llm_provider 创建对应的 LangChain Chat Model 实例。"""
+    return _create_chat_model(
+        provider=config.llm_provider,
+        model=config.llm_model,
+        base_url=config.llm_base_url,
+        api_key=config.llm_api_key,
+        timeout=config.llm_request_timeout,
+        max_retries=config.llm_max_retries,
+    )
+
+
+def _create_local_llm(config: RobotConfig):
+    """创建本地 LLM 回退模型。"""
+    return _create_chat_model(
+        provider=config.local_llm_provider,
+        model=config.local_llm_model,
+        base_url=config.local_llm_base_url,
+        timeout=config.llm_request_timeout,
+        max_retries=0,
+    )
+
+
+def _invoke_with_timeout(llm, messages, timeout: float):
+    """在线程中调用模型，超时后不阻塞等待底层网络请求结束。"""
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    future = executor.submit(llm.invoke, messages)
+    try:
+        return future.result(timeout=timeout)
+    finally:
+        executor.shutdown(wait=False, cancel_futures=True)
+
+
+def _is_cloud_llm(config: RobotConfig) -> bool:
+    return config.llm_provider.lower() != config.local_llm_provider.lower()
 
 
 class LLMDialogAction(Behaviour):
@@ -106,6 +164,7 @@ class LLMDialogAction(Behaviour):
         self.config = config
         self.conversation_history: list = []
         self.llm = None
+        self.local_llm = None
 
         self.blackboard = self.attach_blackboard_client(
             name="LLMDialogAction", namespace="dialog"
@@ -126,7 +185,7 @@ class LLMDialogAction(Behaviour):
             self.llm = _create_llm(self.config)
             self.logger.info(
                 f"LLM 已连接: provider={self.config.llm_provider}, "
-                f"model={self.config.llm_model}"
+                f"model={self.config.llm_model}, base_url={self.config.llm_base_url}"
             )
         except ImportError as e:
             self.logger.warning(
@@ -137,13 +196,36 @@ class LLMDialogAction(Behaviour):
         except Exception as e:
             self.logger.warning(f"LLM 初始化失败: {e}")
 
+    def _ensure_local_llm(self):
+        """确保本地回退 LLM 已创建。"""
+        if self.local_llm is None:
+            self.local_llm = _create_local_llm(self.config)
+            self.logger.info(
+                "本地 LLM 回退已连接: "
+                f"provider={self.config.local_llm_provider}, "
+                f"model={self.config.local_llm_model}, "
+                f"base_url={self.config.local_llm_base_url}"
+            )
+        return self.local_llm
+
     def update(self):
         if self.blackboard.intent != "chat":
             return Status.FAILURE
 
         if self.llm is None:
-            self.blackboard.response_text = "大模型未就绪，请稍后再试。"
-            return Status.SUCCESS
+            if not (
+                self.config.cloud_llm_fallback_to_local
+                and _is_cloud_llm(self.config)
+            ):
+                self.blackboard.response_text = "大模型未就绪，请稍后再试。"
+                return Status.SUCCESS
+            try:
+                self._ensure_local_llm()
+                self.logger.warning("云端 LLM 未就绪，直接使用本地回退。")
+            except Exception as fallback_err:
+                self.logger.error(f"本地 LLM 回退初始化失败: {fallback_err}")
+                self.blackboard.response_text = "抱歉，我暂时无法回答。"
+                return Status.SUCCESS
 
         command = self.blackboard.user_command
         self.logger.info(f"LLM 对话: {command}")
@@ -157,9 +239,35 @@ class LLMDialogAction(Behaviour):
                 HumanMessage(content=command),
             ]
 
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
-                future = executor.submit(self.llm.invoke, messages)
-                response = future.result(timeout=self.config.llm_request_timeout)
+            if self.llm is None:
+                response = _invoke_with_timeout(
+                    self.local_llm,
+                    messages,
+                    self.config.llm_request_timeout,
+                )
+            else:
+                try:
+                    response = _invoke_with_timeout(
+                        self.llm,
+                        messages,
+                        self.config.llm_request_timeout,
+                    )
+                except Exception as primary_err:
+                    if not (
+                        self.config.cloud_llm_fallback_to_local
+                        and _is_cloud_llm(self.config)
+                    ):
+                        raise
+                    self.logger.warning(
+                        "云端 LLM 调用失败，尝试本地回退: "
+                        f"provider={self.config.llm_provider}, "
+                        f"model={self.config.llm_model}, error={primary_err}"
+                    )
+                    response = _invoke_with_timeout(
+                        self._ensure_local_llm(),
+                        messages,
+                        self.config.llm_request_timeout,
+                    )
 
             # 更新对话历史
             self.conversation_history.append(HumanMessage(content=command))

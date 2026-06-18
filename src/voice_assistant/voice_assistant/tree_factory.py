@@ -42,7 +42,7 @@ def _create_speak_stage(config: RobotConfig) -> Behaviour:
         policy=py_trees.common.ParallelPolicy.SuccessOnOne(),
     )
     speak_or_interrupt.add_children([
-        SpeakResponse("Speak"),
+        SpeakResponse("Speak", config),
         WakeWordInterruptMonitor("WakeWordInterrupt", config),
     ])
     speak_stage.add_children([

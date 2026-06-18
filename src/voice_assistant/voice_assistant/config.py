@@ -114,6 +114,9 @@ class RobotConfig:
     # "local": 本地 sherpa-onnx 流式识别
     # "iflytek_cloud": 讯飞云识别
     asr_backend: str = "local"
+    asr_streaming_enabled: bool = True
+    asr_stream_timeout: float = 12.0
+    asr_stream_preroll_seconds: float = 0.5
     # "streaming": 逐帧上传(40ms)；"endpoint_once": 端点后一次性上传
     cloud_asr_strategy: str = "streaming"
     cloud_asr_fallback_to_local: bool = True
@@ -179,7 +182,8 @@ class RobotConfig:
     # --- 对话 ---
     dialog_timeout: float = 15.0  # 秒，无活动后超时回到 idle
     continuous_dialog: bool = False  # True 时回复后继续聆听；False 时回复后回到唤醒
-    interrupt_min_speech_seconds: float = 0.6  # TTS 启动后延迟启用打断
+    post_tts_listen_delay: float = 0.6  # TTS 播放结束后延迟进入聆听，降低回声误识别
+    interrupt_min_speech_seconds: float = 1.2  # TTS 启动后延迟启用打断
 
     # --- 相机 ---
     # 三路相机统一管理: head (头部 RealSense) / left_palm / right_palm
@@ -260,10 +264,10 @@ class RobotConfig:
 
     # --- LLM ---
     # provider: "ollama" | "openai" | "deepseek" | "anthropic"
-    llm_provider: str = "ollama"
-    llm_model: str = "qwen2.5:0.5b"
-    llm_base_url: str = "http://localhost:11434"
-    llm_api_key: str = "" if llm_provider == "ollama" else _read_env("LLM_API_KEY") # 在线模型的 API Key (ollama 不需要)
+    llm_provider: str = "openai"
+    llm_model: str = "mimo-v2.5"
+    llm_base_url: str = "https://token-plan-cn.xiaomimimo.com/v1"
+    llm_api_key: str = _read_env("LLM_API_KEY")  # 在线模型的 API Key (ollama 不需要)
     llm_system_prompt: str = (
         "你是一个机器人语音助手。回答要求：\n"
         "1. 用简短自然的口语化中文回答，像人在说话一样。\n"
@@ -274,18 +278,29 @@ class RobotConfig:
     )
     llm_max_history: int = 10  # 保留最近 N 轮对话历史
     llm_request_timeout: float = 12.0  # 单次 LLM 请求超时(秒)
+    llm_max_retries: int = 1
+    cloud_llm_fallback_to_local: bool = True
+    local_llm_provider: str = "ollama"
+    local_llm_model: str = "qwen2.5:0.5b"
+    local_llm_base_url: str = "http://localhost:11434"
 
     # --- VLM (视觉语言模型) ---
     # provider: "ollama" | "openai" | "deepseek" | "anthropic"
-    vlm_provider: str = "ollama"
-    vlm_model: str = "qwen3.5:0.8b"
-    vlm_base_url: str = "http://localhost:11434"
-    vlm_api_key: str = ""
+    vlm_provider: str = "openai"
+    vlm_model: str = "mimo-v2.5"
+    vlm_base_url: str = "https://token-plan-cn.xiaomimimo.com/v1"
+    vlm_api_key: str = _read_env("VLM_API_KEY", "LLM_API_KEY")
     vlm_system_prompt: str = (
         "你是一个机器人的视觉系统。根据图片内容，用简短自然的中文描述你看到的场景。\n"
         "用第一人称：我看到了。\n"
         "禁止输出 emoji、表情符号、markdown 格式。\n"
     )
+    vlm_request_timeout: float = 30.0
+    vlm_max_retries: int = 1
+    cloud_vlm_fallback_to_local: bool = True
+    local_vlm_provider: str = "ollama"
+    local_vlm_model: str = "qwen3.5:0.8b"
+    local_vlm_base_url: str = "http://localhost:11434"
 
     # --- 任务规划器 (LLM Function Calling) ---
     # True 时使用 LLM 解析多步指令，False 时使用关键词匹配（原有行为）

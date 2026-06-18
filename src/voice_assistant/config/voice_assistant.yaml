@@ -25,6 +25,9 @@ kws_num_trailing_blanks: 1
 # "local": 本地 sherpa-onnx 流式识别
 # "iflytek_cloud": 讯飞云识别
 asr_backend: local
+asr_streaming_enabled: true
+asr_stream_timeout: 12.0
+asr_stream_preroll_seconds: 0.5
 # "streaming": 逐帧上传(40ms)；"endpoint_once": 端点后一次性上传
 cloud_asr_strategy: streaming
 cloud_asr_fallback_to_local: true
@@ -82,7 +85,8 @@ output_device_hint: C-Media
 # --- 对话 ---
 dialog_timeout: 15.0  # 秒，无活动后超时回到 idle
 continuous_dialog: false  # false: 每次回复后回到唤醒；true: 唤醒后连续对话
-interrupt_min_speech_seconds: 0.6  # TTS 启动后延迟启用打断
+post_tts_listen_delay: 0.6  # TTS 播放结束后延迟进入聆听，降低回声误识别
+interrupt_min_speech_seconds: 1.2  # TTS 启动后延迟启用打断
 
 # --- 相机 ---
 # 后端: "local" (本机 USB) | "http" (远端 FastAPI) | "ros" (rclpy + cv_bridge)
@@ -153,11 +157,16 @@ right_gripper:
 
 # --- LLM ---
 # provider: "ollama" | "openai" | "deepseek" | "anthropic"
-llm_provider: ollama
-llm_model: qwen2.5:0.5b
-llm_base_url: http://localhost:11434
+llm_provider: openai
+llm_model: mimo-v2.5
+llm_base_url: https://token-plan-cn.xiaomimimo.com/v1
 llm_max_history: 10
 llm_request_timeout: 30.0
+llm_max_retries: 1
+cloud_llm_fallback_to_local: true
+local_llm_provider: ollama
+local_llm_model: qwen2.5:0.5b
+local_llm_base_url: http://localhost:11434
 llm_system_prompt: |
   你是一个机器人语音助手。回答要求：
   1. 用简短自然的口语化中文回答，像人在说话一样。
@@ -171,6 +180,12 @@ llm_system_prompt: |
 vlm_provider: openai
 vlm_model: mimo-v2.5
 vlm_base_url: https://token-plan-cn.xiaomimimo.com/v1
+vlm_request_timeout: 30.0
+vlm_max_retries: 1
+cloud_vlm_fallback_to_local: true
+local_vlm_provider: ollama
+local_vlm_model: qwen3.5:0.8b
+local_vlm_base_url: http://localhost:11434
 vlm_system_prompt: |
   你是一个机器人的视觉系统。根据图片内容，用中文描述你看到的场景。
   用第一人称：我看到了。
@@ -208,7 +223,7 @@ intent_patterns:
 robot_arm_enabled: true
 robot_arm_robot: nero
 robot_arm_comm: can
-robot_arm_firmware: v111
+robot_arm_firmware: v112
 robot_arm_channels:
   left: can_left
   right: can_right

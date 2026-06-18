@@ -95,7 +95,9 @@ uv run python -c "import sounddevice, sherpa_onnx; print('deps OK')"
 - `VOICE_SNAPSHOT_BLACKBOARD_DATA` — 快照是否附加 blackboard 数据
 - `VOICE_SNAPSHOT_BLACKBOARD_ACTIVITY` — 快照是否附加 blackboard 活动流
 
-说明：旧 Web 监控面板已移除，统一使用 `py_trees_ros_tree_watcher` 观测树状态。
+说明：旧 Web 监控面板已移除，统一使用 `py-trees-tree-watcher`
+观测树状态。`VOICE_ENABLE_MONITOR=true` 只开启 snapshot 发布，不会把
+行为树逐 tick 追加到主节点日志。
 
 > `ros2 run voice_assistant voice_node` 走系统 Python，**缺少 uv 依赖，不推荐**。请用 launch 或 `run_voice_node.sh` / `run_voice_stack_node.sh`。
 
@@ -149,6 +151,30 @@ ros2 launch voice_assistant voice_full.launch.py
 
 云 ASR/TTS 联合验证时，将临时配置里的 `asr_backend` 切到 `iflytek_cloud`，并同时设置 `XFYUN_IAT_*` 与 `XFYUN_TTS_*`。完成多轮“唤醒 -> 识别 -> 回复 -> 播放”，检查节点不退出且没有重复 playback server。
 
+### 小米 MiMo LLM/VLM 验收
+
+默认配置使用小米 MiMo OpenAI-compatible 接口处理闲聊和视觉理解：
+`llm_provider: openai`、`llm_model: mimo-v2.5`、
+`llm_base_url: https://token-plan-cn.xiaomimimo.com/v1`；VLM 同样默认
+`vlm_provider: openai`、`vlm_model: mimo-v2.5`。密钥只从环境读取，
+`.env` 中配置 `LLM_API_KEY`；视觉可单独配置 `VLM_API_KEY`，未配置时复用
+`LLM_API_KEY`。
+
+关键词动作仍优先。`use_llm_planner: false` 时行为树路径为
+`RecognizeIntent -> ActionSelector -> LLMDialog fallback`，所以“拍照”、
+“左手张开”、“介绍一下你自己”等命中关键词的指令仍走本地动作；只有没有命中关键词的闲聊问题才进入 LLM 对话。
+
+```bash
+ros2 launch voice_assistant voice_full.launch.py
+```
+
+唤醒后说一个不匹配关键词的问题，日志应显示
+`provider=openai, model=mimo-v2.5`，并由云端生成简短中文回复。说“看一下前面有什么”，应使用 `mimo-v2.5` 完成视觉描述。
+
+云端失败回退验证：临时使用错误密钥或断网，再发起闲聊或视觉请求。日志应先记录云端 LLM/VLM 失败，再尝试本地 Ollama：
+对话回退 `local_llm_model: qwen2.5:0.5b`，视觉回退
+`local_vlm_model: qwen3.5:0.8b`。若本地 Ollama 不可用，闲聊返回明确失败话术；若本地 VLM 不可用或不支持图片输入，回复“视觉分析暂时不可用”。
+
 ## 配置
 
 默认：`config/voice_assistant.yaml`（安装后 `share/voice_assistant/config/`）。
@@ -176,5 +202,8 @@ uv run python -c "from voice_assistant.config import default_config; print(defau
 ```
 
 ```bash
-ros2 run py_trees_ros_tree_watcher tree_watcher
+py-trees-tree-watcher
 ```
+
+`py-trees-tree-watcher` 需要在单独终端直接运行，它会原地刷新树快照；不要通过
+`ros2 launch` 聚合输出查看，否则 launch 日志仍会按行追加。

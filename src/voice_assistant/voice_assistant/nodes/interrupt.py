@@ -76,6 +76,8 @@ class WakeWordInterruptMonitor(Behaviour):
         except KeyError:
             speak_start_time = 0.0
         if time.time() - speak_start_time < self.config.interrupt_min_speech_seconds:
+            self._kws_triggered = False
+            self._last_keyword = ""
             return Status.RUNNING
 
         if self._kws_triggered:

@@ -5,12 +5,12 @@ from __future__ import annotations
 import time
 
 import py_trees
+import rclpy
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 from voice_interfaces.srv import StopPlayback, SynthesizeSpeech
 
 from voice_assistant.config import RobotConfig
-from voice_assistant.ros_voice import speak_blocking
 
 
 class SpeakResponse(Behaviour):
@@ -25,13 +25,15 @@ class SpeakResponse(Behaviour):
     可以并行 tick，检测到唤醒词则 Parallel 终止，触发 terminate() 停播。
     """
 
-    def __init__(self, name: str):
+    def __init__(self, name: str, config: RobotConfig):
         super().__init__(name)
+        self._config = config
         self._node = None
         self._tts_client = None
         self._stop_client = None
         self._synthesize_future = None
         self._play_deadline = 0.0
+        self._cooldown_deadline = 0.0
         self._response_text = ""
         self._play_started = False
         self._finished = False
@@ -72,6 +74,7 @@ class SpeakResponse(Behaviour):
         self._finished = False
         self._synthesize_future = None
         self._play_deadline = 0.0
+        self._cooldown_deadline = 0.0
 
         if not self._response_text:
             return
@@ -106,6 +109,14 @@ class SpeakResponse(Behaviour):
             return Status.RUNNING
 
         if self._play_deadline > 0.0 and time.time() < self._play_deadline:
+            return Status.RUNNING
+
+        if self._cooldown_deadline <= 0.0:
+            delay = max(0.0, float(self._config.post_tts_listen_delay))
+            self._cooldown_deadline = time.time() + delay
+            return Status.RUNNING
+
+        if time.time() < self._cooldown_deadline:
             return Status.RUNNING
 
         self._finish()
@@ -145,6 +156,7 @@ class SpeakResponse(Behaviour):
 
     def _stop_speaking(self) -> None:
         self._play_deadline = 0.0
+        self._cooldown_deadline = 0.0
         if self._stop_client is not None and self._stop_client.wait_for_service(timeout_sec=0.1):
             req = StopPlayback.Request()
             req.reason = "behaviour_terminate"
@@ -175,5 +187,30 @@ class WakeupResponse(Behaviour):
 
     def update(self):
         text = self.config.tts_responses.get("wakeup", "我在，请说。")
-        speak_blocking(self._node, self._tts_client, text)
+        self._speak_and_wait(text)
         return Status.SUCCESS
+
+    def _speak_and_wait(self, text: str) -> bool:
+        """提交唤醒提示音，并等待估算播放时长和回声冷却窗口。"""
+        if not text.strip() or self._node is None or self._tts_client is None:
+            return False
+        if not self._tts_client.wait_for_service(timeout_sec=0.2):
+            return False
+        req = SynthesizeSpeech.Request()
+        req.text = text
+        req.language = "zh-CN"
+        req.style = "default"
+        req.priority = 2
+        future = self._tts_client.call_async(req)
+        try:
+            rclpy.spin_until_future_complete(self._node, future, timeout_sec=3.0)
+            resp = future.result()
+            if resp is None or not resp.accepted:
+                return False
+            wait_s = max(0.0, float(resp.estimated_duration_sec))
+            wait_s += max(0.0, float(self.config.post_tts_listen_delay))
+            if wait_s > 0.0:
+                time.sleep(wait_s)
+            return True
+        except Exception:
+            return False

@@ -197,6 +197,10 @@ def _launch_setup(context, *args, **kwargs):
                 **common_voice_params,
                 "asr_model_dir": cfg.get("asr_model_dir", ""),
                 "asr_backend": cfg.get("asr_backend", "local"),
+                "asr_stream_timeout": float(cfg.get("asr_stream_timeout", 12.0)),
+                "asr_stream_preroll_seconds": float(
+                    cfg.get("asr_stream_preroll_seconds", 0.5)
+                ),
                 "cloud_asr_fallback_to_local": bool(cfg.get("cloud_asr_fallback_to_local", True)),
                 "cloud_asr_strategy": cfg.get("cloud_asr_strategy", "streaming"),
                 "iflytek_iat_app_id": os.environ.get(

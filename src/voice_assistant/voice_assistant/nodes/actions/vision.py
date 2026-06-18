@@ -12,6 +12,10 @@ from py_trees.common import Status
 
 from voice_assistant.config import RobotConfig
 from voice_assistant.nodes.actions.camera import capture_frame_as_base64
+from voice_assistant.nodes.actions.llm_dialog import (
+    _create_chat_model,
+    _invoke_with_timeout,
+)
 from voice_assistant.nodes.actions.robot_arm import _normalize_side, execute_robot_arm
 
 
@@ -21,49 +25,29 @@ from voice_assistant.nodes.actions.robot_arm import _normalize_side, execute_rob
 
 def _create_vlm(config: RobotConfig):
     """根据 config.vlm_provider 创建 LangChain Chat Model (需支持多模态)。"""
-    provider = config.vlm_provider.lower()
+    return _create_chat_model(
+        provider=config.vlm_provider,
+        model=config.vlm_model,
+        base_url=config.vlm_base_url,
+        api_key=config.vlm_api_key,
+        timeout=config.vlm_request_timeout,
+        max_retries=config.vlm_max_retries,
+    )
 
-    if provider == "ollama":
-        from langchain_ollama import ChatOllama
 
-        return ChatOllama(
-            model=config.vlm_model,
-            base_url=config.vlm_base_url,
-        )
+def _create_local_vlm(config: RobotConfig):
+    """创建本地 VLM 回退模型。"""
+    return _create_chat_model(
+        provider=config.local_vlm_provider,
+        model=config.local_vlm_model,
+        base_url=config.local_vlm_base_url,
+        timeout=config.vlm_request_timeout,
+        max_retries=0,
+    )
 
-    if provider == "openai":
-        from langchain_openai import ChatOpenAI
 
-        base_url = config.vlm_base_url
-        if not base_url or "localhost" in base_url or "127.0.0.1" in base_url:
-            base_url = None
-        return ChatOpenAI(
-            model=config.vlm_model,
-            api_key=config.vlm_api_key,
-            base_url=base_url,
-        )
-
-    if provider == "deepseek":
-        from langchain_openai import ChatOpenAI
-
-        base_url = config.vlm_base_url
-        if not base_url or "localhost" in base_url or "127.0.0.1" in base_url:
-            base_url = "https://api.deepseek.com"
-        return ChatOpenAI(
-            model=config.vlm_model,
-            api_key=config.vlm_api_key,
-            base_url=base_url,
-        )
-
-    if provider == "anthropic":
-        from langchain_anthropic import ChatAnthropic
-
-        return ChatAnthropic(
-            model=config.vlm_model,
-            api_key=config.vlm_api_key,
-        )
-
-    raise ValueError(f"不支持的 VLM provider: {provider}")
+def _is_cloud_vlm(config: RobotConfig) -> bool:
+    return config.vlm_provider.lower() != config.local_vlm_provider.lower()
 
 
 # ============================================================================
@@ -81,7 +65,6 @@ def execute_describe_scene(
     cid = camera_id or config.default_camera
     b64, filepath = capture_frame_as_base64(config, save_copy=True, camera_id=cid)
 
-    vlm = _create_vlm(config)
     messages = [
         SystemMessage(content=config.vlm_system_prompt),
         HumanMessage(content=[
@@ -92,8 +75,38 @@ def execute_describe_scene(
             },
         ]),
     ]
-    response = vlm.invoke(messages)
-    desc = response.content
+
+    try:
+        vlm = _create_vlm(config)
+        desc = _invoke_with_timeout(vlm, messages, config.vlm_request_timeout).content
+    except Exception as primary_err:
+        if not (
+            config.cloud_vlm_fallback_to_local and _is_cloud_vlm(config)
+        ):
+            raise
+        logger.warning(
+            "云端 VLM 调用失败，尝试本地回退: provider={}, model={}, error={}",
+            config.vlm_provider, config.vlm_model, primary_err,
+        )
+        try:
+            local_vlm = _create_local_vlm(config)
+            desc = _invoke_with_timeout(
+                local_vlm, messages, config.vlm_request_timeout,
+            ).content
+            logger.info(
+                "本地 VLM 回退完成: provider={}, model={}",
+                config.local_vlm_provider, config.local_vlm_model,
+            )
+        except Exception as fallback_err:
+            logger.error(
+                "本地 VLM 回退失败，模型可能不可用或不支持图片输入: "
+                "provider={}, model={}, error={}",
+                config.local_vlm_provider,
+                config.local_vlm_model,
+                fallback_err,
+            )
+            return "视觉分析暂时不可用。"
+
     logger.info(
         "视觉分析完成 [{}]: {} (图片: {})",
         cid, desc[:80], filepath or "未保存",
