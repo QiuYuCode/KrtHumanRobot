@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import concurrent.futures
+import os
 import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
@@ -10,17 +11,48 @@ from py_trees.common import Status
 from voice_assistant.config import RobotConfig
 
 
+_PROXY_ENV_KEYS = (
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "all_proxy",
+)
+
+
+class _without_proxy_env:
+    """临时屏蔽代理环境变量，避免本地 Ollama 被无效 socks:// 代理影响。"""
+
+    def __enter__(self):
+        self._saved = {key: os.environ.get(key) for key in _PROXY_ENV_KEYS}
+        for key in _PROXY_ENV_KEYS:
+            os.environ.pop(key, None)
+
+    def __exit__(self, exc_type, exc, tb):
+        del exc_type, exc, tb
+        for key, value in self._saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+
+
 def _create_llm(config: RobotConfig):
     """根据 config.llm_provider 创建对应的 LangChain Chat Model 实例。"""
     provider = config.llm_provider.lower()
 
     if provider == "ollama":
-        from langchain_ollama import ChatOllama
+        with _without_proxy_env():
+            from langchain_ollama import ChatOllama
 
-        return ChatOllama(
-            model=config.llm_model,
-            base_url=config.llm_base_url,
-        )
+            return ChatOllama(
+                model=config.llm_model,
+                base_url=config.llm_base_url,
+                client_kwargs={"trust_env": False},
+                sync_client_kwargs={"trust_env": False},
+                async_client_kwargs={"trust_env": False},
+            )
 
     elif provider == "openai":
         from langchain_openai import ChatOpenAI
