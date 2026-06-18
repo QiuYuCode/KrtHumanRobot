@@ -7,11 +7,13 @@ from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 
 from voice_assistant.config import RobotConfig
+from voice_assistant.ros_voice import speak_blocking
 from voice_assistant.nodes.actions.camera import execute_take_photo, execute_record_video
 from voice_assistant.nodes.actions.gripper import execute_gripper_action
 from voice_assistant.nodes.actions.navigation import execute_navigate
 from voice_assistant.nodes.actions.robot_arm import execute_robot_arm
 from voice_assistant.nodes.actions.vision import execute_describe_scene
+from voice_interfaces.srv import SynthesizeSpeech
 
 
 class PlanExecutor(Behaviour):
@@ -25,10 +27,11 @@ class PlanExecutor(Behaviour):
     response_text 作为纯对话回复。
     """
 
-    def __init__(self, name: str, config: RobotConfig, engine=None):
+    def __init__(self, name: str, config: RobotConfig):
         super().__init__(name)
         self._config = config
-        self._engine = engine
+        self._node = None
+        self._tts_client = None
 
         self.blackboard = self.attach_blackboard_client(
             name="PlanExecutor", namespace="dialog"
@@ -42,6 +45,13 @@ class PlanExecutor(Behaviour):
         self.blackboard.register_key(
             key="response_text", access=py_trees.common.Access.WRITE
         )
+
+    def setup(self, **kwargs):
+        self._node = kwargs.get("node")
+        if self._node is not None:
+            self._tts_client = self._node.create_client(
+                SynthesizeSpeech, "/voice/tts/synthesize"
+            )
 
     def _execute_action(self, name: str, args: dict) -> str:
         """根据动作名称分发到对应的执行函数。"""
@@ -101,17 +111,15 @@ class PlanExecutor(Behaviour):
                 result = self._execute_action(name, args)
                 results.append(result)
                 self.logger.info(f"  步骤 {i} 完成: {result}")
-                if self._engine is not None:
-                    self._engine.speak_blocking(f"第{i}步完成。{result}")
+                self._speak(f"第{i}步完成。{result}")
             except Exception as e:
                 error_msg = f"{name} 执行失败: {e}"
                 results.append(error_msg)
                 self.logger.error(f"  步骤 {i} 失败: {e}")
-                if self._engine is not None:
-                    self._engine.speak_blocking(f"第{i}步失败。{error_msg}")
+                self._speak(f"第{i}步失败。{error_msg}")
 
-        if self._engine is not None:
-            self.blackboard.response_text = "全部步骤执行完成。还有什么需要做的吗？"
-        else:
-            self.blackboard.response_text = "；".join(results)
+        self.blackboard.response_text = "；".join(results) if results else "计划执行完成。"
         return Status.SUCCESS
+
+    def _speak(self, text: str) -> None:
+        speak_blocking(self._node, self._tts_client, text)

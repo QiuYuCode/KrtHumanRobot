@@ -8,6 +8,8 @@ from py_trees.common import Status
 
 from voice_assistant.config import RobotConfig
 from voice_assistant.nodes.actions.llm_dialog import _create_llm
+from voice_assistant.ros_voice import speak_blocking
+from voice_interfaces.srv import SynthesizeSpeech
 
 
 # ============================================================================
@@ -106,14 +108,15 @@ class LLMTaskPlanner(Behaviour):
     - 无 tool_calls → 纯对话回复，intent = "chat"，直接写 response_text
     """
 
-    def __init__(self, name: str, config: RobotConfig, engine=None):
+    def __init__(self, name: str, config: RobotConfig):
         super().__init__(name)
         self.config = config
-        self.engine = engine
         self.conversation_history: list = []
         self.llm = None
         self.llm_with_tools = None
         self.tools = None
+        self._node = None
+        self._tts_client = None
 
         self.blackboard = self.attach_blackboard_client(
             name="LLMTaskPlanner", namespace="dialog"
@@ -132,6 +135,11 @@ class LLMTaskPlanner(Behaviour):
         )
 
     def setup(self, **kwargs):
+        self._node = kwargs.get("node")
+        if self._node is not None:
+            self._tts_client = self._node.create_client(
+                SynthesizeSpeech, "/voice/tts/synthesize"
+            )
         try:
             self.llm = _create_llm(self.config)
             self.tools = _build_planner_tools()
@@ -157,8 +165,7 @@ class LLMTaskPlanner(Behaviour):
             return Status.SUCCESS
 
         self.logger.info(f"规划指令: {command}")
-        if self.engine is not None:
-            self.engine.speak_blocking("好的，我先规划一下。")
+        self._speak("好的，我先规划一下。")
 
         try:
             from langchain_core.messages import HumanMessage, SystemMessage
@@ -212,3 +219,6 @@ class LLMTaskPlanner(Behaviour):
             self.blackboard.response_text = "抱歉，我暂时无法理解您的指令。"
 
         return Status.SUCCESS
+
+    def _speak(self, text: str) -> None:
+        speak_blocking(self._node, self._tts_client, text)

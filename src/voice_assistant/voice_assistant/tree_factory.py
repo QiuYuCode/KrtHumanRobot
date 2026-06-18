@@ -6,7 +6,6 @@ import py_trees
 from py_trees.behaviour import Behaviour
 
 from voice_assistant.config import RobotConfig
-from voice_assistant.engine import VoiceEngine
 from voice_assistant.nodes import (
     BackToWakeUp,
     DefaultResponse,
@@ -35,7 +34,7 @@ from voice_assistant.nodes import (
 )
 
 
-def _create_speak_stage(engine: VoiceEngine, config: RobotConfig) -> Behaviour:
+def _create_speak_stage(config: RobotConfig) -> Behaviour:
     """构建播报与打断阶段。"""
     speak_stage = py_trees.composites.Sequence(name="SpeakStage", memory=False)
     speak_or_interrupt = py_trees.composites.Parallel(
@@ -43,12 +42,12 @@ def _create_speak_stage(engine: VoiceEngine, config: RobotConfig) -> Behaviour:
         policy=py_trees.common.ParallelPolicy.SuccessOnOne(),
     )
     speak_or_interrupt.add_children([
-        SpeakResponse("Speak", engine),
-        WakeWordInterruptMonitor("WakeWordInterrupt", engine, config),
+        SpeakResponse("Speak"),
+        WakeWordInterruptMonitor("WakeWordInterrupt", config),
     ])
     speak_stage.add_children([
         speak_or_interrupt,
-        ResetWakeWordInterruptState("ResetWakeWordInterrupt", engine, config),
+        ResetWakeWordInterruptState("ResetWakeWordInterrupt", config),
     ])
     return speak_stage
 
@@ -87,7 +86,6 @@ def _create_keyword_dialog_loop(
 
 
 def _create_planner_dialog_loop(
-    engine: VoiceEngine,
     config: RobotConfig,
     listen_node: Behaviour,
     speak_stage: Behaviour,
@@ -97,25 +95,25 @@ def _create_planner_dialog_loop(
     dialog_loop.add_children([
         InitializeDialogBlackboard(),
         listen_node,
-        LLMTaskPlanner("Planner", config=config, engine=engine),
-        PlanExecutor("Executor", config=config, engine=engine),
+        LLMTaskPlanner("Planner", config=config),
+        PlanExecutor("Executor", config=config),
         speak_stage,
         DialogContinueGuard("ContinueGuard"),
     ])
     return dialog_loop
 
 
-def create_tree(engine: VoiceEngine, config: RobotConfig) -> Behaviour:
+def create_tree(config: RobotConfig) -> Behaviour:
     """构建完整语音对话行为树（仅结构，不负责执行控制）。"""
     listen_node = (
-        ListenCloudCommand("ListenCloud", engine)
+        ListenCloudCommand("ListenCloud", config)
         if config.asr_backend == "iflytek_cloud"
-        else ListenCommand("Listen", engine)
+        else ListenCommand("Listen", config)
     )
-    speak_stage = _create_speak_stage(engine, config)
+    speak_stage = _create_speak_stage(config)
 
     dialog_loop = (
-        _create_planner_dialog_loop(engine, config, listen_node, speak_stage)
+        _create_planner_dialog_loop(config, listen_node, speak_stage)
         if config.use_llm_planner
         else _create_keyword_dialog_loop(config, listen_node, speak_stage)
     )
@@ -129,8 +127,8 @@ def create_tree(engine: VoiceEngine, config: RobotConfig) -> Behaviour:
 
     root = py_trees.composites.Sequence(name="Root", memory=True)
     root.add_children([
-        WaitForWakeWord("WakeWord", engine),
-        WakeupResponse("WakeupSound", engine, config),
+        WaitForWakeWord("WakeWord"),
+        WakeupResponse("WakeupSound", config),
         dialog_entry,
     ])
     return root

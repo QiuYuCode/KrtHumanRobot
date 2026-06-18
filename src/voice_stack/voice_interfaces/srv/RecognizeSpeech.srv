@@ -1,0 +1,8 @@
+voice_interfaces/VoiceAudioFrame audio
+string backend
+---
+bool success
+string text
+float32 confidence
+string backend_used
+string error_message

@@ -1,10 +1,17 @@
 """语音合成播放节点"""
 
+from __future__ import annotations
+
 import time
 
 import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
+from voice_interfaces.srv import StopPlayback, SynthesizeSpeech
+
+from voice_assistant.config import RobotConfig
+from voice_assistant.ros_voice import speak_blocking
+
 
 class SpeakResponse(Behaviour):
     """
@@ -18,9 +25,13 @@ class SpeakResponse(Behaviour):
     可以并行 tick，检测到唤醒词则 Parallel 终止，触发 terminate() 停播。
     """
 
-    def __init__(self, name: str, engine):
+    def __init__(self, name: str):
         super().__init__(name)
-        self.engine = engine
+        self._node = None
+        self._tts_client = None
+        self._stop_client = None
+        self._synthesize_future = None
+        self._play_deadline = 0.0
         self._response_text = ""
         self._play_started = False
         self._finished = False
@@ -44,10 +55,23 @@ class SpeakResponse(Behaviour):
             key="last_activity_time", access=py_trees.common.Access.WRITE
         )
 
+    def setup(self, **kwargs):
+        self._node = kwargs.get("node")
+        if self._node is None:
+            return
+        self._tts_client = self._node.create_client(
+            SynthesizeSpeech, "/voice/tts/synthesize"
+        )
+        self._stop_client = self._node.create_client(
+            StopPlayback, "/voice/playback/stop"
+        )
+
     def initialise(self):
         self._response_text = getattr(self.blackboard, "response_text", "")
         self._play_started = False
         self._finished = False
+        self._synthesize_future = None
+        self._play_deadline = 0.0
 
         if not self._response_text:
             return
@@ -55,7 +79,7 @@ class SpeakResponse(Behaviour):
         self.logger.info(f"机器人说: {self._response_text}")
         self.blackboard.is_speaking = True
         self.blackboard.speak_start_time = time.time()
-        self._play_started = self.engine.start_speaking(self._response_text)
+        self._play_started = self._start_speaking()
         if not self._play_started:
             self._finish()
 
@@ -67,7 +91,21 @@ class SpeakResponse(Behaviour):
             self._finish()
             return Status.SUCCESS
 
-        if self.engine.is_speaking_active():
+        if self._synthesize_future is not None:
+            if not self._synthesize_future.done():
+                return Status.RUNNING
+            resp = self._synthesize_future.result()
+            self._synthesize_future = None
+            if resp is None or not resp.accepted:
+                self.logger.warning(
+                    f"TTS 服务调用失败: {getattr(resp, 'error_message', 'unknown')}"
+                )
+                self._finish()
+                return Status.SUCCESS
+            self._play_deadline = time.time() + max(0.05, float(resp.estimated_duration_sec))
+            return Status.RUNNING
+
+        if self._play_deadline > 0.0 and time.time() < self._play_deadline:
             return Status.RUNNING
 
         self._finish()
@@ -75,8 +113,9 @@ class SpeakResponse(Behaviour):
 
     def terminate(self, new_status):
         """被打断或正常结束时，确保停止播放并重置标志"""
+        del new_status
         if self._play_started and not self._finished:
-            self.engine.stop_speaking()
+            self._stop_speaking()
         try:
             self.blackboard.is_speaking = False
             self.blackboard.speak_start_time = 0.0
@@ -87,17 +126,29 @@ class SpeakResponse(Behaviour):
         """播放结束的清理"""
         if self._finished:
             return
-        self.engine.stop_speaking()
+        self._stop_speaking()
         self.blackboard.is_speaking = False
         self.blackboard.speak_start_time = 0.0
         self.blackboard.last_activity_time = time.time()
         self._finished = True
 
-        # 写入监控对话历史（仅当监控已启用时）
-        monitor = getattr(self.engine, "monitor", None)
-        if monitor is not None and self._response_text:
-            user_cmd = getattr(self.blackboard, "user_command", "")
-            monitor.log_conversation(user_cmd, self._response_text)
+    def _start_speaking(self) -> bool:
+        if self._tts_client is not None and self._tts_client.wait_for_service(timeout_sec=0.2):
+            req = SynthesizeSpeech.Request()
+            req.text = self._response_text
+            req.language = "zh-CN"
+            req.style = "default"
+            req.priority = 1
+            self._synthesize_future = self._tts_client.call_async(req)
+            return True
+        return False
+
+    def _stop_speaking(self) -> None:
+        self._play_deadline = 0.0
+        if self._stop_client is not None and self._stop_client.wait_for_service(timeout_sec=0.1):
+            req = StopPlayback.Request()
+            req.reason = "behaviour_terminate"
+            self._stop_client.call_async(req)
 
 
 class WakeupResponse(Behaviour):
@@ -108,12 +159,21 @@ class WakeupResponse(Behaviour):
     因为是极短的提示音 (~1 秒)，阻塞不影响体验。
     """
 
-    def __init__(self, name: str, engine, config):
+    def __init__(self, name: str, config: RobotConfig):
         super().__init__(name)
-        self.engine = engine
         self.config = config
+        self._node = None
+        self._tts_client = None
+
+    def setup(self, **kwargs):
+        self._node = kwargs.get("node")
+        if self._node is None:
+            return
+        self._tts_client = self._node.create_client(
+            SynthesizeSpeech, "/voice/tts/synthesize"
+        )
 
     def update(self):
         text = self.config.tts_responses.get("wakeup", "我在，请说。")
-        self.engine.speak_blocking(text)
+        speak_blocking(self._node, self._tts_client, text)
         return Status.SUCCESS

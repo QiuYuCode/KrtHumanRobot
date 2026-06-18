@@ -1,4 +1,4 @@
-"""语音助手 ROS2 节点：py_trees_ros 驱动行为树 + VoiceEngine。"""
+"""语音助手 ROS2 节点：py_trees_ros 驱动行为树（ROS 客户端编排）。"""
 
 from __future__ import annotations
 
@@ -10,11 +10,13 @@ import rclpy
 from loguru import logger
 from py_trees.common import Duration, Status
 from py_trees_ros.trees import BehaviourTree
+from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.parameter import Parameter
+from voice_interfaces.action import PlayAudio
+from voice_interfaces.srv import SynthesizeSpeech
 
 from voice_assistant.config import RobotConfig, load_config
-from voice_assistant.engine import VoiceEngine
 from voice_assistant.tree_factory import create_tree
 
 
@@ -81,10 +83,10 @@ class VoiceAssistantNode(Node):
         )
         self._config.enable_monitor = monitor_enabled
 
-        self._engine = VoiceEngine(self._config)
-        self._engine.start()
-
-        root = create_tree(self._engine, self._config)
+        self._tts_client = self.create_client(
+            SynthesizeSpeech, "/voice/tts/synthesize"
+        )
+        root = create_tree(self._config)
         self._tree = BehaviourTree(root, unicode_tree_debug=monitor_enabled)
         self._tree.setup(node=self, timeout=30.0)
         self.set_parameters([
@@ -111,11 +113,6 @@ class VoiceAssistantNode(Node):
         ])
 
         self._tick_ms = max(10, int(tick_ms))
-        self._tree.tick_tock(
-            period_ms=self._tick_ms,
-            pre_tick_handler=_pre_tick_healthcheck,
-            post_tick_handler=_post_tick_reset_root,
-        )
 
         self.get_logger().info("语音助手已启动，等待唤醒词...")
         self.get_logger().info(f"  配置文件: {config_path or '默认'}")
@@ -125,18 +122,52 @@ class VoiceAssistantNode(Node):
         )
 
         if self._config.startup_sound_enabled:
-            self._engine.speak_blocking(self._config.startup_sound_text)
+            self._speak_startup(self._config.startup_sound_text)
+
+        self._tree.tick_tock(
+            period_ms=self._tick_ms,
+            pre_tick_handler=_pre_tick_healthcheck,
+            post_tick_handler=_post_tick_reset_root,
+        )
 
     def destroy_node(self) -> bool:
         try:
             self._tree.shutdown()
         except Exception as exc:
             self.get_logger().warning(f"行为树 shutdown 异常: {exc}")
-        try:
-            self._engine.stop()
-        except Exception as exc:
-            self.get_logger().warning(f"VoiceEngine stop 异常: {exc}")
         return super().destroy_node()
+
+    def _speak_startup(self, text: str) -> None:
+        play_client = ActionClient(self, PlayAudio, "/voice/playback/play")
+        req = SynthesizeSpeech.Request()
+        req.text = text
+        req.language = "zh-CN"
+        req.style = "default"
+        req.priority = 2
+
+        deadline = time.time() + 30.0
+        while time.time() < deadline:
+            rclpy.spin_once(self, timeout_sec=0.1)
+            if self._tts_client.service_is_ready() and play_client.server_is_ready():
+                break
+        else:
+            self.get_logger().warning("启动提示音跳过：TTS/playback 在 30s 内未就绪")
+            return
+
+        future = self._tts_client.call_async(req)
+        try:
+            rclpy.spin_until_future_complete(self, future, timeout_sec=20.0)
+            resp = future.result()
+            error_message = getattr(resp, "error_message", "") if resp else ""
+            if resp is not None and resp.accepted:
+                duration = max(0.1, float(resp.estimated_duration_sec))
+                time.sleep(duration + 0.15)
+                return
+            self.get_logger().warning(
+                f"启动提示音失败: {error_message or 'unknown'}"
+            )
+        except Exception:
+            self.get_logger().warning("启动提示音调用失败")
 
 
 def _post_tick_reset_root(tree: BehaviourTree) -> None:

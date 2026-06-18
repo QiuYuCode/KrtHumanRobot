@@ -1,0 +1,5 @@
+float32 volume
+---
+bool success
+float32 volume
+string error_message

@@ -1,0 +1,5 @@
+---
+bool success
+float32 volume
+bool muted
+string error_message

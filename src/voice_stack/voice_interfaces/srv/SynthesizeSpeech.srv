@@ -1,0 +1,9 @@
+string text
+string language
+string style
+uint8 priority
+---
+bool accepted
+string request_id
+float32 estimated_duration_sec
+string error_message

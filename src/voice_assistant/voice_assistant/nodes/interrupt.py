@@ -1,14 +1,18 @@
 """播报期间的唤醒词打断节点"""
 
+from __future__ import annotations
+
 import random
 import time
 
-import numpy as np
 import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
+from voice_interfaces.msg import VoiceKwsEvent
+from voice_interfaces.srv import SynthesizeSpeech
 
-from voice_assistant.config import SAMPLE_RATE, RobotConfig
+from voice_assistant.config import RobotConfig
+from voice_assistant.ros_voice import speak_blocking
 
 
 def _is_wakeword_interrupted(blackboard) -> bool:
@@ -22,11 +26,13 @@ def _is_wakeword_interrupted(blackboard) -> bool:
 class WakeWordInterruptMonitor(Behaviour):
     """TTS 播报期间持续监听唤醒词，命中后触发停播。"""
 
-    def __init__(self, name: str, engine, config: RobotConfig):
+    def __init__(self, name: str, config: RobotConfig):
         super().__init__(name)
-        self.engine = engine
         self.config = config
-        self.kws_stream = None
+        self._node = None
+        self._subscription = None
+        self._kws_triggered = False
+        self._last_keyword = ""
 
         self.blackboard = self.attach_blackboard_client(
             name="WakeWordInterruptMonitor", namespace="dialog"
@@ -42,25 +48,27 @@ class WakeWordInterruptMonitor(Behaviour):
         )
 
     def setup(self, **kwargs):
-        if self.engine.kws is not None:
-            self.kws_stream = self.engine.kws.create_stream()
+        self._node = kwargs.get("node")
+        if self._node is not None and self._subscription is None:
+            self._subscription = self._node.create_subscription(
+                VoiceKwsEvent, "/voice/kws/events", self._on_kws_event, 20
+            )
+
+    def _on_kws_event(self, msg: VoiceKwsEvent) -> None:
+        self._kws_triggered = True
+        self._last_keyword = msg.keyword
 
     def initialise(self):
         self.blackboard.wakeword_interrupted = False
-        if self.kws_stream is not None and self.engine.kws is not None:
-            self.engine.kws.reset_stream(self.kws_stream)
-        self.engine.clear_kws_queue()
+        self._kws_triggered = False
+        self._last_keyword = ""
 
     def update(self):
-        if self.engine.kws is None or self.kws_stream is None:
-            return Status.RUNNING
-
         try:
             is_speaking = bool(self.blackboard.is_speaking)
         except KeyError:
             is_speaking = False
         if not is_speaking:
-            self.engine.clear_kws_queue()
             return Status.RUNNING
 
         try:
@@ -68,37 +76,28 @@ class WakeWordInterruptMonitor(Behaviour):
         except KeyError:
             speak_start_time = 0.0
         if time.time() - speak_start_time < self.config.interrupt_min_speech_seconds:
-            self.engine.clear_kws_queue()
             return Status.RUNNING
 
-        while not self.engine.kws_audio_queue.empty():
-            data = self.engine.kws_audio_queue.get()
-            samples = np.frombuffer(data, dtype=np.float32)
-            self.kws_stream.accept_waveform(SAMPLE_RATE, samples)
-
-            while self.engine.kws.is_ready(self.kws_stream):
-                self.engine.kws.decode_stream(self.kws_stream)
-                keyword = self.engine.kws.get_result(self.kws_stream)
-                if keyword:
-                    self.logger.info(f"TTS 播报中检测到唤醒词: {keyword.strip()}")
-                    self.blackboard.wakeword_interrupted = True
-                    self.engine.kws.reset_stream(self.kws_stream)
-                    return Status.SUCCESS
+        if self._kws_triggered:
+            self.logger.info(f"TTS 播报中检测到唤醒词: {self._last_keyword or 'unknown'}")
+            self.blackboard.wakeword_interrupted = True
+            self._kws_triggered = False
+            return Status.SUCCESS
 
         return Status.RUNNING
 
     def terminate(self, new_status):
-        if self.kws_stream is not None and self.engine.kws is not None:
-            self.engine.kws.reset_stream(self.kws_stream)
+        del new_status
 
 
 class ResetWakeWordInterruptState(Behaviour):
     """在播报被唤醒词打断后清理本轮对话状态，下一轮直接进入 Listen。"""
 
-    def __init__(self, name: str, engine, config: RobotConfig):
+    def __init__(self, name: str, config: RobotConfig):
         super().__init__(name)
-        self.engine = engine
         self.config = config
+        self._node = None
+        self._tts_client = None
 
         self.blackboard = self.attach_blackboard_client(
             name="ResetWakeWordInterruptState", namespace="dialog"
@@ -122,6 +121,14 @@ class ResetWakeWordInterruptState(Behaviour):
             key="last_activity_time", access=py_trees.common.Access.WRITE
         )
 
+    def setup(self, **kwargs):
+        self._node = kwargs.get("node")
+        if self._node is None:
+            return
+        self._tts_client = self._node.create_client(
+            SynthesizeSpeech, "/voice/tts/synthesize"
+        )
+
     def update(self):
         if not _is_wakeword_interrupted(self.blackboard):
             return Status.SUCCESS
@@ -133,13 +140,11 @@ class ResetWakeWordInterruptState(Behaviour):
             if text and text.strip()
         ]
         if responses:
-            self.engine.speak_blocking(random.choice(responses))
+            speak_blocking(self._node, self._tts_client, random.choice(responses))
         self.blackboard.wakeword_interrupted = False
         self.blackboard.intent = ""
         self.blackboard.response_text = ""
         self.blackboard.user_command = ""
         self.blackboard.action_plan = []
         self.blackboard.last_activity_time = time.time()
-        self.engine.clear_dialog_queue()
-        self.engine.clear_kws_queue()
         return Status.SUCCESS

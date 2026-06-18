@@ -1,10 +1,8 @@
 """唤醒词检测节点"""
 
-import numpy as np
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
-
-from voice_assistant.config import SAMPLE_RATE
+from voice_interfaces.msg import VoiceKwsEvent
 
 
 class WaitForWakeWord(Behaviour):
@@ -15,39 +13,35 @@ class WaitForWakeWord(Behaviour):
     通过 config.kws_keywords_file 替换唤醒词，无需修改代码。
     """
 
-    def __init__(self, name: str, engine):
+    def __init__(self, name: str):
         super().__init__(name)
-        self.engine = engine
-        self.kws_stream = None
+        self._node = None
+        self._subscription = None
+        self._kws_triggered = False
+        self._last_keyword = ""
 
     def setup(self, **kwargs):
-        self.kws_stream = self.engine.kws.create_stream()
+        self._node = kwargs.get("node")
+
+    def _on_kws_event(self, msg: VoiceKwsEvent) -> None:
+        self._kws_triggered = True
+        self._last_keyword = msg.keyword
 
     def initialise(self):
         self.logger.info("待机中，等待唤醒词...")
-        # 重置 KWS 流状态
-        if self.kws_stream is not None:
-            self.engine.kws.reset_stream(self.kws_stream)
-        # 清空队列，避免处理旧数据
-        self.engine.clear_kws_queue()
+        self._kws_triggered = False
+        self._last_keyword = ""
+        if self._node is not None and self._subscription is None:
+            self._subscription = self._node.create_subscription(
+                VoiceKwsEvent, "/voice/kws/events", self._on_kws_event, 20
+            )
 
     def update(self):
-        while not self.engine.kws_audio_queue.empty():
-            data = self.engine.kws_audio_queue.get()
-            samples = np.frombuffer(data, dtype=np.float32)
-
-            self.kws_stream.accept_waveform(SAMPLE_RATE, samples)
-            while self.engine.kws.is_ready(self.kws_stream):
-                self.engine.kws.decode_stream(self.kws_stream)
-                keyword = self.engine.kws.get_result(self.kws_stream)
-                if keyword:
-                    self.logger.info(f"唤醒成功! 关键词: {keyword.strip()}")
-                    self.engine.kws.reset_stream(self.kws_stream)
-                    return Status.SUCCESS
-
-        # 待机阶段不需要保留 ASR 队列中的历史音频，避免积压。
-        self.engine.clear_dialog_queue()
+        if self._kws_triggered:
+            self.logger.info(f"唤醒成功! 关键词: {self._last_keyword or 'unknown'}")
+            self._kws_triggered = False
+            return Status.SUCCESS
         return Status.RUNNING
 
     def terminate(self, new_status):
-        pass
+        del new_status

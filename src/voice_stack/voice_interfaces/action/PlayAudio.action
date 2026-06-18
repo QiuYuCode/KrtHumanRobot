@@ -1,0 +1,8 @@
+voice_interfaces/VoiceAudioFrame[] chunks
+uint8 priority
+bool preempt_lower_priority
+---
+bool success
+string error_message
+---
+uint32 played_chunks
