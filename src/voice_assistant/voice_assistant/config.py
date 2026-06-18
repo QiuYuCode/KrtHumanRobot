@@ -139,7 +139,7 @@ class RobotConfig:
     tts_max_chars_per_chunk: int = 80
     tts_sentence_pause: float = 0.40
     tts_clause_pause: float = 0.15
-    tts_backend: str = "local"  # "local" | "iflytek_cloud" | "mimo_cloud"
+    tts_backend: str = "iflytek_cloud"  # "local" | "iflytek_cloud" | "mimo_cloud"
     cloud_tts_fallback_to_local: bool = True
 
     # --- 小米 MiMo 云 TTS (mimo-v2.5-tts, /v1/chat/completions) ---

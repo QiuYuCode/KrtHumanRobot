@@ -28,7 +28,7 @@ class VoiceTtsNode(Node):
 
     def __init__(self) -> None:
         super().__init__("voice_tts")
-        self.declare_parameter("tts_backend", "local")
+        self.declare_parameter("tts_backend", "iflytek_cloud")
         self.declare_parameter("cloud_tts_fallback_to_local", True)
         self.declare_parameter("tts_model_dir", "")
         self.declare_parameter("tts_speaker_id", 0)
@@ -351,7 +351,10 @@ class VoiceTtsNode(Node):
         )
 
     def _synthesize_pcm16(self, text: str) -> tuple[bytes, int, str]:
-        backend = str(self.get_parameter("tts_backend").value).strip() or "local"
+        backend = (
+            str(self.get_parameter("tts_backend").value).strip()
+            or "iflytek_cloud"
+        )
         if backend == "iflytek_cloud":
             try:
                 pcm_bytes, sample_rate = self._generate_iflytek_tts(text)

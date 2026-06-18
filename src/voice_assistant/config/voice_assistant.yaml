@@ -47,7 +47,8 @@ tts_max_chars_per_chunk: 80
 tts_sentence_pause: 0.40
 tts_clause_pause: 0.15
 # "local" | "iflytek_cloud" | "mimo_cloud"
-tts_backend: local
+# 默认优先讯飞云 TTS，网络/密钥失败时按 cloud_tts_fallback_to_local 回退本地。
+tts_backend: iflytek_cloud
 cloud_tts_fallback_to_local: true
 
 # --- 小米 MiMo 云 TTS (复用 llm_base_url / LLM_API_KEY) ---

@@ -224,7 +224,7 @@ def _launch_setup(context, *args, **kwargs):
             "voice_tts.tts_node",
             "voice_tts",
             {
-                "tts_backend": cfg.get("tts_backend", "local"),
+                "tts_backend": cfg.get("tts_backend", "iflytek_cloud"),
                 "cloud_tts_fallback_to_local": bool(
                     cfg.get("cloud_tts_fallback_to_local", True)
                 ),
