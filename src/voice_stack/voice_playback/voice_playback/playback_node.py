@@ -7,6 +7,8 @@ import numpy as np
 import rclpy
 import sounddevice as sd
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from voice_interfaces.action import PlayAudio
 from voice_interfaces.srv import StopPlayback
@@ -32,6 +34,10 @@ class VoicePlaybackNode(Node):
         self._lock = threading.Lock()
         self._current_priority = -1
         self._cancel_requested = False
+        self._is_playing = False
+
+        self._action_group = ReentrantCallbackGroup()
+        self._stop_group = MutuallyExclusiveCallbackGroup()
 
         self._action_server = ActionServer(
             self,
@@ -40,9 +46,13 @@ class VoicePlaybackNode(Node):
             execute_callback=self._execute_play_audio,
             goal_callback=self._goal_callback,
             cancel_callback=self._cancel_callback,
+            callback_group=self._action_group,
         )
         self._stop_srv = self.create_service(
-            StopPlayback, "/voice/playback/stop", self._handle_stop
+            StopPlayback,
+            "/voice/playback/stop",
+            self._handle_stop,
+            callback_group=self._stop_group,
         )
         self.get_logger().info("voice_playback ready: action=/voice/playback/play")
 
@@ -56,16 +66,23 @@ class VoicePlaybackNode(Node):
                     sd.stop()
                 except Exception:
                     pass
+                self.get_logger().info(
+                    "playback preempt: "
+                    f"new_priority={int(goal_request.priority)} "
+                    f"current_priority={self._current_priority}"
+                )
                 return GoalResponse.ACCEPT
         return GoalResponse.REJECT
 
     def _cancel_callback(self, goal_handle) -> CancelResponse:
+        del goal_handle
         with self._lock:
             self._cancel_requested = True
         try:
             sd.stop()
         except Exception:
             pass
+        self.get_logger().info("playback cancel requested")
         return CancelResponse.ACCEPT
 
     def _decode_chunks(self, chunks: list) -> tuple[np.ndarray, int]:
@@ -100,9 +117,14 @@ class VoicePlaybackNode(Node):
         with self._lock:
             self._current_priority = int(goal.priority)
             self._cancel_requested = False
+            self._is_playing = True
 
         duration = len(samples) / float(sample_rate)
         try:
+            self.get_logger().info(
+                "playback start: "
+                f"duration={duration:.2f}s priority={int(goal.priority)}"
+            )
             sd.play(samples, samplerate=sample_rate, blocking=False)
             start = time.time()
             while time.time() - start < duration:
@@ -118,6 +140,7 @@ class VoicePlaybackNode(Node):
                         goal_handle.canceled()
                         result.success = False
                         result.error_message = "播放被抢占或停止"
+                        self.get_logger().info("playback stopped by request")
                         return result
                 time.sleep(0.02)
             sd.stop()
@@ -126,38 +149,50 @@ class VoicePlaybackNode(Node):
             goal_handle.succeed()
             result.success = True
             result.error_message = ""
+            self.get_logger().info("playback finished")
             return result
         except Exception as exc:
             goal_handle.abort()
             result.success = False
             result.error_message = str(exc)
+            self.get_logger().error(f"playback failed: {exc}")
             return result
         finally:
             with self._lock:
                 self._current_priority = -1
                 self._cancel_requested = False
+                self._is_playing = False
 
     def _handle_stop(self, request: StopPlayback.Request, response: StopPlayback.Response):
-        del request
         with self._lock:
+            was_playing = self._is_playing
             self._cancel_requested = True
             self._current_priority = -1
+        self.get_logger().info(
+            "playback stop requested: "
+            f"reason={request.reason or 'none'} was_playing={was_playing}"
+        )
         try:
             sd.stop()
             response.success = True
             response.error_message = ""
+            self.get_logger().info("playback stop succeeded")
         except Exception as exc:
             response.success = False
             response.error_message = str(exc)
+            self.get_logger().error(f"playback stop failed: {exc}")
         return response
 
 
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = VoicePlaybackNode()
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     finally:
+        executor.remove_node(node)
         node.destroy_node()
         rclpy.shutdown()
 

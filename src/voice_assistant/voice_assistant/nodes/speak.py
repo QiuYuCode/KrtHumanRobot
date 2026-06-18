@@ -56,6 +56,9 @@ class SpeakResponse(Behaviour):
         self.blackboard.register_key(
             key="last_activity_time", access=py_trees.common.Access.WRITE
         )
+        self.blackboard.register_key(
+            key="wakeword_interrupted", access=py_trees.common.Access.READ
+        )
 
     def setup(self, **kwargs):
         self._node = kwargs.get("node")
@@ -94,11 +97,21 @@ class SpeakResponse(Behaviour):
             self._finish()
             return Status.SUCCESS
 
+        if self._is_wakeword_interrupted():
+            self.logger.info("SpeakResponse 检测到唤醒词打断，停止当前播报")
+            self._finish()
+            return Status.SUCCESS
+
         if self._synthesize_future is not None:
             if not self._synthesize_future.done():
                 return Status.RUNNING
             resp = self._synthesize_future.result()
             self._synthesize_future = None
+            if self._is_wakeword_interrupted():
+                self.logger.info("TTS 合成完成时已被唤醒词打断，立即停播")
+                self._stop_speaking("synthesize_interrupted")
+                self._finish()
+                return Status.SUCCESS
             if resp is None or not resp.accepted:
                 self.logger.warning(
                     f"TTS 服务调用失败: {getattr(resp, 'error_message', 'unknown')}"
@@ -126,7 +139,7 @@ class SpeakResponse(Behaviour):
         """被打断或正常结束时，确保停止播放并重置标志"""
         del new_status
         if self._play_started and not self._finished:
-            self._stop_speaking()
+            self._stop_speaking("behaviour_terminate")
         try:
             self.blackboard.is_speaking = False
             self.blackboard.speak_start_time = 0.0
@@ -137,7 +150,7 @@ class SpeakResponse(Behaviour):
         """播放结束的清理"""
         if self._finished:
             return
-        self._stop_speaking()
+        self._stop_speaking("finish")
         self.blackboard.is_speaking = False
         self.blackboard.speak_start_time = 0.0
         self.blackboard.last_activity_time = time.time()
@@ -154,13 +167,22 @@ class SpeakResponse(Behaviour):
             return True
         return False
 
-    def _stop_speaking(self) -> None:
+    def _stop_speaking(self, reason: str = "behaviour_terminate") -> None:
         self._play_deadline = 0.0
         self._cooldown_deadline = 0.0
         if self._stop_client is not None and self._stop_client.wait_for_service(timeout_sec=0.1):
             req = StopPlayback.Request()
-            req.reason = "behaviour_terminate"
+            req.reason = reason
             self._stop_client.call_async(req)
+            self.logger.info(f"SpeakResponse 已发送停播请求: reason={reason}")
+        else:
+            self.logger.warning("SpeakResponse 停播失败：/voice/playback/stop 服务不可用")
+
+    def _is_wakeword_interrupted(self) -> bool:
+        try:
+            return bool(self.blackboard.wakeword_interrupted)
+        except KeyError:
+            return False
 
 
 class WakeupResponse(Behaviour):

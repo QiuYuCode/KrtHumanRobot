@@ -86,11 +86,14 @@ class VoiceKwsNode(Node):
                 self._kws.decode_stream(self._stream)
                 keyword = self._kws.get_result(self._stream).strip()
                 if keyword:
-                    self.get_logger().info(f"KWS 命中: {keyword}")
+                    score = 1.0
+                    self.get_logger().info(
+                        f"KWS 命中: keyword={keyword} score={score:.3f}"
+                    )
                     event = VoiceKwsEvent()
                     event.stamp = self.get_clock().now().to_msg()
                     event.keyword = keyword
-                    event.score = 1.0
+                    event.score = score
                     self._pub.publish(event)
                     self._kws.reset_stream(self._stream)
         except Exception as exc:

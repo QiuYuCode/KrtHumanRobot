@@ -7,18 +7,28 @@
 from __future__ import annotations
 
 import dataclasses
+import logging
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 import yaml
-from dotenv import load_dotenv
-from loguru import logger
+
+try:
+    from dotenv import load_dotenv
+except ImportError:
+    load_dotenv = None
+
+try:
+    from loguru import logger
+except ImportError:
+    logger = logging.getLogger(__name__)
 
 def _read_env(*keys: str) -> str:
     """按顺序读取环境变量，并做去空白/去包裹引号清洗。"""
-    load_dotenv()
+    if load_dotenv is not None:
+        load_dotenv()
     for key in keys:
         value = os.getenv(key)
         if value is None:
@@ -183,7 +193,7 @@ class RobotConfig:
     dialog_timeout: float = 15.0  # 秒，无活动后超时回到 idle
     continuous_dialog: bool = False  # True 时回复后继续聆听；False 时回复后回到唤醒
     post_tts_listen_delay: float = 0.6  # TTS 播放结束后延迟进入聆听，降低回声误识别
-    interrupt_min_speech_seconds: float = 1.2  # TTS 启动后延迟启用打断
+    interrupt_min_speech_seconds: float = 0.0  # TTS 启动后延迟启用打断；0 表示唤醒词命中立即打断
 
     # --- 相机 ---
     # 三路相机统一管理: head (头部 RealSense) / left_palm / right_palm
@@ -418,9 +428,9 @@ class RobotConfig:
         ),
     })
     interrupt_wakeup_responses: list[str] = field(default_factory=lambda: [
-        "我在，请说。",
-        "唉，我在。",
-        "怎么了。",
+        "怎么了",
+        "我在，有什么问题吗",
+        "我在呢",
     ])
 
     # --- 启动提示音 ---

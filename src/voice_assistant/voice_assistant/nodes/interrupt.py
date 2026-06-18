@@ -9,7 +9,7 @@ import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 from voice_interfaces.msg import VoiceKwsEvent
-from voice_interfaces.srv import SynthesizeSpeech
+from voice_interfaces.srv import StopPlayback, SynthesizeSpeech
 
 from voice_assistant.config import RobotConfig
 from voice_assistant.ros_voice import speak_blocking
@@ -31,8 +31,10 @@ class WakeWordInterruptMonitor(Behaviour):
         self.config = config
         self._node = None
         self._subscription = None
+        self._stop_client = None
         self._kws_triggered = False
         self._last_keyword = ""
+        self._last_score = 0.0
 
         self.blackboard = self.attach_blackboard_client(
             name="WakeWordInterruptMonitor", namespace="dialog"
@@ -49,19 +51,54 @@ class WakeWordInterruptMonitor(Behaviour):
 
     def setup(self, **kwargs):
         self._node = kwargs.get("node")
-        if self._node is not None and self._subscription is None:
+        if self._node is None:
+            return
+        if self._subscription is None:
             self._subscription = self._node.create_subscription(
                 VoiceKwsEvent, "/voice/kws/events", self._on_kws_event, 20
+            )
+        if self._stop_client is None:
+            self._stop_client = self._node.create_client(
+                StopPlayback, "/voice/playback/stop"
             )
 
     def _on_kws_event(self, msg: VoiceKwsEvent) -> None:
         self._kws_triggered = True
         self._last_keyword = msg.keyword
+        self._last_score = float(msg.score)
+        try:
+            is_speaking = bool(self.blackboard.is_speaking)
+        except KeyError:
+            is_speaking = False
+        self.logger.info(
+            "收到 KWS 事件: "
+            f"keyword={self._last_keyword or 'unknown'} "
+            f"score={self._last_score:.3f} "
+            f"is_speaking={is_speaking}"
+        )
+        if is_speaking:
+            self.blackboard.wakeword_interrupted = True
+            self._request_stop_playback("kws_callback")
+
+    def _request_stop_playback(self, reason: str) -> None:
+        if self._stop_client is None:
+            self.logger.warning("无法停播：StopPlayback client 未初始化")
+            return
+        if not self._stop_client.service_is_ready():
+            self._stop_client.wait_for_service(timeout_sec=0.02)
+        if not self._stop_client.service_is_ready():
+            self.logger.warning("无法停播：/voice/playback/stop 服务不可用")
+            return
+        req = StopPlayback.Request()
+        req.reason = reason
+        self._stop_client.call_async(req)
+        self.logger.info(f"已发送停播请求: reason={reason}")
 
     def initialise(self):
         self.blackboard.wakeword_interrupted = False
         self._kws_triggered = False
         self._last_keyword = ""
+        self._last_score = 0.0
 
     def update(self):
         try:
@@ -69,21 +106,48 @@ class WakeWordInterruptMonitor(Behaviour):
         except KeyError:
             is_speaking = False
         if not is_speaking:
+            if self._kws_triggered:
+                self.logger.info(
+                    "KWS 命中但当前未播报，不触发 TTS 打断: "
+                    f"keyword={self._last_keyword or 'unknown'} "
+                    f"score={self._last_score:.3f}"
+                )
+                self._kws_triggered = False
+                self._last_keyword = ""
+                self._last_score = 0.0
             return Status.RUNNING
 
         try:
             speak_start_time = float(self.blackboard.speak_start_time)
         except KeyError:
             speak_start_time = 0.0
-        if time.time() - speak_start_time < self.config.interrupt_min_speech_seconds:
-            self._kws_triggered = False
-            self._last_keyword = ""
+        elapsed = time.time() - speak_start_time
+        min_seconds = max(0.0, float(self.config.interrupt_min_speech_seconds))
+        if elapsed < min_seconds:
+            if self._kws_triggered:
+                self.logger.info(
+                    "KWS 命中但仍在打断保护窗口内，不触发 TTS 打断: "
+                    f"keyword={self._last_keyword or 'unknown'} "
+                    f"score={self._last_score:.3f} "
+                    f"elapsed={elapsed:.2f}s min={min_seconds:.2f}s"
+                )
+                self._kws_triggered = False
+                self._last_keyword = ""
+                self._last_score = 0.0
             return Status.RUNNING
 
         if self._kws_triggered:
-            self.logger.info(f"TTS 播报中检测到唤醒词: {self._last_keyword or 'unknown'}")
+            self.logger.info(
+                "触发 TTS 唤醒词打断: "
+                f"keyword={self._last_keyword or 'unknown'} "
+                f"score={self._last_score:.3f} "
+                f"elapsed={elapsed:.2f}s"
+            )
             self.blackboard.wakeword_interrupted = True
+            self._request_stop_playback("kws_update")
             self._kws_triggered = False
+            self._last_keyword = ""
+            self._last_score = 0.0
             return Status.SUCCESS
 
         return Status.RUNNING
