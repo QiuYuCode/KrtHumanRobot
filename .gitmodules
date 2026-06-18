@@ -20,3 +20,6 @@
 [submodule "src/spark-fast-lio"]
 	path = src/spark-fast-lio
 	url = https://github.com/MIT-SPARK/spark-fast-lio.git
+[submodule "src/KISS-Matcher"]
+	path = src/KISS-Matcher
+	url = https://github.com/MIT-SPARK/KISS-Matcher.git
