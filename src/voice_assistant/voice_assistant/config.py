@@ -6,7 +6,6 @@
 """
 from __future__ import annotations
 
-import dataclasses
 import logging
 import os
 from dataclasses import dataclass, field
@@ -603,28 +602,6 @@ def _prepare_config_value(key: str, value: Any, cfg: RobotConfig) -> Any:
     if key in _PATH_FIELDS and isinstance(value, str) and not Path(value).is_absolute():
         return str(base_dir / value)
     return value
-
-
-def reload_config_into(target: RobotConfig, path: Path | str | None = None) -> None:
-    """从 YAML 重新加载并覆盖 target 的全部字段（保留同一对象引用）。"""
-    fresh = load_config(path)
-    for f in dataclasses.fields(RobotConfig):
-        setattr(target, f.name, getattr(fresh, f.name))
-
-
-def save_config(config: RobotConfig, path: Path | str | None = None) -> None:
-    """将配置持久化到 YAML 文件（敏感字段不写入）。
-
-    Args:
-        config: 要保存的 RobotConfig 实例。
-        path: 目标 YAML 文件路径，默认为 CONFIG_YAML_PATH。
-    """
-    yaml_path = Path(path) if path is not None else CONFIG_YAML_PATH
-    raw = dataclasses.asdict(config)
-    safe = {k: v for k, v in raw.items() if k not in _SECRET_FIELDS}
-    with open(yaml_path, "w", encoding="utf-8") as f:
-        yaml.dump(safe, f, allow_unicode=True, default_flow_style=False, sort_keys=True)
-    logger.debug(f"[config] 配置已保存到 {yaml_path}")
 
 
 # 全局默认配置实例（从 config.yaml 加载，文件不存在时使用内置默认值）

@@ -31,10 +31,10 @@ def generate_launch_description():
     nodes.append(device_list_node)
 
     # 摄像头测试节点
-    camera_test_node = Node(
+    usb_camera_node = Node(
         package='device_test',
-        executable='camera_test',
-        name='camera_test_node',
+        executable='usb_camera_test',
+        name='usb_camera_test_node',
         output='screen',
         parameters=[{
             'device_id': LaunchConfiguration('camera_device'),
@@ -44,7 +44,7 @@ def generate_launch_description():
             'show_preview': True,
         }]
     )
-    nodes.append(camera_test_node)
+    nodes.append(usb_camera_node)
 
     # 麦克风测试节点
     mic_test_node = Node(

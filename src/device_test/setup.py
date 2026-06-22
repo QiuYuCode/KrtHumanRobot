@@ -27,7 +27,6 @@ setup(
     },
     entry_points={
         'console_scripts': [
-            'camera_test = device_test.camera_test_node:main',
             'usb_camera_test = device_test.usb_camera_test_node:main',
             'realsense_test = device_test.realsense_test_node:main',
             'mic_test = device_test.mic_test_node:main',
