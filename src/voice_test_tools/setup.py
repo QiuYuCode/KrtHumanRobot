@@ -1,7 +1,11 @@
+from glob import glob
+from pathlib import Path
+
 from setuptools import find_packages, setup
 
 
 package_name = "voice_test_tools"
+wav_files = sorted(glob(str(Path("testdata") / "wav" / "*.wav")))
 
 setup(
     name=package_name,
@@ -10,6 +14,7 @@ setup(
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
         ("share/" + package_name, ["package.xml"]),
+        (f"share/{package_name}/testdata/wav", wav_files),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

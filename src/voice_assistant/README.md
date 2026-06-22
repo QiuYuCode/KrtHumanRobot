@@ -198,6 +198,65 @@ ros2 launch voice_assistant voice_full.launch.py
 
 对麦克风说「你好小特」：终端出现 `唤醒成功!`，并 TTS 播报「我在，请说。」
 
+### full 启动后接口自检
+
+`voice_full.launch.py` 会启动底层语音栈和行为树，下面这些接口都应该可以直接调用：
+
+- `kws`：`/voice/kws/events`
+- `vad`：`/voice/vad/events`
+- `asr`：`/voice/asr/stream`
+- `tts`：`/voice/tts/synthesize`
+- `play`：`/voice/media/play`
+- `volume`：`/voice/volume/get`、`/voice/volume/set`、`/voice/volume/mute`
+
+先确认节点和接口都在：
+
+```bash
+ros2 launch voice_assistant voice_full.launch.py
+
+# 另开终端
+ros2 node list
+ros2 topic list | rg '/voice/(kws|vad)'
+ros2 action list | rg '/voice/asr/stream'
+ros2 service list | rg '/voice/(tts|media|volume)'
+```
+
+逐项验证：
+
+```bash
+# KWS：对麦克风说唤醒词，收到事件后退出 0
+ros2 run voice_test_tools kws_test_client --ros-args \
+  -p expected_keyword:=小特 -p timeout_sec:=20.0
+
+# VAD：说一句话后保持安静，收到 speech_start -> speech_end 后退出 0
+ros2 run voice_test_tools vad_test_client --ros-args \
+  -p timeout_sec:=20.0
+
+# ASR：启动后说一句话，拿到识别结果后退出 0
+ros2 run voice_test_tools asr_test_client --ros-args \
+  -p backend:=local -p result_timeout_sec:=20.0
+
+# TTS：合成并播放，返回 accepted=true 即成功
+ros2 run voice_test_tools tts_test_client --ros-args \
+  -p text:='你好，这是语音合成测试' -p timeout_sec:=30.0
+
+# play：播放本地 WAV，返回 accepted=true 即成功
+ros2 run voice_test_tools play_test_client --ros-args \
+  -p file_path:=/home/nvidia/WorkSpace/KrtHumanRobot/src/voice_test_tools/testdata/wav/beep_440hz_1s.wav
+
+# volume：读/写/静音
+ros2 run voice_test_tools volume_test_client --ros-args -p operation:=get
+ros2 run voice_test_tools volume_test_client --ros-args -p operation:=set -p volume:=0.5
+ros2 run voice_test_tools volume_test_client --ros-args -p operation:=mute
+ros2 run voice_test_tools volume_test_client --ros-args -p operation:=unmute
+```
+
+说明：
+
+- `kws` 和 `vad` 主要靠麦克风输入触发事件，不是 service。
+- `asr` 是 action，`tts` / `play` / `volume` 是 service。
+- `play` 只接受本机上的绝对路径 `wav` 文件。
+
 ### 讯飞云语音验收
 
 默认配置使用本地 ASR、讯飞云 TTS：`asr_backend: local`、
