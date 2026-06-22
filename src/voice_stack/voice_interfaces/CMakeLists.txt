@@ -19,6 +19,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/SynthesizeSpeech.srv"
   "srv/SetVolume.srv"
   "srv/GetVolume.srv"
+  "srv/PlayMedia.srv"
   "srv/SetMute.srv"
   "srv/StopPlayback.srv"
   "action/RecognizeStream.action"

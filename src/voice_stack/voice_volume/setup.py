@@ -14,7 +14,7 @@ setup(
     zip_safe=True,
     maintainer="create",
     maintainer_email="r465755956@gmail.com",
-    description="音量控制节点骨架，后续接入 PulseAudio/ALSA。",
+    description="通过 ROS 2 服务控制 PulseAudio/PipeWire 默认输出音量。",
     license="Apache-2.0",
     tests_require=["pytest"],
     entry_points={

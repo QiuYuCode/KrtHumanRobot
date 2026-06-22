@@ -19,6 +19,7 @@ setup(
     tests_require=["pytest"],
     entry_points={
         "console_scripts": [
+            "voice_media_node = voice_playback.media_node:main",
             "voice_playback_node = voice_playback.playback_node:main",
         ],
     },

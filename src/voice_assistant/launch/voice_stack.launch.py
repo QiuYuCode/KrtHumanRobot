@@ -134,6 +134,11 @@ def _make_uv_process(
     return ExecuteProcess(cmd=cmd, output="screen", name=node_name)
 
 
+def _is_enabled(context, argument_name: str) -> bool:
+    value = LaunchConfiguration(argument_name).perform(context).strip().lower()
+    return value in {"1", "true", "yes", "on"}
+
+
 def _launch_setup(context, *args, **kwargs):
     config_file = LaunchConfiguration("config_file").perform(context)
     share = get_package_share_directory("voice_assistant")
@@ -153,7 +158,7 @@ def _launch_setup(context, *args, **kwargs):
         "onnx_provider": onnx_provider,
     }
 
-    return [
+    processes = [
         _make_uv_process(
             run_script,
             "voice_audio_capture.capture_node",
@@ -271,9 +276,29 @@ def _launch_setup(context, *args, **kwargs):
         ),
         _make_uv_process(
             run_script,
+            "voice_playback.media_node",
+            "voice_media",
+        ),
+        _make_uv_process(
+            run_script,
             "voice_volume.volume_node",
             "voice_volume",
         ),
+    ]
+    enable_arguments = [
+        "enable_capture",
+        "enable_kws",
+        "enable_vad",
+        "enable_asr",
+        "enable_tts",
+        "enable_playback",
+        "enable_media",
+        "enable_volume",
+    ]
+    return [
+        process
+        for argument, process in zip(enable_arguments, processes)
+        if _is_enabled(context, argument)
     ]
 
 
@@ -286,6 +311,30 @@ def generate_launch_description() -> LaunchDescription:
             "config_file",
             default_value=default_config,
             description="voice_assistant.yaml 路径（用于 voice_stack 参数透传）",
+        ),
+        DeclareLaunchArgument(
+            "enable_capture", default_value="true", description="启动麦克风采集节点"
+        ),
+        DeclareLaunchArgument(
+            "enable_kws", default_value="true", description="启动关键词唤醒节点"
+        ),
+        DeclareLaunchArgument(
+            "enable_vad", default_value="true", description="启动 VAD 节点"
+        ),
+        DeclareLaunchArgument(
+            "enable_asr", default_value="true", description="启动 ASR 节点"
+        ),
+        DeclareLaunchArgument(
+            "enable_tts", default_value="true", description="启动 TTS 节点"
+        ),
+        DeclareLaunchArgument(
+            "enable_playback", default_value="true", description="启动音频播放节点"
+        ),
+        DeclareLaunchArgument(
+            "enable_media", default_value="true", description="启动媒体播报服务节点"
+        ),
+        DeclareLaunchArgument(
+            "enable_volume", default_value="true", description="启动音量控制节点"
         ),
         OpaqueFunction(function=_launch_setup),
     ])

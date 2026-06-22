@@ -57,6 +57,12 @@ ln -sf /path/to/smart-voice-robot/model/voice_models \
 | `voice_stack.launch.py` | 仅底层：采集/KWS/VAD/ASR/TTS/播放 | **否**（无行为树） |
 | `voice_full.launch.py` | voice_stack + bt_manager | **是**（推荐） |
 | `voice_assistant.launch.py` | 仅行为树（需另起 voice_stack） | 是 |
+| `kws_test.launch.py` | 最小 KWS：采集 + KWS | 否 |
+| `vad_test.launch.py` | 最小 VAD：采集 + VAD | 否 |
+| `asr_test.launch.py` | 最小流式 ASR：采集 + VAD + ASR | 否 |
+| `tts_test.launch.py` | 最小 TTS：TTS + 播放 | 是 |
+| `media_test.launch.py` | 本地 WAV 媒体播报 + 播放 | 是 |
+| `volume_test.launch.py` | 系统音量与静音服务 | 否 |
 
 **唤醒词**（见 `model/voice_models/.../keywords.txt`）：你好小特、小特小特、小特同学、小科小科、小科同学。
 
@@ -76,6 +82,76 @@ ros2 launch voice_assistant voice_assistant.launch.py
 # 或直接脚本
 bash src/voice_assistant/scripts/run_voice_node.sh
 ```
+
+### 单元功能测试
+
+```bash
+# KWS：启动后另一个终端观察 /voice/kws/events
+ros2 launch voice_assistant kws_test.launch.py
+ros2 topic echo /voice/kws/events
+
+# VAD：说话和静默应产生 speech_start / speech_end
+ros2 launch voice_assistant vad_test.launch.py
+ros2 topic echo /voice/vad/events
+
+# ASR：发送目标后对麦克风说话，VAD 端点结束识别
+ros2 launch voice_assistant asr_test.launch.py
+ros2 action send_goal /voice/asr/stream \
+  voice_interfaces/action/RecognizeStream "{backend: local}" --feedback
+
+# TTS
+ros2 launch voice_assistant tts_test.launch.py
+ros2 service call /voice/tts/synthesize \
+  voice_interfaces/srv/SynthesizeSpeech \
+  "{text: '你好，这是语音合成测试', language: 'zh-CN', style: '', priority: 0}"
+
+# 本地 WAV 媒体播报（支持 8/16/24/32-bit PCM WAV）
+ros2 launch voice_assistant media_test.launch.py
+ros2 service call /voice/media/play voice_interfaces/srv/PlayMedia \
+  "{file_path: '/absolute/path/notice.wav', priority: 10, preempt_lower_priority: true}"
+
+# 停止 TTS 或媒体播报
+ros2 service call /voice/playback/stop voice_interfaces/srv/StopPlayback \
+  "{reason: 'manual_test'}"
+```
+
+这些测试 launch 都接受 `config_file:=/absolute/path/config.yaml`。媒体播报只接受
+播放节点所在机器上的本地绝对路径；当前不解码 MP3、AAC 或网络 URL。
+
+### 代码测试客户端
+
+`voice_test_tools` 提供独立的 rclpy 客户端，不依赖 `ros2 topic/service/action`
+命令实现调用。先启动对应的测试 launch，再在另一个已 source 的终端执行客户端：
+
+```bash
+# KWS：说一个唤醒词，收到事件后退出 0
+ros2 run voice_test_tools kws_test_client
+
+# VAD：说一句话后保持安静，收到 start/end 后退出 0
+ros2 run voice_test_tools vad_test_client
+
+# ASR：启动流式识别，识别结束后打印文本
+ros2 run voice_test_tools asr_test_client \
+  --ros-args -p backend:=local -p result_timeout_sec:=20.0
+
+# TTS
+ros2 run voice_test_tools tts_test_client \
+  --ros-args -p text:="你好，这是语音合成代码测试"
+
+# 本地 WAV 播放
+ros2 run voice_test_tools play_test_client \
+  --ros-args -p file_path:=/absolute/path/notice.wav
+
+# 音量服务需先启动：ros2 launch voice_assistant volume_test.launch.py
+ros2 run voice_test_tools volume_test_client --ros-args -p operation:=get
+ros2 run voice_test_tools volume_test_client \
+  --ros-args -p operation:=set -p volume:=0.5
+ros2 run voice_test_tools volume_test_client --ros-args -p operation:=mute
+ros2 run voice_test_tools volume_test_client --ros-args -p operation:=unmute
+```
+
+客户端在成功时返回退出码 `0`，接口不可用、超时或服务返回失败时返回非零退出码，
+可直接用于 shell 脚本和自动化验收。
 
 > **不要**用 `ros2 run voice_xxx ...` 或 colcon 入口直接跑语音节点，它们走系统 Python，**缺少 uv 依赖**（`sherpa_onnx`、`sounddevice` 等）。`voice_stack.launch.py` 与 `voice_assistant.launch.py` 内部均通过 `uv run` 启动。
 

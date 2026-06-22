@@ -53,11 +53,27 @@ fi
 cd "$UV_PKG_DIR"
 
 if [[ "${VOICE_STACK_SKIP_DEP_CHECK:-0}" != "1" ]]; then
-  uv run python -c "import sounddevice, sherpa_onnx" 2>/dev/null || {
-    echo "错误: uv 环境中缺少 sounddevice 或 sherpa_onnx"
-    echo "请先运行: bash $UV_PKG_DIR/scripts/setup_uv.sh"
-    exit 1
-  }
+  case "$MODULE" in
+    voice_audio_capture.*|voice_playback.playback_node)
+      REQUIRED_IMPORTS="import sounddevice"
+      REQUIRED_NAMES="sounddevice"
+      ;;
+    voice_kws.*|voice_audio_process.*|voice_asr.*|voice_tts.*)
+      REQUIRED_IMPORTS="import sherpa_onnx"
+      REQUIRED_NAMES="sherpa_onnx"
+      ;;
+    *)
+      REQUIRED_IMPORTS=""
+      REQUIRED_NAMES=""
+      ;;
+  esac
+  if [[ -n "$REQUIRED_IMPORTS" ]]; then
+    uv run --no-sync python -c "$REQUIRED_IMPORTS" 2>/dev/null || {
+      echo "错误: uv 环境中缺少或无法加载 $REQUIRED_NAMES"
+      echo "请先运行: bash $UV_PKG_DIR/scripts/setup_uv.sh"
+      exit 1
+    }
+  fi
 fi
 
-exec uv run python -m "$MODULE" "$@"
+exec uv run --no-sync python -m "$MODULE" "$@"

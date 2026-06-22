@@ -1,0 +1,8 @@
+string file_path
+uint8 priority
+bool preempt_lower_priority
+---
+bool accepted
+string request_id
+float32 duration_sec
+string error_message
