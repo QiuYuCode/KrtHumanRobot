@@ -139,6 +139,10 @@ class RangerNavAdapter:
 
     def stop_navigation(self) -> NavigationResult:
         if not self._running(self._navigation_process):
+            if self._stop_launches_by_name(
+                self._cfg.get("navigation_launch", "navigation.launch.py")
+            ):
+                return NavigationResult(True, "导航已退出。")
             return NavigationResult(False, "导航未启动，无法结束导航。")
         self._stop_navigation()
         return NavigationResult(True, "导航已退出。")
@@ -221,6 +225,34 @@ class RangerNavAdapter:
             self._kill_process_tree(process)
             process.wait(timeout=3)
         logger.info(f"导航 launch 已退出: pid={process.pid}")
+
+    def _stop_launches_by_name(self, launch_file: str) -> bool:
+        cmd = ["ps", "-eo", "pid=,pgid=,cmd="]
+        try:
+            output = self._run(cmd, capture_output=True, text=True, check=False)
+        except OSError as exc:
+            logger.warning(f"无法查询残留 launch 进程: {exc}")
+            return False
+        if output.returncode != 0:
+            return False
+
+        stopped = False
+        for line in output.stdout.splitlines():
+            parts = line.strip().split(None, 2)
+            if len(parts) != 3:
+                continue
+            pid_s, pgid_s, command = parts
+            if f"ros2 launch {self._package()} {launch_file}" not in command:
+                continue
+            logger.info(f"正在退出残留 launch: pid={pid_s}, pgid={pgid_s}")
+            try:
+                os.killpg(int(pgid_s), signal.SIGTERM)
+                stopped = True
+            except ProcessLookupError:
+                pass
+            except OSError as exc:
+                logger.warning(f"退出残留 launch 失败: pid={pid_s}, {exc}")
+        return stopped
 
     @staticmethod
     def _terminate_process_tree(process: subprocess.Popen) -> None:
