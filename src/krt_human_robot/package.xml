@@ -10,8 +10,11 @@
   <depend>rclpy</depend>
   <depend>ament_index_python</depend>
   <depend>voice_interfaces</depend>
+  <depend>std_msgs</depend>
+  <depend>std_srvs</depend>
 
   <exec_depend>voice_assistant</exec_depend>
+  <exec_depend>ranger_nav</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>py_trees</exec_depend>
   <exec_depend>py_trees_ros</exec_depend>

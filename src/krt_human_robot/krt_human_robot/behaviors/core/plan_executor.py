@@ -58,7 +58,7 @@ class PlanExecutor(Behaviour):
 
         if name == "navigate":
             destination = args.get("destination", "未知位置")
-            return execute_navigate(destination)
+            return execute_navigate(self._config, destination)
 
         if name == "control_robot_arm":
             return execute_robot_arm(

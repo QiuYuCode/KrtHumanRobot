@@ -103,7 +103,7 @@ class CorePlanExecutor(Behaviour):
         if name in self._VISION_STEPS:
             return "视觉功能正在重构，暂时还不能使用。"
         if name == "navigate":
-            return execute_navigate(args.get("destination", "未知位置"))
+            return execute_navigate(self._config, args.get("destination", "未知位置"))
         if name == "control_robot_arm":
             return execute_robot_arm(
                 config=self._config,

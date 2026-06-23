@@ -58,7 +58,7 @@ def _create_keyword_dialog_loop(
         VisionDisabledAction("VisionDisabled"),
         GripperAction("Gripper", config=config),
         RobotArmAction("RobotArm", config=config),
-        NavigationAction("Navigation"),
+        NavigationAction("Navigation", config=config),
         LLMDialogAction("LLMDialog", config=config),
         BackToWakeUp("BackToWakeUp"),
         DefaultResponse("DefaultResponse"),
