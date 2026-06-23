@@ -6,9 +6,9 @@ import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 
-from voice_assistant.config import RobotConfig
-from voice_assistant.nodes.actions.llm_dialog import _create_llm
-from voice_assistant.ros_voice import speak_blocking
+from krt_human_robot.config import RobotConfig
+from krt_human_robot.behaviors.core.actions.llm_dialog import _create_llm
+from krt_human_robot.behaviors.voice import speak_blocking
 from voice_interfaces.srv import SynthesizeSpeech
 
 

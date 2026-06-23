@@ -12,8 +12,8 @@ from voice_interfaces.action import RecognizeStream
 from voice_interfaces.msg import VoiceAudioFrame, VoiceVadEvent
 from voice_interfaces.srv import RecognizeSpeech, SynthesizeSpeech
 
-from voice_assistant.config import RobotConfig
-from voice_assistant.ros_voice import speak_blocking
+from krt_human_robot.config import RobotConfig
+from krt_human_robot.behaviors.voice import speak_blocking
 
 
 class ListenCommand(Behaviour):

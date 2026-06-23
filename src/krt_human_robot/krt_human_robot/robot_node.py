@@ -1,4 +1,4 @@
-"""语音助手 ROS2 节点：py_trees_ros 驱动行为树（ROS 客户端编排）。"""
+"""KrtHumanRobot core ROS node."""
 
 from __future__ import annotations
 
@@ -16,15 +16,15 @@ from rclpy.parameter import Parameter
 from voice_interfaces.action import PlayAudio
 from voice_interfaces.srv import SynthesizeSpeech
 
-from voice_assistant.config import RobotConfig, load_config
-from voice_assistant.tree_factory import create_tree
+from krt_human_robot.tree_factory import create_tree
+from krt_human_robot.config import load_config
 
 
-class VoiceAssistantNode(Node):
-    """语音助手主节点。"""
+class KrtHumanRobotNode(Node):
+    """Core behavior tree entry for the humanoid robot."""
 
     def __init__(self) -> None:
-        super().__init__("voice_assistant")
+        super().__init__("krtHumanRobot")
 
         self.declare_parameter("config_file", "")
         self.declare_parameter("tick_interval_ms", 100)
@@ -35,52 +35,54 @@ class VoiceAssistantNode(Node):
 
         config_path = self.get_parameter("config_file").get_parameter_value().string_value
         if not config_path:
-            config_path = os.environ.get("VOICE_ASSISTANT_CONFIG", "").strip()
+            config_path = os.environ.get("KRT_HUMAN_ROBOT_CONFIG", "").strip()
 
         tick_ms = self.get_parameter("tick_interval_ms").get_parameter_value().integer_value
-        env_tick = os.environ.get("VOICE_TICK_INTERVAL_MS", "").strip()
+        env_tick = os.environ.get("KRT_HUMAN_ROBOT_TICK_INTERVAL_MS", "").strip()
         if env_tick:
             tick_ms = int(env_tick)
+
         monitor_enabled = (
             self.get_parameter("enable_monitor").get_parameter_value().bool_value
         )
-        env_monitor = os.environ.get("VOICE_ENABLE_MONITOR", "").strip().lower()
+        env_monitor = os.environ.get("KRT_HUMAN_ROBOT_ENABLE_MONITOR", "").strip().lower()
         if env_monitor in {"1", "true", "yes", "on"}:
             monitor_enabled = True
         elif env_monitor in {"0", "false", "no", "off"}:
             monitor_enabled = False
+
         snapshot_period_s = (
             self.get_parameter("snapshot_period_s").get_parameter_value().double_value
         )
-        env_snapshot_period = os.environ.get("VOICE_SNAPSHOT_PERIOD_S", "").strip()
+        env_snapshot_period = os.environ.get("KRT_HUMAN_ROBOT_SNAPSHOT_PERIOD_S", "").strip()
         if env_snapshot_period:
             snapshot_period_s = float(env_snapshot_period)
+
         snapshot_blackboard_data = (
             self.get_parameter("snapshot_blackboard_data")
             .get_parameter_value()
             .bool_value
         )
-        env_bb_data = os.environ.get("VOICE_SNAPSHOT_BLACKBOARD_DATA", "").strip().lower()
+        env_bb_data = os.environ.get("KRT_HUMAN_ROBOT_SNAPSHOT_BLACKBOARD_DATA", "").strip().lower()
         if env_bb_data in {"1", "true", "yes", "on"}:
             snapshot_blackboard_data = True
         elif env_bb_data in {"0", "false", "no", "off"}:
             snapshot_blackboard_data = False
+
         snapshot_blackboard_activity = (
             self.get_parameter("snapshot_blackboard_activity")
             .get_parameter_value()
             .bool_value
         )
         env_bb_activity = os.environ.get(
-            "VOICE_SNAPSHOT_BLACKBOARD_ACTIVITY", ""
+            "KRT_HUMAN_ROBOT_SNAPSHOT_BLACKBOARD_ACTIVITY", ""
         ).strip().lower()
         if env_bb_activity in {"1", "true", "yes", "on"}:
             snapshot_blackboard_activity = True
         elif env_bb_activity in {"0", "false", "no", "off"}:
             snapshot_blackboard_activity = False
 
-        self._config: RobotConfig = (
-            load_config(config_path) if config_path else load_config()
-        )
+        self._config = load_config(config_path) if config_path else load_config()
         self._config.enable_monitor = monitor_enabled
 
         self._tts_client = self.create_client(
@@ -113,13 +115,9 @@ class VoiceAssistantNode(Node):
         ])
 
         self._tick_ms = max(10, int(tick_ms))
-
-        self.get_logger().info("语音助手已启动，等待唤醒词...")
-        self.get_logger().info(f"  配置文件: {config_path or '默认'}")
-        self.get_logger().info(f"  监控发布: {'启用' if monitor_enabled else '关闭'}")
-        self.get_logger().info(
-            f"  意图模式: {'LLM 规划' if self._config.use_llm_planner else '关键词匹配'}"
-        )
+        self.get_logger().info("krtHumanRobot core behavior tree started")
+        self.get_logger().info(f"  config: {config_path or 'default'}")
+        self.get_logger().info(f"  monitor: {'enabled' if monitor_enabled else 'disabled'}")
 
         if self._config.startup_sound_enabled:
             self._speak_startup(self._config.startup_sound_text)
@@ -134,7 +132,7 @@ class VoiceAssistantNode(Node):
         try:
             self._tree.shutdown()
         except Exception as exc:
-            self.get_logger().warning(f"行为树 shutdown 异常: {exc}")
+            self.get_logger().warning(f"behavior tree shutdown failed: {exc}")
         return super().destroy_node()
 
     def _speak_startup(self, text: str) -> None:
@@ -151,38 +149,33 @@ class VoiceAssistantNode(Node):
             if self._tts_client.service_is_ready() and play_client.server_is_ready():
                 break
         else:
-            self.get_logger().warning("启动提示音跳过：TTS/playback 在 30s 内未就绪")
+            self.get_logger().warning("startup sound skipped: voice services not ready")
             return
 
         future = self._tts_client.call_async(req)
         try:
             rclpy.spin_until_future_complete(self, future, timeout_sec=20.0)
             resp = future.result()
-            error_message = getattr(resp, "error_message", "") if resp else ""
             if resp is not None and resp.accepted:
-                duration = max(0.1, float(resp.estimated_duration_sec))
-                time.sleep(duration + 0.15)
+                time.sleep(max(0.1, float(resp.estimated_duration_sec)) + 0.15)
                 return
-            self.get_logger().warning(
-                f"启动提示音失败: {error_message or 'unknown'}"
-            )
+            error_message = getattr(resp, "error_message", "") if resp else ""
+            self.get_logger().warning(f"startup sound failed: {error_message or 'unknown'}")
         except Exception:
-            self.get_logger().warning("启动提示音调用失败")
+            self.get_logger().warning("startup sound request failed")
 
 
 def _post_tick_reset_root(tree: BehaviourTree) -> None:
-    """回合结束后重置行为树，回到唤醒待机。"""
     root = tree.root
     if root.status in (Status.SUCCESS, Status.FAILURE):
-        logger.debug("回合结束，回到待机")
+        logger.debug("dialog turn finished, returning to standby")
         root.stop(Status.INVALID)
         time.sleep(0.1)
 
 
 def _pre_tick_healthcheck(tree: BehaviourTree) -> None:
-    """树 tick 前的最小健康检查。"""
     if tree.root is None:
-        raise RuntimeError("行为树 root 为空，无法执行 tick")
+        raise RuntimeError("behavior tree root is empty")
 
 
 def main(args: list[str] | None = None) -> None:
@@ -198,7 +191,7 @@ def main(args: list[str] | None = None) -> None:
     )
 
     rclpy.init(args=args)
-    node = VoiceAssistantNode()
+    node = KrtHumanRobotNode()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:

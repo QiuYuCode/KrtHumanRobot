@@ -10,13 +10,13 @@ from loguru import logger
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 
-from voice_assistant.config import RobotConfig
-from voice_assistant.nodes.actions.camera import capture_frame_as_base64
-from voice_assistant.nodes.actions.llm_dialog import (
+from krt_human_robot.config import RobotConfig
+from krt_human_robot.behaviors.core.actions.camera import capture_frame_as_base64
+from krt_human_robot.behaviors.core.actions.llm_dialog import (
     _create_chat_model,
     _invoke_with_timeout,
 )
-from voice_assistant.nodes.actions.robot_arm import _normalize_side, execute_robot_arm
+from krt_human_robot.behaviors.core.actions.robot_arm import _normalize_side, execute_robot_arm
 
 
 # ============================================================================

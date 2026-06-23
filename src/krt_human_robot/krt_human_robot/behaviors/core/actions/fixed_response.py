@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from voice_assistant.config import RobotConfig
+from krt_human_robot.config import RobotConfig
 
 import py_trees
 from py_trees.behaviour import Behaviour

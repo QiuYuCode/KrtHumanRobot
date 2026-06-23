@@ -32,6 +32,7 @@ WS_DIR="$(_find_workspace_root "$SCRIPT_DIR")" || {
 }
 
 UV_PKG_DIR="${VOICE_ASSISTANT_PKG_DIR:-$WS_DIR/src/voice_assistant}"
+export UV_CACHE_DIR="${UV_CACHE_DIR:-/tmp/uv-cache}"
 
 if [[ -f /opt/ros/humble/setup.bash ]]; then
   # shellcheck source=/dev/null

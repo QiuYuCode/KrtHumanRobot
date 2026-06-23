@@ -1,5 +1,5 @@
 """
-机器人语音助手配置文件
+KrtHumanRobot 核心配置文件
 
 所有可配置参数集中在 RobotConfig dataclass 中。
 运行时配置从 config.yaml 加载；敏感字段（API Key 等）始终从环境变量读取。
@@ -38,28 +38,28 @@ def _read_env(*keys: str) -> str:
     return ""
 
 
-# Python 包目录（model/、logs/ 相对此路径）
+# Python 包目录（logs/ 相对此路径）
 base_dir = Path(__file__).parent
 
 
 def _default_config_yaml() -> Path:
     """解析默认 YAML：环境变量 > install share > 源码 config/。"""
-    override = os.getenv("VOICE_ASSISTANT_CONFIG", "").strip()
+    override = os.getenv("KRT_HUMAN_ROBOT_CONFIG", "").strip()
     if override:
         return Path(override).expanduser()
     try:
         from ament_index_python.packages import get_package_share_directory
 
         share_yaml = (
-            Path(get_package_share_directory("voice_assistant"))
+            Path(get_package_share_directory("krt_human_robot"))
             / "config"
-            / "voice_assistant.yaml"
+            / "krt_human_robot.yaml"
         )
         if share_yaml.is_file():
             return share_yaml
     except Exception:
         pass
-    src_yaml = Path(__file__).resolve().parent.parent / "config" / "voice_assistant.yaml"
+    src_yaml = Path(__file__).resolve().parent.parent / "config" / "krt_human_robot.yaml"
     return src_yaml
 
 # ============================================================================
@@ -68,10 +68,6 @@ def _default_config_yaml() -> Path:
 
 MODELS_BASE = base_dir / "model" / "voice_models"
 
-if not MODELS_BASE.exists():
-    MODELS_BASE.mkdir(parents=True, exist_ok=True)
-    logger.info(f"模型目录不存在，已创建: {MODELS_BASE}")
-    
 # sherpa-onnx 流式 ASR
 ASR_DIR = MODELS_BASE / "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20"
 
@@ -446,6 +442,38 @@ class RobotConfig:
     log_dir: str = "logs"           # 日志文件保存目录
     log_retention: str = "7 days"   # 日志保留时长
     log_level: str = "DEBUG"        # 文件日志级别
+
+    # --- 功能包 ROS 接口预留 ---
+    adapters: dict[str, dict[str, Any]] = field(default_factory=lambda: {
+        "camera": {
+            "enabled": False,
+            "semantic_topic_prefix": "/krtHumanRobot/vision",
+            "image_topic": "/camera/color/image_raw",
+        },
+        "lidar": {
+            "enabled": False,
+            "launch_package": "spark_fast_lio",
+            "pointcloud_topic": "/livox/lidar",
+        },
+        "base": {
+            "enabled": False,
+            "cmd_vel_topic": "/cmd_vel",
+            "odom_topic": "/odom",
+        },
+        "navigation": {
+            "enabled": False,
+            "launch_package": "ranger_nav",
+            "navigate_action": "/navigate_to_pose",
+        },
+        "arm": {
+            "enabled": False,
+            "action_group_action": "/agx_action_group/run_action_group",
+        },
+        "hand": {
+            "enabled": False,
+            "control_action": "/hands_control",
+        },
+    })
 
     # --- py_trees_ros 监控 ---
     enable_monitor: bool = True  # 是否启用 tree/blackboard 快照发布

@@ -4,7 +4,7 @@ import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 
-from voice_assistant.config import RobotConfig
+from krt_human_robot.config import RobotConfig
 
 
 class RecognizeIntent(Behaviour):

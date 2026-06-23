@@ -1,25 +1,21 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>voice_assistant</name>
+  <name>krt_human_robot</name>
   <version>0.1.0</version>
-  <description>KrtHumanRobot voice subsystem launch/config package</description>
+  <description>KrtHumanRobot core behavior tree entry point</description>
   <maintainer email="r465755956@gmail.com">create</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>ament_index_python</depend>
-  <exec_depend>launch_ros</exec_depend>
-  <exec_depend>voice_audio_capture</exec_depend>
-  <exec_depend>voice_kws</exec_depend>
-  <exec_depend>voice_audio_process</exec_depend>
-  <exec_depend>voice_asr</exec_depend>
-  <exec_depend>voice_tts</exec_depend>
-  <exec_depend>voice_playback</exec_depend>
-  <exec_depend>voice_volume</exec_depend>
+  <depend>voice_interfaces</depend>
 
-  <exec_depend>python3-dotenv</exec_depend>
-  <exec_depend>python3-loguru</exec_depend>
+  <exec_depend>voice_assistant</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>py_trees</exec_depend>
+  <exec_depend>py_trees_ros</exec_depend>
+  <exec_depend>py_trees_ros_interfaces</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

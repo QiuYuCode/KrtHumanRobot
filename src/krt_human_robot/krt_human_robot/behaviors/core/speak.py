@@ -10,7 +10,7 @@ from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 from voice_interfaces.srv import StopPlayback, SynthesizeSpeech
 
-from voice_assistant.config import RobotConfig
+from krt_human_robot.config import RobotConfig
 
 
 class SpeakResponse(Behaviour):

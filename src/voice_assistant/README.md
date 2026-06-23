@@ -1,344 +1,108 @@
 # voice_assistant
 
-基于 **py_trees_ros** 驱动的 ROS 2 语音对话助手，自 smart-voice-robot 迁入。
+纯语音子系统包。负责采集、KWS、VAD、ASR、TTS、播放、媒体播报和音量服务。
 
-## 功能
-
-- 唤醒词 (KWS) → ASR → 意图识别 / LLM 规划 → 动作执行 → TTS
-- 支持拍照、录像、场景描述 (VLM)、机械臂、灵巧手、导航（ROS 接口待接）
-- 行为树生命周期由 `py_trees_ros.trees.BehaviourTree` 托管（`setup/tick_tock/shutdown`）
-- 自定义节点仍基于 `py_trees` 行为节点基类（`py_trees_ros` 官方设计依赖）
-
-## 依赖分层
-
-| 层级 | 工具 | 内容 |
-|------|------|------|
-| ROS 2 | `apt` | `rclpy`, `py_trees`, `py_trees_ros`, `cv_bridge` |
-| 语音栈 | `uv`（`.venv`） | `sherpa-onnx`, `langchain`, `loguru`, `sounddevice` 等 |
-| 打包 | `colcon` | launch、config、Python 包安装到 `install/` |
-
-**不要**用 `pip install` 往系统 Python 装语音依赖，**不要**在 `pyproject.toml` 里写 `rclpy` / `py-trees`。
-
-## 一次性环境准备
+行为树、意图识别、LLM 规划、动作分发已经迁到 `krt_human_robot`。默认整机入口是：
 
 ```bash
-# ROS 2
-sudo apt install ros-humble-py-trees ros-humble-py-trees-ros \
-  ros-humble-py-trees-ros-interfaces python3-opencv
+ros2 launch krt_human_robot robot.launch.py
+```
 
-# colcon 构建
+## 包边界
+
+`voice_assistant` 不 import `krt_human_robot`，也不保存相机、导航、机械臂、灵巧手业务动作代码。
+
+对外接口固定在 `/voice/...`：
+
+- `/voice/audio/raw`
+- `/voice/kws/events`
+- `/voice/vad/events`
+- `/voice/asr/recognize`
+- `/voice/asr/stream`
+- `/voice/tts/synthesize`
+- `/voice/playback/play`
+- `/voice/playback/stop`
+- `/voice/media/play`
+- `/voice/volume/get`、`/voice/volume/set`、`/voice/volume/mute`
+
+## 配置
+
+`config/voice_assistant.yaml` 只保留语音参数：
+
+- 音频输入/输出设备
+- KWS 模型和关键词
+- VAD 参数
+- ASR 后端和模型
+- TTS 后端、模型、云端字段
+
+整机意图、LLM、动作和功能包接口配置在 `krt_human_robot/config/krt_human_robot.yaml`。
+
+敏感字段通过环境变量注入：
+
+- `XFYUN_IAT_APPID` / `XFYUN_IAT_API_KEY` / `XFYUN_IAT_API_SECRET`
+- `XFYUN_TTS_APPID` / `XFYUN_TTS_API_KEY` / `XFYUN_TTS_API_SECRET`
+- `LLM_API_KEY`，用于 MiMo TTS
+
+## 环境准备
+
+```bash
 cd /home/nvidia/WorkSpace/KrtHumanRobot
 colcon build --packages-select voice_assistant --symlink-install
 source install/setup.bash
 
-# uv 虚拟环境（继承 apt 包，隔离语音 pip 依赖）
 bash src/voice_assistant/scripts/setup_uv.sh
-
-# 可选：仍使用 SDK 直连臂/手
-cd src/voice_assistant && uv sync --extra arm --extra hand
 ```
 
-`setup_uv.sh` 会创建 `src/voice_assistant/.venv`（`--system-site-packages`），使 venv 内可 `import rclpy` 同时语音包装在 venv 中。
+不要把 `sherpa_onnx`、`sounddevice` 等语音依赖装进系统 Python；语音节点通过 `uv` 虚拟环境启动。
 
 ## 模型文件
 
-模型**不入 Git**。见 [voice_assistant/model/README.md](voice_assistant/model/README.md)。
+模型不入 Git。见 `voice_assistant/model/README.md`。
 
 ```bash
-# 复用已下载模型
-ln -sf /path/to/smart-voice-robot/model/voice_models \
+ln -sf /path/to/voice_models \
   src/voice_assistant/voice_assistant/model/voice_models
 ```
 
-## 运行
-
-| Launch | 作用 | 唤醒后是否有语音回复 |
-|--------|------|---------------------|
-| `voice_stack.launch.py` | 仅底层：采集/KWS/VAD/ASR/TTS/播放 | **否**（无行为树） |
-| `voice_full.launch.py` | voice_stack + bt_manager | **是**（推荐） |
-| `voice_assistant.launch.py` | 仅行为树（需另起 voice_stack） | 是 |
-| `kws_test.launch.py` | 最小 KWS：采集 + KWS | 否 |
-| `vad_test.launch.py` | 最小 VAD：采集 + VAD | 否 |
-| `asr_test.launch.py` | 最小流式 ASR：采集 + VAD + ASR | 否 |
-| `tts_test.launch.py` | 最小 TTS：TTS + 播放 | 是 |
-| `media_test.launch.py` | 本地 WAV 媒体播报 + 播放 | 是 |
-| `volume_test.launch.py` | 系统音量与静音服务 | 否 |
-
-**唤醒词**（见 `model/voice_models/.../keywords.txt`）：你好小特、小特小特、小特同学、小科小科、小科同学。
+## 启动
 
 ```bash
 cd /home/nvidia/WorkSpace/KrtHumanRobot
 source install/setup.bash
 
-# 仅验 KWS/采集（终端会打印 KWS 命中，但不会播报）
-ros2 launch voice_assistant voice_stack.launch.py
-
-# 完整唤醒闭环（推荐）
-ros2 launch voice_assistant voice_full.launch.py
-
-# 仅行为树（voice_stack 需另起）
+# 只启动语音栈
 ros2 launch voice_assistant voice_assistant.launch.py
 
-# 或直接脚本
-bash src/voice_assistant/scripts/run_voice_node.sh
+# 兼容入口：转发到 krt_human_robot robot.launch.py
+ros2 launch voice_assistant voice_full.launch.py
 ```
 
-### 单元功能测试
+`voice_assistant.launch.py` 只启动语音栈，不启动行为树。
+
+`voice_full.launch.py` 是兼容入口，默认启动 `krt_human_robot robot.launch.py`。
+
+## 单元测试 launch
 
 ```bash
-# KWS：启动后另一个终端观察 /voice/kws/events
 ros2 launch voice_assistant kws_test.launch.py
-ros2 topic echo /voice/kws/events
-
-# VAD：说话和静默应产生 speech_start / speech_end
 ros2 launch voice_assistant vad_test.launch.py
-ros2 topic echo /voice/vad/events
-
-# ASR：发送目标后对麦克风说话，VAD 端点结束识别
 ros2 launch voice_assistant asr_test.launch.py
-ros2 action send_goal /voice/asr/stream \
-  voice_interfaces/action/RecognizeStream "{backend: local}" --feedback
-
-# TTS
 ros2 launch voice_assistant tts_test.launch.py
-ros2 service call /voice/tts/synthesize \
-  voice_interfaces/srv/SynthesizeSpeech \
-  "{text: '你好，这是语音合成测试', language: 'zh-CN', style: '', priority: 0}"
-
-# 本地 WAV 媒体播报（支持 8/16/24/32-bit PCM WAV）
 ros2 launch voice_assistant media_test.launch.py
-ros2 service call /voice/media/play voice_interfaces/srv/PlayMedia \
-  "{file_path: '/absolute/path/notice.wav', priority: 10, preempt_lower_priority: true}"
-
-# 停止 TTS 或媒体播报
-ros2 service call /voice/playback/stop voice_interfaces/srv/StopPlayback \
-  "{reason: 'manual_test'}"
+ros2 launch voice_assistant volume_test.launch.py
 ```
 
-这些测试 launch 都接受 `config_file:=/absolute/path/config.yaml`。媒体播报只接受
-播放节点所在机器上的本地绝对路径；当前不解码 MP3、AAC 或网络 URL。
+这些 launch 都接受 `config_file:=/absolute/path/voice_assistant.yaml`。
 
-### 代码测试客户端
-
-`voice_test_tools` 提供独立的 rclpy 客户端，不依赖 `ros2 topic/service/action`
-命令实现调用。先启动对应的测试 launch，再在另一个已 source 的终端执行客户端：
+## 验收
 
 ```bash
-# KWS：说一个唤醒词，收到事件后退出 0
-ros2 run voice_test_tools kws_test_client
-
-# VAD：说一句话后保持安静，收到 start/end 后退出 0
-ros2 run voice_test_tools vad_test_client
-
-# ASR：启动流式识别，识别结束后打印文本
-ros2 run voice_test_tools asr_test_client \
-  --ros-args -p backend:=local -p result_timeout_sec:=20.0
-
-# TTS
-ros2 run voice_test_tools tts_test_client \
-  --ros-args -p text:="你好，这是语音合成代码测试"
-
-# 本地 WAV 播放
-ros2 run voice_test_tools play_test_client \
-  --ros-args -p file_path:=/absolute/path/notice.wav
-
-# 音量服务需先启动：ros2 launch voice_assistant volume_test.launch.py
-ros2 run voice_test_tools volume_test_client --ros-args -p operation:=get
-ros2 run voice_test_tools volume_test_client \
-  --ros-args -p operation:=set -p volume:=0.5
-ros2 run voice_test_tools volume_test_client --ros-args -p operation:=mute
-ros2 run voice_test_tools volume_test_client --ros-args -p operation:=unmute
+ROS_LOG_DIR=/tmp/ros_log ros2 launch voice_assistant voice_assistant.launch.py --show-args
+ROS_LOG_DIR=/tmp/ros_log ros2 launch voice_assistant voice_assistant.launch.py
 ```
 
-客户端在成功时返回退出码 `0`，接口不可用、超时或服务返回失败时返回非零退出码，
-可直接用于 shell 脚本和自动化验收。
-
-> **不要**用 `ros2 run voice_xxx ...` 或 colcon 入口直接跑语音节点，它们走系统 Python，**缺少 uv 依赖**（`sherpa_onnx`、`sounddevice` 等）。`voice_stack.launch.py` 与 `voice_assistant.launch.py` 内部均通过 `uv run` 启动。
-
-启动前确认 uv 依赖就绪：
+如果当前机器没有麦克风或音频权限，可以先关闭采集节点验证其余服务：
 
 ```bash
-cd src/voice_assistant
-uv run python -c "import sounddevice, sherpa_onnx; print('deps OK')"
+ROS_LOG_DIR=/tmp/ros_log ros2 launch voice_assistant voice_assistant.launch.py enable_capture:=false
 ```
-
-环境变量（launch 已自动设置，手动运行时可用）：
-
-- `VOICE_ASSISTANT_CONFIG` — YAML 配置路径
-- `VOICE_TICK_INTERVAL_MS` — 行为树 tick 周期
-- `VOICE_ENABLE_MONITOR` — 是否启用树监控发布（`true/false`）
-- `VOICE_SNAPSHOT_PERIOD_S` — 快照发布周期（秒）
-- `VOICE_SNAPSHOT_BLACKBOARD_DATA` — 快照是否附加 blackboard 数据
-- `VOICE_SNAPSHOT_BLACKBOARD_ACTIVITY` — 快照是否附加 blackboard 活动流
-
-说明：旧 Web 监控面板已移除，统一使用 `py-trees-tree-watcher`
-观测树状态。`VOICE_ENABLE_MONITOR=true` 只开启 snapshot 发布，不会把
-行为树逐 tick 追加到主节点日志。
-
-> `ros2 run voice_assistant voice_node` 走系统 Python，**缺少 uv 依赖，不推荐**。请用 launch 或 `run_voice_node.sh` / `run_voice_stack_node.sh`。
-
-### voice_stack 栈级验收
-
-```bash
-ros2 launch voice_assistant voice_stack.launch.py
-# 另开终端：
-ros2 topic hz /voice/audio/raw              # 应约 10Hz，否则检查麦克风/input_device_hint
-ros2 topic echo /voice/kws/events --once    # 对麦说「你好小特」，应看到 KWS 命中日志与消息
-ros2 topic list | grep voice
-ros2 service list | grep voice
-```
-
-通过标准：7 个进程无 `ModuleNotFoundError`；启动日志含 `[Audio] 输入设备:`；topic 含 `/voice/audio/raw`、`/voice/kws/events`、`/voice/vad/events`；service 含 `/voice/asr/recognize`、`/voice/tts/synthesize`。
-
-### 完整唤醒验收
-
-```bash
-ros2 launch voice_assistant voice_full.launch.py
-```
-
-对麦克风说「你好小特」：终端出现 `唤醒成功!`，并 TTS 播报「我在，请说。」
-
-### full 启动后接口自检
-
-`voice_full.launch.py` 会启动底层语音栈和行为树，下面这些接口都应该可以直接调用：
-
-- `kws`：`/voice/kws/events`
-- `vad`：`/voice/vad/events`
-- `asr`：`/voice/asr/stream`
-- `tts`：`/voice/tts/synthesize`
-- `play`：`/voice/media/play`
-- `volume`：`/voice/volume/get`、`/voice/volume/set`、`/voice/volume/mute`
-
-先确认节点和接口都在：
-
-```bash
-ros2 launch voice_assistant voice_full.launch.py
-
-# 另开终端
-ros2 node list
-ros2 topic list | rg '/voice/(kws|vad)'
-ros2 action list | rg '/voice/asr/stream'
-ros2 service list | rg '/voice/(tts|media|volume)'
-```
-
-逐项验证：
-
-```bash
-# KWS：对麦克风说唤醒词，收到事件后退出 0
-ros2 run voice_test_tools kws_test_client --ros-args \
-  -p expected_keyword:=小特 -p timeout_sec:=20.0
-
-# VAD：说一句话后保持安静，收到 speech_start -> speech_end 后退出 0
-ros2 run voice_test_tools vad_test_client --ros-args \
-  -p timeout_sec:=20.0
-
-# ASR：启动后说一句话，拿到识别结果后退出 0
-ros2 run voice_test_tools asr_test_client --ros-args \
-  -p backend:=local -p result_timeout_sec:=20.0
-
-# TTS：合成并播放，返回 accepted=true 即成功
-ros2 run voice_test_tools tts_test_client --ros-args \
-  -p text:='你好，这是语音合成测试' -p timeout_sec:=30.0
-
-# play：播放本地 WAV，返回 accepted=true 即成功
-ros2 run voice_test_tools play_test_client --ros-args \
-  -p file_path:=/home/nvidia/WorkSpace/KrtHumanRobot/src/voice_test_tools/testdata/wav/beep_440hz_1s.wav
-
-# volume：读/写/静音
-ros2 run voice_test_tools volume_test_client --ros-args -p operation:=get
-ros2 run voice_test_tools volume_test_client --ros-args -p operation:=set -p volume:=0.5
-ros2 run voice_test_tools volume_test_client --ros-args -p operation:=mute
-ros2 run voice_test_tools volume_test_client --ros-args -p operation:=unmute
-```
-
-说明：
-
-- `kws` 和 `vad` 主要靠麦克风输入触发事件，不是 service。
-- `asr` 是 action，`tts` / `play` / `volume` 是 service。
-- `play` 只接受本机上的绝对路径 `wav` 文件。
-
-### 讯飞云语音验收
-
-默认配置使用本地 ASR、讯飞云 TTS：`asr_backend: local`、
-`tts_backend: iflytek_cloud`、`cloud_tts_fallback_to_local: true`。
-密钥不要写入 YAML。
-`voice_stack.launch.py` 会自动读取 `src/voice_assistant/.env`；
-也可以用 `VOICE_ASSISTANT_DOTENV=/path/to/.env` 指定其他密钥文件。
-
-默认云 TTS 验证：
-
-```bash
-ros2 launch voice_assistant voice_full.launch.py
-```
-
-确认 `.env` 中已有 `XFYUN_TTS_APPID`、`XFYUN_TTS_API_KEY`、
-`XFYUN_TTS_API_SECRET`。启动提示音和对话回复应由讯飞云 TTS 合成，
-日志出现 `TTS 已提交播放: backend=iflytek_cloud ...`。
-
-断网/密钥错误回退验证：
-
-```bash
-VOICE_ASSISTANT_DOTENV=/tmp/not_exists.env \
-ros2 launch voice_assistant voice_full.launch.py
-```
-
-调用 `/voice/tts/synthesize` 或唤醒后播报时，日志应出现“讯飞云 TTS 失败，回退本地 TTS”，并最终正常播放。若只设置通用变量，也兼容 `XFYUN_APPID`、`XFYUN_API_KEY`、`XFYUN_API_SECRET`。
-
-云 ASR/TTS 联合验证时，将临时配置里的 `asr_backend` 切到 `iflytek_cloud`，并同时设置 `XFYUN_IAT_*` 与 `XFYUN_TTS_*`。完成多轮“唤醒 -> 识别 -> 回复 -> 播放”，检查节点不退出且没有重复 playback server。
-
-### 小米 MiMo LLM/VLM 验收
-
-默认配置使用小米 MiMo OpenAI-compatible 接口处理闲聊和视觉理解：
-`llm_provider: openai`、`llm_model: mimo-v2.5`、
-`llm_base_url: https://token-plan-cn.xiaomimimo.com/v1`；VLM 同样默认
-`vlm_provider: openai`、`vlm_model: mimo-v2.5`。密钥只从环境读取，
-`.env` 中配置 `LLM_API_KEY`；视觉可单独配置 `VLM_API_KEY`，未配置时复用
-`LLM_API_KEY`。
-
-关键词动作仍优先。`use_llm_planner: false` 时行为树路径为
-`RecognizeIntent -> ActionSelector -> LLMDialog fallback`，所以“拍照”、
-“左手张开”、“介绍一下你自己”等命中关键词的指令仍走本地动作；只有没有命中关键词的闲聊问题才进入 LLM 对话。
-
-```bash
-ros2 launch voice_assistant voice_full.launch.py
-```
-
-唤醒后说一个不匹配关键词的问题，日志应显示
-`provider=openai, model=mimo-v2.5`，并由云端生成简短中文回复。说“看一下前面有什么”，应使用 `mimo-v2.5` 完成视觉描述。
-
-云端失败回退验证：临时使用错误密钥或断网，再发起闲聊或视觉请求。日志应先记录云端 LLM/VLM 失败，再尝试本地 Ollama：
-对话回退 `local_llm_model: qwen2.5:0.5b`，视觉回退
-`local_vlm_model: qwen3.5:0.8b`。若本地 Ollama 不可用，闲聊返回明确失败话术；若本地 VLM 不可用或不支持图片输入，回复“视觉分析暂时不可用”。
-
-## 配置
-
-默认：`config/voice_assistant.yaml`（安装后 `share/voice_assistant/config/`）。
-
-模型路径相对 Python 包目录 `voice_assistant/`，例如 `model/voice_models/...`。
-
-## 与其他 ROS 包联调
-
-```bash
-ros2 launch realsense2_camera rs_launch.py          # 相机
-ros2 launch agx_action_group_runner run_action_group_runner.launch.py
-ros2 launch hands_control hand_control_launch.py
-ros2 launch voice_assistant voice_assistant.launch.py
-```
-
-`voice_assistant.yaml` 中设置 `camera_backend: ros` 并配置 `cameras.*.ros_topic`。
-
-## 调试
-
-```bash
-source install/setup.bash
-cd src/voice_assistant
-uv run python -c "import rclpy, py_trees_ros, sherpa_onnx, loguru; print('deps OK')"
-uv run python -c "from voice_assistant.config import default_config; print(default_config.asr_model_dir)"
-```
-
-```bash
-py-trees-tree-watcher
-```
-
-`py-trees-tree-watcher` 需要在单独终端直接运行，它会原地刷新树快照；不要通过
-`ros2 launch` 聚合输出查看，否则 launch 日志仍会按行追加。

@@ -10,8 +10,8 @@ from loguru import logger
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 
-from voice_assistant.config import RobotConfig
-from voice_assistant.nodes.actions.camera_source import create_camera_source
+from krt_human_robot.config import RobotConfig
+from krt_human_robot.behaviors.core.actions.camera_source import create_camera_source
 
 try:
     import cv2

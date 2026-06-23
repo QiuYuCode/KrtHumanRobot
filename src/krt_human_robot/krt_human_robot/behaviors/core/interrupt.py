@@ -11,8 +11,8 @@ from py_trees.common import Status
 from voice_interfaces.msg import VoiceKwsEvent
 from voice_interfaces.srv import StopPlayback, SynthesizeSpeech
 
-from voice_assistant.config import RobotConfig
-from voice_assistant.ros_voice import speak_blocking
+from krt_human_robot.config import RobotConfig
+from krt_human_robot.behaviors.voice import speak_blocking
 
 
 def _is_wakeword_interrupted(blackboard) -> bool:

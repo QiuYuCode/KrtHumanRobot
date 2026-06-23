@@ -1,6 +1,6 @@
 """云端监听节点（兼容类）：复用统一 ListenCommand。"""
 
-from voice_assistant.nodes.listen import ListenCommand
+from krt_human_robot.behaviors.core.listen import ListenCommand
 
 
 class ListenCloudCommand(ListenCommand):
