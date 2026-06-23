@@ -248,3 +248,4 @@ src/voice_assistant/voice_assistant/model/voice_models/
 src/voice_assistant/voice_assistant/logs/
 src/voice_assistant/.venv/
 src/voice_assistant/captures/
+*.understand-anything/
