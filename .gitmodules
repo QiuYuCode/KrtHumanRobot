@@ -1,25 +1,27 @@
 [submodule "src/livox_ros_driver2"]
 	path = src/livox_ros_driver2
-	url = https://github.com/Livox-SDK/livox_ros_driver2.git
+	url = git@github.com:QiuYuCode/livox_ros_driver2.git
+	branch = krthumanrobot/mid360-config
 [submodule "src/realsense-ros"]
 	path = src/realsense-ros
-	url = https://github.com/realsenseai/realsense-ros.git
+	url = git@github.com:QiuYuCode/realsense-ros.git
 	branch = r/4.56.4
 [submodule "src/ranger_ros2"]
 	path = src/ranger_ros2
-	url = https://github.com/agilexrobotics/ranger_ros2.git
-	branch = air_delta
+	url = git@github.com:QiuYuCode/ranger_ros2.git
+	branch = krthumanrobot/ranger-bringup-config
 [submodule "src/agx_arm_ros"]
 	path = src/agx_arm_ros
-	url = https://github.com/agilexrobotics/agx_arm_ros.git
-	branch = ros2
+	url = git@github.com:QiuYuCode/agx_arm_ros.git
+	branch = krthumanrobot/agx-arm-rviz
 [submodule "src/FAST_LIO_ROS2"]
 	path = src/FAST_LIO_ROS2
-	url = https://github.com/Ericsii/FAST_LIO_ROS2.git
+	url = git@github.com:QiuYuCode/FAST_LIO_ROS2.git
 	branch = ros2
 [submodule "src/spark-fast-lio"]
 	path = src/spark-fast-lio
-	url = https://github.com/MIT-SPARK/spark-fast-lio.git
+	url = git@github.com:QiuYuCode/spark-fast-lio.git
+	branch = krthumanrobot/spark-fast-lio-preprocess
 [submodule "src/KISS-Matcher"]
 	path = src/KISS-Matcher
-	url = https://github.com/MIT-SPARK/KISS-Matcher.git
+	url = git@github.com:QiuYuCode/KISS-Matcher.git
