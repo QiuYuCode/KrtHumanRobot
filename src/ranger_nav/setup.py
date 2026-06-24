@@ -27,6 +27,7 @@ setup(
     entry_points={
         'console_scripts': [
             'pcd2pgm = ranger_nav.pcd2pgm:main',
+            'waypoint_manager = ranger_nav.waypoint_manager:main',
         ],
     },
 )

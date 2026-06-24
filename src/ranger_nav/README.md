@@ -9,7 +9,8 @@ Ranger 底盘 + Livox MID360 双方案 3D 建图与 Nav2 导航集成包。
 | Launch | `mapping.launch.py` | `mapping_sam.launch.py` |
 | LIO | `fast_lio` | `spark_fast_lio` |
 | 回环 | 无 | `kiss_matcher_ros` |
-| 保存 | `/map_save` → `~/maps/scans.pcd` | `/km_sam/save_dir` → `~/maps/ranger/ranger_map.pcd` |
+| 底层保存 | `/map_save` → 临时 PCD | `/km_sam/save_dir` → 回环优化 PCD |
+| 统一归档 | `~/maps/<时间戳>/cloud.pcd` + `map.yaml/map.pgm` | 同左 |
 
 ## TF 树
 
@@ -49,8 +50,8 @@ ros2 launch ranger_nav mapping_sam.launch.py
 # 另开终端，键盘遥控建图（尽量走回起点形成回环）
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
-# 保存回环优化后的全局地图（生成 ~/maps/ranger/ranger_map.pcd）
-ros2 topic pub --once /km_sam/save_dir std_msgs/msg/String "data: '$HOME/maps'"
+# 推荐通过 krt_human_robot 语音/行为树说“保存地图”。
+# 保存后统一生成 ~/maps/<时间戳>/cloud.pcd、map.yaml、map.pgm。
 ```
 
 底层 launch：`mapping_spark.launch.py`（spark + livox + 底盘）。SAM 订阅 `/odometry` + `/cloud_registered`（世界系）。
@@ -76,21 +77,30 @@ ros2 launch ranger_nav mapping.launch.py
 # 另开终端，键盘遥控建图
 ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
-# 建图完成后保存 PCD（保存到 ~/maps/scans.pcd）
-ros2 service call /map_save std_srvs/srv/Trigger
+# 推荐通过 krt_human_robot 语音/行为树说“保存地图”。
+# 保存后统一生成 ~/maps/<时间戳>/cloud.pcd、map.yaml、map.pgm。
 ```
 
 也可以直接 Ctrl+C 退出，FAST-LIO 会把累计点云保存到
 `src/FAST_LIO_ROS2/PCD/scans.pcd`。
 
-### 2. PCD 转 2D 栅格地图
+### 2. 地图保存结果
 
-```bash
-ros2 run ranger_nav pcd2pgm --pcd ~/maps/scans.pcd --out ~/maps/map \
-    --lidar-height 0.30 --z-min 0.15 --z-max 1.2 --resolution 0.05
+通过 `krt_human_robot` 执行“保存地图”后，两种 backend 都会归档成同一结构：
+
+```text
+~/maps/
+  20260624_091530/
+    cloud.pcd
+    map.pgm
+    map.yaml
+    metadata.yaml
+  map.pgm
+  map.yaml
 ```
 
-生成 `~/maps/map.pgm` 和 `~/maps/map.yaml`。
+时间戳目录保留历史地图，不互相覆盖；根目录 `map.yaml/map.pgm`
+始终更新为最新地图，供默认导航启动使用。
 `--lidar-height` 必须与 urdf 中的 `lidar_z` 一致。
 
 ### 3. 导航

@@ -72,13 +72,14 @@ def _load_env_file(dotenv_path: Path) -> None:
 def _load_voice_assistant_env(share: str) -> None:
     share_path = Path(share)
     install_prefix = share_path.parent.parent
+    workspace_root = install_prefix.parent.parent
     candidates = []
     override = os.environ.get("VOICE_ASSISTANT_DOTENV", "").strip()
     if override:
         candidates.append(Path(override).expanduser())
     candidates.extend(
         [
-            install_prefix.parent / "src" / "voice_assistant" / ".env",
+            workspace_root / "src" / "voice_assistant" / ".env",
             Path.cwd() / "src" / "voice_assistant" / ".env",
             Path.cwd() / ".env",
         ]

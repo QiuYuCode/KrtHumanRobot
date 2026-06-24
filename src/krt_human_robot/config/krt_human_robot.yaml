@@ -52,6 +52,15 @@ intent_patterns:
   start_mapping: [开始建图, 启动建图, 建图, 开始电图, 启动电图, 电图]
   stop_navigation: [结束导航, 停止导航, 退出导航, 关闭导航]
   start_navigation: [开始导航, 启动导航, 进入导航模式]
+  mark_waypoint: [打点, 保存点位, 记录点位, 标记点位]
+  loop_cruise: [循环巡航, 一直巡航]
+  repeat_cruise: [巡航一遍, 巡航两遍, 巡航二遍, 巡航三遍, 巡航四遍, 巡航五遍]
+  stop_cruise: [停止巡航, 结束巡航, 取消巡航]
+  continue_waypoint: [继续巡航, 继续执行, 继续]
+  remove_waypoint: [删除点位, 移除点位]
+  list_waypoints: [列出点位, 有哪些点位, 查看点位]
+  start_cruise: [开始巡航, 启动巡航]
+  cruise_waypoints: [巡航指定点, 巡航点位]
   navigation: [导航, 前往, 去, 带我去]
   exit: [没事了, 拜拜, 再见]
 
@@ -134,6 +143,22 @@ adapters:
     fast_lio_pcd: ~/maps/scans.pcd
     spark_sam_pcd: ~/maps/ranger/ranger_map.pcd
     map_yaml: ~/maps/map.yaml
+    map_archive_dir: ~/maps
+    map_timestamp_format: "%Y%m%d_%H%M%S"
+    session_cloud_filename: cloud.pcd
+    session_map_prefix: map
+    latest_map_yaml: ~/maps/map.yaml
+    latest_map_pgm: ~/maps/map.pgm
+    fast_lio_temp_pcd: ~/maps/scans.pcd
+    spark_sam_sequence_name: ranger
+    map_save_wait_s: 30.0
+    waypoints_file: ~/maps/waypoints.yaml
+    waypoint_input_topic: /input_at_waypoint/input
+    waypoint_image_topic: /camera/color/image_raw
+    waypoint_image_dir: ~/maps/waypoint_images
+    default_waypoint_wait_ms: 200
+    waypoint_tts_service: /voice/tts/synthesize
+    waypoint_arm_action: /run_action_group
     auto_convert_pcd: true
     mapping_stop_delay_s: 3.0
   arm:

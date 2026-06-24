@@ -8,6 +8,12 @@
   <license>MIT</license>
 
   <exec_depend>rclpy</exec_depend>
+  <exec_depend>builtin_interfaces</exec_depend>
+  <exec_depend>geometry_msgs</exec_depend>
+  <exec_depend>nav2_msgs</exec_depend>
+  <exec_depend>sensor_msgs</exec_depend>
+  <exec_depend>std_msgs</exec_depend>
+  <exec_depend>python3-yaml</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>fast_lio</exec_depend>
@@ -18,6 +24,9 @@
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>pointcloud_to_laserscan</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>cv_bridge</exec_depend>
+  <exec_depend>voice_interfaces</exec_depend>
+  <exec_depend>agx_action_group_interfaces</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
 
