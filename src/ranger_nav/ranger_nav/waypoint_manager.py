@@ -224,11 +224,12 @@ class WaypointNode(Node):
         last_error: Exception | None = None
         while time.monotonic() < deadline:
             try:
+                rclpy.spin_once(self, timeout_sec=0.05)
                 transform = self.tf_buffer.lookup_transform(
                     self.args.map_frame,
                     self.args.base_frame,
                     RclpyTime(),
-                    timeout=Duration(seconds=0.2),
+                    timeout=Duration(seconds=0.0),
                 )
                 pose = PoseStamped()
                 pose.header.frame_id = self.args.map_frame
