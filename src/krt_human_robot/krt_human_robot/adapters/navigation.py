@@ -272,7 +272,7 @@ class RangerNavAdapter:
     def _convert_pcd(self, pcd_path: Path, session_dir: Path) -> NavigationResult:
         map_prefix = str(self._cfg.get("session_map_prefix", "map"))
         out_prefix = str(session_dir / map_prefix)
-        result = self._call([
+        cmd = [
             "ros2",
             "run",
             self._package(),
@@ -282,14 +282,27 @@ class RangerNavAdapter:
             "--out",
             out_prefix,
             "--lidar-height",
-            "0.30",
+            str(self._cfg.get("pcd2pgm_lidar_height", 0.30)),
             "--z-min",
-            "0.15",
+            str(self._cfg.get("pcd2pgm_z_min", 0.15)),
             "--z-max",
-            "1.2",
+            str(self._cfg.get("pcd2pgm_z_max", 1.2)),
             "--resolution",
-            "0.05",
-        ])
+            str(self._cfg.get("pcd2pgm_resolution", 0.05)),
+            "--occ-thresh",
+            str(self._cfg.get("pcd2pgm_occ_thresh", 1)),
+            "--min-blob",
+            str(self._cfg.get("pcd2pgm_min_blob", 2)),
+        ]
+        ror_radius = float(self._cfg.get("pcd2pgm_ror_radius", 0.0))
+        if ror_radius > 0:
+            cmd.extend([
+                "--ror-radius",
+                str(ror_radius),
+                "--ror-min-pts",
+                str(self._cfg.get("pcd2pgm_ror_min_pts", 5)),
+            ])
+        result = self._call(cmd)
         if result.success:
             latest_result = self._update_latest_map(Path(out_prefix))
             if not latest_result.success:

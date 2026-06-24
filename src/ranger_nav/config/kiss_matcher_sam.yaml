@@ -10,8 +10,8 @@
 
     store_voxelized_scan: false
     voxel_resolution: 0.25          # MID360 点云较密，室内用 0.25 m
-    map_voxel_resolution: 0.5       # 可视化地图分辨率
-    save_voxel_resolution: 0.15     # 保存地图分辨率（pcd2pgm 输入）
+    map_voxel_resolution: 0.2       # 可视化地图分辨率
+    save_voxel_resolution: 0.05     # 保存地图分辨率（pcd2pgm 输入）
 
     keyframe:
       keyframe_threshold: 1.0       # 室内场景关键帧间距 1 m

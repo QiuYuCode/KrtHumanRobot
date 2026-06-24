@@ -122,17 +122,26 @@ ros2 launch ranger_nav navigation.launch.py map:=$HOME/maps/map.yaml
 
 ### 静态地图杂点（pgm 上的孤立黑点）
 
+方式 A（spark + SAM）的 PCD 密度由三处共同决定：
+
+1. `config/spark_fast_lio_mid360.yaml` 的 `publish.dense_publish_en` 控制
+   `/cloud_registered` 是否发布全量去畸变点云；建图保存推荐保持 `true`。
+2. `config/kiss_matcher_sam.yaml` 的 `save_voxel_resolution` 控制回环优化地图
+   保存体素；当前按 5 cm 栅格地图设为 `0.05`。
+3. `pcd2pgm` 的 `--occ-thresh` 控制每个 2D 栅格至少需要几个点才算障碍；
+   Spark-SAM 稀疏墙面优先用 `1`，噪点多时再调高。
+
 参数都在 `pcd2pgm` 命令行，推荐起步命令：
 
 ```bash
 ros2 run ranger_nav pcd2pgm --pcd ~/maps/scans.pcd --out ~/maps/map \
-    --lidar-height 0.30 --occ-thresh 3 --min-blob 4
+    --lidar-height 0.30 --occ-thresh 1 --min-blob 2
 ```
 
 | 参数 | 默认 | 作用与调整方向 |
 |------|------|----------------|
-| `--occ-thresh` | 2 | 栅格内点数达到该值才视为占据。孤立点多 → 调大（3~5）；细小真实障碍丢失 → 调小 |
-| `--min-blob` | 3 | 剔除面积小于 N 格的孤立占据块（4 连通域分析）。噪团偏大 → 调大（4~8）；0 关闭 |
+| `--occ-thresh` | 2 | 栅格内点数达到该值才视为占据。Spark-SAM 墙线断裂 → 1；孤立点多 → 调大（3~5） |
+| `--min-blob` | 3 | 剔除面积小于 N 格的孤立占据块（4 连通域分析）。Spark-SAM 起步 2；噪团偏大 → 调大（4~8）；0 关闭 |
 | `--ror-radius` / `--ror-min-pts` | 0（关）/ 5 | 3D 半径离群点滤波：半径 R 内邻居少于 K 的点被丢弃。成片稀疏虚假障碍（玻璃反射、动态物体轨迹）→ 试 `--ror-radius 0.3 --ror-min-pts 5` |
 | `--z-min` | 0.15 | 障碍切片下限（相对地面）。地面被误判为障碍 → 调大（0.2）；低矮障碍漏检 → 调小 |
 

@@ -19,7 +19,7 @@ from launch_ros.parameter_descriptions import ParameterValue
 
 # 点云转激光的切片高度（相对地面，米）。
 # 地面不平、地面毛刺被误判为障碍时调大 SCAN_MIN_HEIGHT（如 0.20）
-SCAN_MIN_HEIGHT = 0.15
+SCAN_MIN_HEIGHT = 0.05
 SCAN_MAX_HEIGHT = 1.2
 
 
