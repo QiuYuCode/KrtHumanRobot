@@ -139,6 +139,16 @@ colcon test --packages-select realsense2_camera --ctest-args -R specific_test_na
 - C++ tests use gtest framework
 - All tests must pass before merge
 
+## Commit Message Guidelines
+
+- Use Conventional Commits: `<type>[optional scope]: <中文描述>`.
+- Commit messages must be written in Chinese.
+- Use `!` and a `BREAKING CHANGE:` footer when removing packages, public APIs, topics, launch files, or executables.
+- Examples:
+  - `feat(camera): 新增左右手摄像头驱动`
+  - `fix(nav): 修复代价地图参数`
+  - `feat(camera)!: 移除旧设备测试包`
+
 ## Critical Development Notes
 
 ### RealSense Version Constraint
