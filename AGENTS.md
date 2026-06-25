@@ -21,8 +21,8 @@ source install/setup.bash
 
 ### Build Specific Packages
 ```bash
-# Device testing package (Python)
-colcon build --packages-select device_test --symlink-install
+# Hand USB cameras (Python)
+colcon build --packages-select hand_camera_driver --symlink-install
 
 # LiDAR driver (C++)
 colcon build --packages-select livox_ros_driver2 --symlink-install
@@ -35,15 +35,15 @@ colcon build --packages-select realsense2_camera realsense2_camera_msgs realsens
 
 ### Lint and Test Commands
 
-#### Python (device_test package)
+#### Python (hand_camera_driver package)
 ```bash
 # Run linting
-colcon test --packages-select device_test --event-handlers console_direct+
+colcon test --packages-select hand_camera_driver --event-handlers console_direct+
 
 # Run specific lint tests
-colcon test --packages-select device_test --ctest-args -R test_flake8
-colcon test --packages-select device_test --ctest-args -R test_pep257
-colcon test --packages-select device_test --ctest-args -R test_copyright
+colcon test --packages-select hand_camera_driver --ctest-args -R test_flake8
+colcon test --packages-select hand_camera_driver --ctest-args -R test_pep257
+colcon test --packages-select hand_camera_driver --ctest-args -R test_copyright
 
 # View test results
 colcon test-result --verbose
@@ -61,7 +61,7 @@ colcon test --packages-select livox_ros_driver2
 
 ## Code Style Guidelines
 
-### Python (device_test package)
+### Python (hand_camera_driver package)
 
 #### Imports and Formatting
 - Follow PEP 8 style (enforced by flake8)
@@ -127,7 +127,7 @@ colcon test --packages-select livox_ros_driver2
 ### Running Single Tests
 ```bash
 # Python specific test
-colcon test --packages-select device_test --ctest-args -R test_flake8
+colcon test --packages-select hand_camera_driver --ctest-args -R test_flake8
 
 # C++ specific test (if available)
 colcon test --packages-select realsense2_camera --ctest-args -R specific_test_name
@@ -162,11 +162,11 @@ git submodule update --init --recursive
 
 ## Package-Specific Guidelines
 
-### device_test (Python)
-- Location: `src/device_test/`
+### hand_camera_driver (Python)
+- Location: `src/hand_camera_driver/`
 - Type: `ament_python`
-- Purpose: External device testing (cameras, microphones, speakers)
-- Key files: `*_test_node.py`, `device_list.py`
+- Purpose: Left/right hand USB camera image publishers
+- Key files: `usb_camera_node.py`, `hand_cameras.launch.py`
 
 ### realsense2_camera (C++)
 - Location: `src/realsense-ros/realsense2_camera/`
@@ -185,15 +185,16 @@ git submodule update --init --recursive
 ```bash
 # Check device permissions
 ls -l /dev/video*
+ls -l /dev/camera_left /dev/camera_right
 groups $USER
 
 # Test individual nodes
-ros2 run device_test device_list
-ros2 run device_test usb_camera_test --ros-args -p device_id:=0
+ros2 launch hand_camera_driver hand_cameras.launch.py
 
 # Check topic data
-ros2 topic echo /usb_camera/image_raw --once
-ros2 topic hz /usb_camera/image_raw
+ros2 topic echo /left_gripper/image_raw --once --field header.frame_id
+ros2 topic hz /left_gripper/image_raw
+ros2 topic hz /right_gripper/image_raw
 
 # View node graph
 ros2 run rqt_graph rqt_graph

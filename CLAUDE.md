@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-**KrtHumanRobot** is a ROS 2 workspace for a humanoid robot platform integrating multiple sensor systems and device testing capabilities. The project is designed for Jetson embedded platforms and includes custom device testing tools alongside third-party sensor drivers.
+**KrtHumanRobot** is a ROS 2 workspace for a humanoid robot platform integrating multiple sensor systems. The project is designed for Jetson embedded platforms and includes hand USB camera nodes alongside third-party sensor drivers.
 
 **Primary Language:** Mixed (C++ and Python)
 **Build System:** Colcon (ROS 2)
@@ -21,8 +21,8 @@ source install/setup.bash
 
 ### Build Specific Packages
 ```bash
-# Device testing package (Python)
-colcon build --packages-select device_test --symlink-install
+# Hand USB cameras (Python)
+colcon build --packages-select hand_camera_driver --symlink-install
 
 # LiDAR driver (C++)
 colcon build --packages-select livox_ros_driver2 --symlink-install
@@ -35,8 +35,8 @@ colcon build --packages-select realsense2_camera realsense2_camera_msgs realsens
 
 ### Testing
 ```bash
-# Run tests for device_test package
-colcon test --packages-select device_test
+# Run tests for hand camera package
+colcon test --packages-select hand_camera_driver
 colcon test-result --verbose
 
 # Tests include: flake8, pep257, copyright checks
@@ -46,13 +46,12 @@ colcon test-result --verbose
 
 ### Package Structure
 
-The workspace contains three main packages:
+The workspace contains these main sensor packages:
 
-1. **device_test** (Custom Python Package)
-   - Location: `src/device_test/`
-   - Purpose: External device testing and validation
+1. **hand_camera_driver** (Custom Python Package)
+   - Location: `src/hand_camera_driver/`
+   - Purpose: Left/right hand USB camera image publishers
    - Type: ament_python
-   - ~1,405 lines of Python code
 
 2. **livox_ros_driver2** (Git Submodule)
    - Location: `src/livox_ros_driver2/`
@@ -67,33 +66,20 @@ The workspace contains three main packages:
    - Repository: https://github.com/realsenseai/realsense-ros.git
    - **Critical:** Must use branch 4.56.4 (not latest)
 
-### device_test Package Architecture
+### hand_camera_driver Package Architecture
 
-The device_test package provides ROS 2 nodes for testing external hardware:
+The hand_camera_driver package publishes the two hand USB camera streams:
 
 **ROS 2 Nodes:**
-- `usb_camera_test_node` - Tests standard USB cameras (excludes RealSense)
-- `realsense_test_node` - Tests RealSense D435 via V4L2 (RGB, Depth, IR)
-- `mic_test_node` - Tests microphone input with PulseAudio
-- `speaker_test_node` - Tests speaker output with tone generation
-- `device_list` - Enumerates all available devices
+- `left_hand_camera` - Publishes `/dev/camera_left`
+- `right_hand_camera` - Publishes `/dev/camera_right`
 
 **Published Topics:**
-- `/usb_camera/image_raw` (sensor_msgs/Image)
-- `/realsense/color/image_raw` (sensor_msgs/Image)
-- `/realsense/depth/image_raw` (sensor_msgs/Image)
-- `/realsense/infra/image_raw` (sensor_msgs/Image)
-- `/mic/status` (std_msgs/String)
-- `/speaker/status` (std_msgs/String)
-- `/devices/list` (std_msgs/String)
+- `/left_gripper/image_raw` (sensor_msgs/Image)
+- `/right_gripper/image_raw` (sensor_msgs/Image)
 
 **Launch Files:**
-- `usb_camera_test_launch.py`
-- `realsense_test_launch.py`
-- `mic_test_launch.py`
-- `speaker_test_launch.py`
-- `multi_camera_test_launch.py`
-- `all_devices_test_launch.py`
+- `hand_cameras.launch.py`
 
 ### Hardware Integration
 
@@ -113,7 +99,8 @@ The device_test package provides ROS 2 nodes for testing external hardware:
 
 3. **USB Cameras**
    - Generic V4L2 compatible webcams
-   - Typically `/dev/video0`
+   - Left hand: `/dev/camera_left`
+   - Right hand: `/dev/camera_right`
 
 4. **Audio Devices**
    - Default: Unitek Y-247A (C-Media USB Audio Device)
@@ -125,27 +112,12 @@ The device_test package provides ROS 2 nodes for testing external hardware:
 
 ## Common Development Tasks
 
-### Running Device Tests
+### Launching Hand Cameras
 
 ```bash
-# List all available devices
-ros2 run device_test device_list
-
-# Test USB camera (default /dev/video0)
-ros2 run device_test usb_camera_test
-ros2 run device_test usb_camera_test --ros-args -p device_id:=0 -p width:=1280 -p height:=720
-
-# Test RealSense (RGB + Depth)
-ros2 run device_test realsense_test
-ros2 run device_test realsense_test --ros-args -p enable_ir:=true
-
-# Test microphone (5 second recording)
-ros2 run device_test mic_test
-ros2 run device_test mic_test --ros-args -p duration:=3
-
-# Test speaker (440Hz tone)
-ros2 run device_test speaker_test
-ros2 run device_test speaker_test --ros-args -p frequency:=1000.0 -p volume:=0.3
+ros2 launch hand_camera_driver hand_cameras.launch.py
+ros2 topic hz /left_gripper/image_raw
+ros2 topic hz /right_gripper/image_raw
 ```
 
 ### Launching Sensors
@@ -182,8 +154,8 @@ git submodule update --init --recursive
 
 ### Device Permissions
 - User must be in `video` group for camera access
-- PulseAudio required for audio device testing
-- V4L2 device IDs may vary between systems
+- Hand cameras should be bound to stable udev aliases:
+  `/dev/camera_left` and `/dev/camera_right`
 
 ### Platform-Specific Considerations
 - Optimized for Jetson embedded platform
@@ -194,13 +166,6 @@ git submodule update --init --recursive
 - `realsense2_camera_msgs` must be built before `realsense2_camera`
 - Use `colcon build --symlink-install` for Python packages to avoid rebuilding on code changes
 
-### RealSense Testing Limitations
-The `realsense_test` node uses V4L2 direct access with limited functionality (depth stream Z16 format requires special handling). For full RealSense features (point clouds, IMU, depth alignment), use the official realsense-ros driver:
-
-```bash
-ros2 launch realsense2_camera rs_launch.py
-```
-
 ## File Locations
 
 **Key Configuration:**
@@ -209,7 +174,7 @@ ros2 launch realsense2_camera rs_launch.py
 - Git submodules: `.gitmodules`
 
 **Package Directories:**
-- `src/device_test/` - Custom device testing package
+- `src/hand_camera_driver/` - Left/right hand USB camera driver
 - `src/livox_ros_driver2/` - LiDAR driver submodule
 - `src/realsense-ros/` - RealSense driver submodule
 

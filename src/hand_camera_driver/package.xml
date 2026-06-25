@@ -1,17 +1,19 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>device_test</name>
-  <version>1.0.0</version>
-  <description>外部设备测试功能包 - 测试摄像头、麦克风、扬声器</description>
-  <maintainer email="quiyucode@163.com">nvidia</maintainer>
+  <name>hand_camera_driver</name>
+  <version>0.1.0</version>
+  <description>USB camera driver nodes for left and right hand cameras.</description>
+  <maintainer email="r465755956@gmail.com">create</maintainer>
   <license>Apache-2.0</license>
 
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
-  <depend>std_msgs</depend>
   <depend>cv_bridge</depend>
-  <depend>python3-opencv</depend>
+
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>python3-opencv</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>
