@@ -156,7 +156,6 @@ ros2 run ranger_nav pcd2pgm --pcd ~/maps/scans.pcd --out ~/maps/map \
 | 参数 | 当前值 | 作用与调整方向 |
 |------|--------|----------------|
 | `denoise_layer.minimal_group_size` | 2 | 剔除小于 N 格的孤立障碍组（Nav2 官方椒盐噪点过滤层）。噪点仍多 → 调大；细小真实障碍被滤掉 → 调小或 `enabled: False` |
-| `voxel_layer.mark_threshold` | 1 | 体素列内需超过该数量的体素命中才标记占据。噪点多 → 2；灵敏度不足 → 0 |
 | `scan.obstacle_max_range` | 2.5 | 只在该距离内标记障碍，远处点云稀疏噪点多 → 调小 |
 | `scan.raytrace_max_range` | 3.0 | 射线清除范围，可擦除移动物体残影，保持略大于 `obstacle_max_range` |
 

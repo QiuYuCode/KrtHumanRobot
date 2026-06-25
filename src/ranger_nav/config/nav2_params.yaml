@@ -197,8 +197,8 @@ local_costmap:
       plugins: ["obstacle_layer", "denoise_layer", "inflation_layer"]
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 1.5
-        inflation_radius: 0.80
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
       # 椒盐噪点过滤：剔除小于 minimal_group_size 格的孤立障碍组，
       # 噪点仍多时调大（每 +1 多滤一格的噪团，过大会滤掉细小真实障碍）
       denoise_layer:
@@ -270,8 +270,8 @@ global_costmap:
         map_subscribe_transient_local: True
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
-        cost_scaling_factor: 1.5
-        inflation_radius: 0.80
+        cost_scaling_factor: 3.0
+        inflation_radius: 0.55
       always_send_full_costmap: True
 
 map_server:
@@ -352,7 +352,7 @@ waypoint_follower:
     photo_at_waypoint:
       plugin: "nav2_waypoint_follower::PhotoAtWaypoint"
       enabled: True
-      image_topic: /camera/color/image_raw
+      image_topic: /camera/camera/color/image_raw
       save_dir: ~/maps/waypoint_images
     input_at_waypoint:
       plugin: "nav2_waypoint_follower::InputAtWaypoint"
