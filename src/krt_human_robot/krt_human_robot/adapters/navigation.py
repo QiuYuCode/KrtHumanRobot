@@ -423,6 +423,8 @@ class RangerNavAdapter:
             "--image-dir": self._cfg.get("waypoint_image_dir"),
             "--default-wait-ms": self._cfg.get("default_waypoint_wait_ms"),
             "--tts-service": self._cfg.get("waypoint_tts_service"),
+            "--tts-timeout-s": self._cfg.get("waypoint_tts_timeout_s"),
+            "--vision-service": self._cfg.get("waypoint_vision_service"),
             "--arm-action": self._cfg.get("waypoint_arm_action"),
         }
         for key, value in options.items():

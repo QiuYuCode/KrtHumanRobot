@@ -369,7 +369,11 @@ class VoiceAsrNode(Node):
         api_secret = str(self.get_parameter("iflytek_iat_api_secret").value)
         if not (app_id and api_key and api_secret):
             raise RuntimeError("讯飞 ASR 密钥缺失")
-        ws = websocket.create_connection(self._build_ws_url(api_key, api_secret), timeout=10)
+        ws = websocket.create_connection(
+            self._build_ws_url(api_key, api_secret),
+            timeout=10,
+            http_no_proxy=["iat-api.xfyun.cn"],
+        )
         try:
             pcm = (np.clip(samples, -1.0, 1.0) * 32767.0).astype(np.int16).tobytes()
             frame_bytes = 1280

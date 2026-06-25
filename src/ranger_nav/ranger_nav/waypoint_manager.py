@@ -31,7 +31,11 @@ DEFAULT_IMAGE_DIR = "~/maps/waypoint_images"
 DEFAULT_WAIT_MS = 200
 DEFAULT_NAVIGATE_ACTION = "/navigate_to_pose"
 DEFAULT_TTS_SERVICE = "/voice/tts/synthesize"
+DEFAULT_TTS_TIMEOUT_S = 60.0
+DEFAULT_VISION_SERVICE = "/krt_human_robot/vision/describe_scene"
 DEFAULT_ARM_ACTION = "/run_action_group"
+DESCRIBE_CAMERA_IDS = {"head", "left_palm", "right_palm"}
+DEFAULT_DESCRIBE_QUESTION = "请描述你在这个巡航点看到的内容"
 
 
 @dataclass
@@ -280,6 +284,8 @@ class WaypointNode(Node):
             return self.wait_input(wp, args)
         if task == "speak":
             return self.speak(args)
+        if task == "describe":
+            return self.describe(args)
         if task == "arm_group":
             return self.run_arm_group(args)
         self.get_logger().error(f"未知点位任务: {task}")
@@ -360,12 +366,48 @@ class WaypointNode(Node):
         request.language = str(args.get("language", "zh"))
         request.style = str(args.get("style", ""))
         request.priority = int(args.get("priority", 5))
-        response = self.wait_future(client.call_async(request), "TTS 调用超时", 10.0)
+        response = self.wait_future(
+            client.call_async(request),
+            "TTS 调用超时",
+            float(args.get("timeout_s", self.args.tts_timeout_s)),
+        )
         if response is None or not response.accepted:
             detail = getattr(response, "error_message", "") if response else ""
             self.get_logger().error(f"TTS 播报失败: {detail}")
             return False
         return True
+
+    def describe(self, args: dict[str, Any]) -> bool:
+        try:
+            from voice_interfaces.srv import DescribeScene
+        except ImportError as exc:
+            self.get_logger().error(f"describe 任务依赖缺失: {exc}")
+            return False
+        camera_id = str(args.get("camera_id", "head")).strip() or "head"
+        if camera_id not in DESCRIBE_CAMERA_IDS:
+            self.get_logger().error(
+                f"describe 任务 camera_id 无效: {camera_id}; "
+                f"可选: {', '.join(sorted(DESCRIBE_CAMERA_IDS))}"
+            )
+            return False
+        client = self.create_client(DescribeScene, self.args.vision_service)
+        if not client.wait_for_service(timeout_sec=2.0):
+            self.get_logger().error(f"视觉服务不可用: {self.args.vision_service}")
+            return False
+        request = DescribeScene.Request()
+        request.camera_id = camera_id
+        request.question = str(args.get("question", DEFAULT_DESCRIBE_QUESTION))
+        response = self.wait_future(client.call_async(request), "视觉服务调用超时", None)
+        if response is None or not response.success:
+            detail = getattr(response, "error_message", "") if response else ""
+            self.get_logger().error(f"视觉理解失败: {detail}")
+            return False
+        description = str(response.description).strip()
+        if not description:
+            self.get_logger().error("视觉理解返回为空")
+            return False
+        self.get_logger().info(f"视觉理解结果: {description}")
+        return self.speak({"text": description})
 
     def run_arm_group(self, args: dict[str, Any]) -> bool:
         try:
@@ -434,6 +476,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--image-dir", default=DEFAULT_IMAGE_DIR)
     parser.add_argument("--default-wait-ms", type=int, default=DEFAULT_WAIT_MS)
     parser.add_argument("--tts-service", default=DEFAULT_TTS_SERVICE)
+    parser.add_argument("--tts-timeout-s", type=float, default=DEFAULT_TTS_TIMEOUT_S)
+    parser.add_argument("--vision-service", default=DEFAULT_VISION_SERVICE)
     parser.add_argument("--arm-action", default=DEFAULT_ARM_ACTION)
 
     subparsers = parser.add_subparsers(dest="command", required=True)

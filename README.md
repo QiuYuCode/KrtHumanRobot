@@ -120,3 +120,58 @@ ros2 launch hand_camera_driver hand_cameras.launch.py \
 |------|------|----------|------|
 | left_hand_camera | `/left_gripper/image_raw` | `sensor_msgs/Image` | 左手 USB 摄像头图像 |
 | right_hand_camera | `/right_gripper/image_raw` | `sensor_msgs/Image` | 右手 USB 摄像头图像 |
+
+## 六、巡航点打点与任务配置
+
+`ranger_nav` 的 `waypoint_manager mark` 会把机器人当前位姿保存成巡航点，默认写入：
+
+```bash
+~/maps/waypoints.yaml
+```
+
+打点前需已启动导航/定位，并确保 TF 中有 `map -> base_footprint`。
+
+### 基础打点
+
+```bash
+source install/setup.bash
+ros2 run ranger_nav waypoint_manager mark 前台
+```
+
+点位名必须唯一。未指定任务时默认 `task: wait`。
+
+### 带任务打点
+
+等待 3 秒：
+
+```bash
+ros2 run ranger_nav waypoint_manager mark 前台等待 \
+  --task wait --args '{"wait_ms":3000}'
+```
+
+到点拍照保存：
+
+```bash
+ros2 run ranger_nav waypoint_manager mark 前台拍照 --task photo
+```
+
+到点拍照、视觉理解并播报：
+
+```bash
+ros2 run ranger_nav waypoint_manager mark 前台讲解 \
+  --task describe \
+  --args '{"camera_id":"head","question":"请描述这个巡航点看到的内容"}'
+```
+
+`describe` 的 `camera_id` 可选：`head`、`left_palm`、`right_palm`。
+
+### 常用管理命令
+
+```bash
+ros2 run ranger_nav waypoint_manager list
+ros2 run ranger_nav waypoint_manager remove 前台
+ros2 run ranger_nav waypoint_manager clear
+ros2 run ranger_nav waypoint_manager cruise --loop
+```
+
+同一点想“先等待再拍照/讲解”时，保存两个同位姿点即可：第一个 `wait`，第二个 `photo` 或 `describe`，并保持 YAML 顺序。

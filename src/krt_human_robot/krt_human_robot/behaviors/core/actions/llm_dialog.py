@@ -10,7 +10,6 @@ from py_trees.common import Status
 
 from krt_human_robot.config import RobotConfig
 
-
 _PROXY_ENV_KEYS = (
     "HTTP_PROXY",
     "HTTPS_PROXY",
@@ -70,6 +69,7 @@ def _create_chat_model(
             )
 
     elif provider == "openai":
+        import httpx
         from langchain_openai import ChatOpenAI
 
         resolved_base_url = (
@@ -82,9 +82,12 @@ def _create_chat_model(
             base_url=resolved_base_url,
             timeout=timeout,
             max_retries=max_retries,
+            http_client=httpx.Client(trust_env=False),
+            http_async_client=httpx.AsyncClient(trust_env=False),
         )
 
     elif provider == "deepseek":
+        import httpx
         from langchain_openai import ChatOpenAI
 
         resolved_base_url = base_url
@@ -97,6 +100,8 @@ def _create_chat_model(
             base_url=resolved_base_url,
             timeout=timeout,
             max_retries=max_retries,
+            http_client=httpx.Client(trust_env=False),
+            http_async_client=httpx.AsyncClient(trust_env=False),
         )
 
     elif provider == "anthropic":

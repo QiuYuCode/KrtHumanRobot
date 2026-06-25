@@ -39,6 +39,10 @@ def _launch_setup(context, *args, **kwargs):
         LaunchConfiguration("enable_voice_stack").perform(context).strip().lower()
         in {"1", "true", "yes", "on"}
     )
+    enable_camera_stack = (
+        LaunchConfiguration("enable_camera_stack").perform(context).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
 
     core_node = ExecuteProcess(
         cmd=["bash", run_script],
@@ -55,18 +59,47 @@ def _launch_setup(context, *args, **kwargs):
         },
     )
 
-    if not enable_voice_stack:
-        return [core_node]
+    actions = []
 
-    return [
-        IncludeLaunchDescription(
+    if enable_camera_stack:
+        realsense_share = get_package_share_directory("realsense2_camera")
+        hand_camera_share = get_package_share_directory("hand_camera_driver")
+        actions.extend([
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(realsense_share, "launch", "rs_launch.py")
+                ),
+                launch_arguments={
+                    "config_file": "''",
+                    "enable_color": "true",
+                    "enable_depth": "true",
+                    "align_depth.enable": "true",
+                    "enable_sync": "true",
+                }.items(),
+            ),
+            IncludeLaunchDescription(
+                PythonLaunchDescriptionSource(
+                    os.path.join(
+                        hand_camera_share, "launch", "hand_cameras.launch.py"
+                    )
+                ),
+            ),
+        ])
+
+    if enable_voice_stack:
+        actions.append(IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 os.path.join(voice_share, "launch", "voice_stack.launch.py")
             ),
             launch_arguments={"config_file": voice_config_file}.items(),
-        ),
-        TimerAction(period=core_start_delay_s, actions=[core_node]),
-    ]
+        ))
+
+    if enable_voice_stack or enable_camera_stack:
+        actions.append(TimerAction(period=core_start_delay_s, actions=[core_node]))
+    else:
+        actions.append(core_node)
+
+    return actions
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -81,6 +114,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("config_file", default_value=default_config),
         DeclareLaunchArgument("voice_config_file", default_value=default_voice_config),
         DeclareLaunchArgument("enable_voice_stack", default_value="true"),
+        DeclareLaunchArgument("enable_camera_stack", default_value="true"),
         DeclareLaunchArgument("core_start_delay_s", default_value="8.0"),
         DeclareLaunchArgument("tick_interval_ms", default_value="100"),
         DeclareLaunchArgument("enable_monitor", default_value="true"),

@@ -10,6 +10,7 @@ import cv2
 from cv_bridge import CvBridge
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import Image
 
 
@@ -33,7 +34,9 @@ class UsbCameraNode(Node):
         topic = self.get_parameter("topic").value
 
         self.bridge = CvBridge()
-        self.publisher = self.create_publisher(Image, topic, 10)
+        self.publisher = self.create_publisher(
+            Image, topic, qos_profile_sensor_data
+        )
         self.cap = None
         self._warned_closed = False
         self._open()

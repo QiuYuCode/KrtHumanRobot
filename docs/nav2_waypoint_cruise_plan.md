@@ -20,12 +20,13 @@
 - 点位保存到 `~/maps/waypoints.yaml`：
   - 未命名自动生成 `wp_001`、`wp_002`。
   - 指定名称必须唯一，重名直接失败。
-  - 每个点支持 `task + args`，先实现 `wait/photo/input/speak/arm_group`。
+  - 每个点支持 `task + args`，先实现 `wait/photo/input/speak/describe/arm_group`。
 - `ranger_nav` 到点 task 分发：
   - `wait`：等待 `wait_ms`。
   - `photo`：订阅相机图像并保存。
   - `input`：等待 `/input_at_waypoint/input`。
   - `speak`：调用 `/voice/tts/synthesize`。
+  - `describe`：调用 `/krt_human_robot/vision/describe_scene` 后播报描述。
   - `arm_group`：调用现有机械臂动作组接口。
   - 未知 task 直接失败并提示，不静默跳过。
 - `krt_human_robot` 扩展：
@@ -44,6 +45,7 @@
   - `ros2 run ranger_nav waypoint_manager mark`
   - `ros2 run ranger_nav waypoint_manager mark 前台 --task photo`
   - `ros2 run ranger_nav waypoint_manager mark 展示区 --task speak --args '{"text":"这里是展示区"}'`
+  - `ros2 run ranger_nav waypoint_manager mark 展台 --task describe --args '{"camera_id":"head","question":"请描述这个巡航点看到的内容"}'`
   - `ros2 run ranger_nav waypoint_manager cruise`
   - `ros2 run ranger_nav waypoint_manager cruise --repeat 3 前台 展示区`
   - `ros2 run ranger_nav waypoint_manager cruise --loop`
@@ -53,13 +55,15 @@
   - `/follow_waypoints`：`nav2_msgs/action/FollowWaypoints`
   - `/input_at_waypoint/input`：`std_msgs/msg/Empty`
   - `/voice/tts/synthesize`：用于 `speak`
+  - `/krt_human_robot/vision/describe_scene`：用于 `describe`
   - 现有机械臂动作组接口：用于 `arm_group`
 - Config defaults under `adapters.navigation`：
   - `waypoints_file: ~/maps/waypoints.yaml`
   - `waypoint_input_topic: /input_at_waypoint/input`
-  - `waypoint_image_topic: /camera/color/image_raw`
+  - `waypoint_image_topic: /camera/camera/color/image_raw`
   - `waypoint_image_dir: ~/maps/waypoint_images`
   - `default_waypoint_wait_ms: 200`
+  - `waypoint_vision_service: /krt_human_robot/vision/describe_scene`
 
 ## Cruise Behavior
 

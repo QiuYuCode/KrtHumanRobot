@@ -14,7 +14,15 @@ from krt_human_robot.actions import (
     LLMDialogAction,
     NavigationAction,
     RobotArmAction,
-    VisionDisabledAction,
+)
+from krt_human_robot.behaviors.core.actions.camera import (
+    RecordVideoAction,
+    TakePhotoAction,
+)
+from krt_human_robot.behaviors.core.actions.vision import (
+    DescribeLeftPalmAction,
+    DescribeRightPalmAction,
+    DescribeSceneAction,
 )
 from krt_human_robot.behaviors.core.blackboard_init import InitializeDialogBlackboard
 from krt_human_robot.behaviors.core.guards import DialogContinueGuard
@@ -55,7 +63,11 @@ def _create_keyword_dialog_loop(
     action_selector = py_trees.composites.Selector(name="CoreActionSelector", memory=False)
     action_selector.add_children([
         FixedResponseAction("FixedResponse", config=config),
-        VisionDisabledAction("VisionDisabled"),
+        DescribeLeftPalmAction("DescribeLeftPalm", config=config),
+        DescribeRightPalmAction("DescribeRightPalm", config=config),
+        DescribeSceneAction("DescribeScene", config=config),
+        TakePhotoAction("TakePhoto", config=config),
+        RecordVideoAction("RecordVideo", config=config),
         GripperAction("Gripper", config=config),
         RobotArmAction("RobotArm", config=config),
         NavigationAction("Navigation", config=config),

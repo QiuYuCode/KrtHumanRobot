@@ -14,10 +14,11 @@ from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.parameter import Parameter
 from voice_interfaces.action import PlayAudio
-from voice_interfaces.srv import SynthesizeSpeech
+from voice_interfaces.srv import DescribeScene, SynthesizeSpeech
 
 from krt_human_robot.tree_factory import create_tree
 from krt_human_robot.config import load_config
+from krt_human_robot.behaviors.core.actions.vision import execute_describe_scene
 
 
 class KrtHumanRobotNode(Node):
@@ -87,6 +88,11 @@ class KrtHumanRobotNode(Node):
 
         self._tts_client = self.create_client(
             SynthesizeSpeech, "/voice/tts/synthesize"
+        )
+        self._describe_scene_service = self.create_service(
+            DescribeScene,
+            "/krt_human_robot/vision/describe_scene",
+            self._handle_describe_scene,
         )
         root = create_tree(self._config)
         self._tree = BehaviourTree(root, unicode_tree_debug=False)
@@ -163,6 +169,25 @@ class KrtHumanRobotNode(Node):
             self.get_logger().warning(f"startup sound failed: {error_message or 'unknown'}")
         except Exception:
             self.get_logger().warning("startup sound request failed")
+
+    def _handle_describe_scene(
+        self,
+        request: DescribeScene.Request,
+        response: DescribeScene.Response,
+    ) -> DescribeScene.Response:
+        camera_id = (request.camera_id or self._config.default_camera).strip()
+        question = (request.question or "请描述你看到的场景").strip()
+        try:
+            response.description = execute_describe_scene(
+                self._config,
+                question=question,
+                camera_id=camera_id,
+            )
+            response.success = True
+        except Exception as exc:
+            response.success = False
+            response.error_message = str(exc)
+        return response
 
 
 def _post_tick_reset_root(tree: BehaviourTree) -> None:

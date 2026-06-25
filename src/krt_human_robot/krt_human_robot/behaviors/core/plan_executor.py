@@ -8,9 +8,14 @@ from py_trees.common import Status
 
 from krt_human_robot.config import RobotConfig
 from krt_human_robot.behaviors.voice import speak_blocking
+from krt_human_robot.behaviors.core.actions.camera import (
+    execute_record_video,
+    execute_take_photo,
+)
 from krt_human_robot.behaviors.core.actions.gripper import execute_gripper_action
 from krt_human_robot.behaviors.core.actions.navigation import execute_navigate
 from krt_human_robot.behaviors.core.actions.robot_arm import execute_robot_arm
+from krt_human_robot.behaviors.core.actions.vision import execute_describe_scene
 from voice_interfaces.srv import SynthesizeSpeech
 
 
@@ -53,8 +58,17 @@ class PlanExecutor(Behaviour):
 
     def _execute_action(self, name: str, args: dict) -> str:
         """根据动作名称分发到对应的执行函数。"""
-        if name in {"take_photo", "record_video", "describe_scene"}:
-            return "视觉功能正在重构，暂时还不能使用。"
+        if name == "take_photo":
+            return execute_take_photo(self._config)
+        if name == "record_video":
+            return execute_record_video(
+                self._config, duration=args.get("duration")
+            )
+        if name == "describe_scene":
+            return execute_describe_scene(
+                self._config,
+                question=args.get("question", "请描述你看到的场景"),
+            )
 
         if name == "navigate":
             destination = args.get("destination", "未知位置")

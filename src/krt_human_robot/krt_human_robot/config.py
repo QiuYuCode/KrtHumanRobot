@@ -193,7 +193,7 @@ class RobotConfig:
     # --- 相机 ---
     # 三路相机统一管理: head (头部 RealSense) / left_palm / right_palm
     # backend: "local" (本机 USB) | "http" (远端 FastAPI) | "ros" (rclpy 订阅)
-    camera_backend: str = "local"
+    camera_backend: str = "ros"
     default_camera: str = "head"  # describe_scene / take_photo / record_video 默认使用的相机
 
     # HTTP 后端: 远端 FastAPI 服务基址，URL 形如 {base}/snapshot/{camera_id}
@@ -204,6 +204,12 @@ class RobotConfig:
     camera_ros_node_name: str = "smart_voice_robot_camera_sub"
     camera_ros_qos_depth: int = 5
     camera_ros_warmup_seconds: float = 2.0  # 启动时等待首帧的超时
+    head_depth_topic: str = "/camera/camera/depth/image_rect_raw"
+    head_depth_info_topic: str = "/camera/camera/depth/camera_info"
+    head_aligned_depth_topic: str = "/camera/camera/aligned_depth_to_color/image_raw"
+    head_aligned_depth_info_topic: str = (
+        "/camera/camera/aligned_depth_to_color/camera_info"
+    )
 
     # 每台相机的规格; YAML 中通过 cameras.{id}.{field} 覆盖
     cameras: dict[str, dict[str, Any]] = field(default_factory=lambda: {
@@ -211,7 +217,7 @@ class RobotConfig:
             "index": 4,
             "width": 640,
             "height": 480,
-            "ros_topic": "/camera/color/image_raw",
+            "ros_topic": "/camera/camera/color/image_raw",
             "record_fps": 30.0,
         },
         "left_palm": {
@@ -461,7 +467,7 @@ class RobotConfig:
         "camera": {
             "enabled": False,
             "semantic_topic_prefix": "/krtHumanRobot/vision",
-            "image_topic": "/camera/color/image_raw",
+            "image_topic": "/camera/camera/color/image_raw",
         },
         "lidar": {
             "enabled": False,
@@ -506,10 +512,12 @@ class RobotConfig:
             "pcd2pgm_ror_min_pts": 5,
             "waypoints_file": "~/maps/waypoints.yaml",
             "waypoint_input_topic": "/input_at_waypoint/input",
-            "waypoint_image_topic": "/camera/color/image_raw",
+            "waypoint_image_topic": "/camera/camera/color/image_raw",
             "waypoint_image_dir": "~/maps/waypoint_images",
             "default_waypoint_wait_ms": 200,
             "waypoint_tts_service": "/voice/tts/synthesize",
+            "waypoint_tts_timeout_s": 60.0,
+            "waypoint_vision_service": "/krt_human_robot/vision/describe_scene",
             "waypoint_arm_action": "/run_action_group",
             "auto_convert_pcd": True,
             "mapping_stop_delay_s": 3.0,

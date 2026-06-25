@@ -50,6 +50,30 @@ def _is_cloud_vlm(config: RobotConfig) -> bool:
     return config.vlm_provider.lower() != config.local_vlm_provider.lower()
 
 
+def _build_vlm_messages(
+    *,
+    system_prompt: str,
+    question: str,
+    image_b64: str,
+    provider: str,
+):
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    image_url = f"data:image/jpeg;base64,{image_b64}"
+    image_part = (
+        {"type": "image_url", "image_url": image_url}
+        if provider.lower() == "ollama"
+        else {"type": "image_url", "image_url": {"url": image_url}}
+    )
+    return [
+        SystemMessage(content=system_prompt),
+        HumanMessage(content=[
+            image_part,
+            {"type": "text", "text": question},
+        ]),
+    ]
+
+
 # ============================================================================
 # 独立执行函数
 # ============================================================================
@@ -60,21 +84,14 @@ def execute_describe_scene(
     camera_id: str | None = None,
 ) -> str:
     """拍照 + VLM 分析。`camera_id=None` 时使用 config.default_camera。"""
-    from langchain_core.messages import HumanMessage, SystemMessage
-
     cid = camera_id or config.default_camera
     b64, filepath = capture_frame_as_base64(config, save_copy=True, camera_id=cid)
-
-    messages = [
-        SystemMessage(content=config.vlm_system_prompt),
-        HumanMessage(content=[
-            {"type": "text", "text": question},
-            {
-                "type": "image_url",
-                "image_url": {"url": f"data:image/jpeg;base64,{b64}"},
-            },
-        ]),
-    ]
+    messages = _build_vlm_messages(
+        system_prompt=config.vlm_system_prompt,
+        question=question,
+        image_b64=b64,
+        provider=config.vlm_provider,
+    )
 
     try:
         vlm = _create_vlm(config)
@@ -90,8 +107,14 @@ def execute_describe_scene(
         )
         try:
             local_vlm = _create_local_vlm(config)
+            local_messages = _build_vlm_messages(
+                system_prompt=config.vlm_system_prompt,
+                question=question,
+                image_b64=b64,
+                provider=config.local_vlm_provider,
+            )
             desc = _invoke_with_timeout(
-                local_vlm, messages, config.vlm_request_timeout,
+                local_vlm, local_messages, config.vlm_request_timeout,
             ).content
             logger.info(
                 "本地 VLM 回退完成: provider={}, model={}",

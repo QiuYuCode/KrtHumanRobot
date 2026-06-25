@@ -270,6 +270,7 @@ class VoiceTtsNode(Node):
             ws = websocket.create_connection(
                 self._build_ws_url(api_key, api_secret),
                 timeout=10,
+                http_no_proxy=["tts-api.xfyun.cn"],
             )
             try:
                 ws.send(

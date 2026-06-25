@@ -1,0 +1,6 @@
+string camera_id
+string question
+---
+bool success
+string description
+string error_message

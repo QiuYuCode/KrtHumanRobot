@@ -400,6 +400,12 @@ class RosCameraSource(CameraSource):
         try:
             from sensor_msgs.msg import Image as RosImage
             from cv_bridge import CvBridge
+            from rclpy.qos import (
+                QoSDurabilityPolicy,
+                QoSHistoryPolicy,
+                QoSProfile,
+                QoSReliabilityPolicy,
+            )
         except ImportError as e:  # pragma: no cover
             raise RuntimeError(
                 "缺少 ROS 2 依赖 (rclpy / sensor_msgs / cv_bridge)。"
@@ -424,8 +430,14 @@ class RosCameraSource(CameraSource):
             with self._latest_lock:
                 self._latest = frame
 
+        qos = QoSProfile(
+            depth=int(config.camera_ros_qos_depth),
+            history=QoSHistoryPolicy.KEEP_LAST,
+            reliability=QoSReliabilityPolicy.BEST_EFFORT,
+            durability=QoSDurabilityPolicy.VOLATILE,
+        )
         self._sub = node.create_subscription(
-            RosImage, spec.ros_topic, _cb, int(config.camera_ros_qos_depth)
+            RosImage, spec.ros_topic, _cb, qos
         )
         self._node = node
 

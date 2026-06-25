@@ -72,6 +72,31 @@ tts_responses:
   introduce_krt: 湖南科瑞特科技有限公司创立于2004年，是一家以人工智能技术、机器人技术、物联网技术等先进技术为核心，集产品研究开发、生产制造、市场营销、工程服务及技术培训为一体，为工业企业、科研院所、高校与职校等在人工智能及应用、智能机器人、工业机器人与智能制造、集成电路设计制造与封测、电子工艺与制造、无人机及应用等泛人工智能领域提供整体解决方案的专业提供商。公司为国家级高新技术企业、信息化建设重点试点企业、智能制造示范企业、省级专精特新小巨人企业；公司已通过ISO9001国际质量管理体系认证、ISO14001国际环境管理体系认证、ISO45001职业健康安全管理体系认证、GB/T 23001与GB/T 23006两化融合管理体系认证；在科技创新方面，公司先后获得80多项专利与软件著作权等自主知识产权，30多个科技项目获得部级、省市级重大、重点项目认定。公司在全国共设立15个办事处，拥有150家以上合作伙伴、1400家以上终端客户，经营与服务网络覆盖全国各省市。
 interrupt_wakeup_responses: [怎么了, 我在，有什么问题吗, 我在呢]
 
+camera_backend: ros
+default_camera: head
+camera_ros_qos_depth: 5
+camera_ros_warmup_seconds: 2.0
+head_depth_topic: /camera/camera/depth/image_rect_raw
+head_depth_info_topic: /camera/camera/depth/camera_info
+head_aligned_depth_topic: /camera/camera/aligned_depth_to_color/image_raw
+head_aligned_depth_info_topic: /camera/camera/aligned_depth_to_color/camera_info
+cameras:
+  head:
+    ros_topic: /camera/camera/color/image_raw
+    width: 640
+    height: 480
+    record_fps: 30.0
+  left_palm:
+    ros_topic: /left_gripper/image_raw
+    width: 640
+    height: 480
+    record_fps: 30.0
+  right_palm:
+    ros_topic: /right_gripper/image_raw
+    width: 640
+    height: 480
+    record_fps: 30.0
+
 gripper_enabled: true
 gripper_adapter_type: zlg_mini
 gripper_finger_ids: [1, 2, 3]
@@ -120,7 +145,7 @@ adapters:
   camera:
     enabled: false
     semantic_topic_prefix: /krtHumanRobot/vision
-    image_topic: /camera/color/image_raw
+    image_topic: /camera/camera/color/image_raw
   lidar:
     enabled: false
     launch_package: spark_fast_lio
@@ -162,10 +187,12 @@ adapters:
     pcd2pgm_ror_min_pts: 5
     waypoints_file: ~/maps/waypoints.yaml
     waypoint_input_topic: /input_at_waypoint/input
-    waypoint_image_topic: /camera/color/image_raw
+    waypoint_image_topic: /camera/camera/color/image_raw
     waypoint_image_dir: ~/maps/waypoint_images
     default_waypoint_wait_ms: 200
     waypoint_tts_service: /voice/tts/synthesize
+    waypoint_tts_timeout_s: 60.0
+    waypoint_vision_service: /krt_human_robot/vision/describe_scene
     waypoint_arm_action: /run_action_group
     auto_convert_pcd: true
     mapping_stop_delay_s: 3.0

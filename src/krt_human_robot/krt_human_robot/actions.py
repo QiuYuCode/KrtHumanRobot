@@ -2,55 +2,27 @@
 
 from __future__ import annotations
 
-import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 
 from krt_human_robot.behaviors.core.actions.back_to_wakeup import BackToWakeUp
+from krt_human_robot.behaviors.core.actions.camera import (
+    execute_record_video,
+    execute_take_photo,
+)
 from krt_human_robot.behaviors.core.actions.default_response import DefaultResponse
 from krt_human_robot.behaviors.core.actions.fixed_response import FixedResponseAction
 from krt_human_robot.behaviors.core.actions.gripper import GripperAction, execute_gripper_action
 from krt_human_robot.behaviors.core.actions.llm_dialog import LLMDialogAction
 from krt_human_robot.behaviors.core.actions.navigation import NavigationAction, execute_navigate
 from krt_human_robot.behaviors.core.actions.robot_arm import RobotArmAction, execute_robot_arm
+from krt_human_robot.behaviors.core.actions.vision import execute_describe_scene
 from krt_human_robot.behaviors.voice import speak_blocking
 from voice_interfaces.srv import SynthesizeSpeech
 
 
-class VisionDisabledAction(Behaviour):
-    """Explicitly blocks old camera intents until the camera subsystem is redesigned."""
-
-    _INTENTS = {
-        "take_photo",
-        "record_video",
-        "describe_scene",
-        "describe_left_palm",
-        "describe_right_palm",
-    }
-
-    def __init__(self, name: str):
-        super().__init__(name)
-        self.blackboard = self.attach_blackboard_client(
-            name="VisionDisabledAction", namespace="dialog"
-        )
-        self.blackboard.register_key(
-            key="intent", access=py_trees.common.Access.READ
-        )
-        self.blackboard.register_key(
-            key="response_text", access=py_trees.common.Access.WRITE
-        )
-
-    def update(self):
-        if self.blackboard.intent not in self._INTENTS:
-            return Status.FAILURE
-        self.blackboard.response_text = "视觉功能正在重构，暂时还不能使用。"
-        return Status.SUCCESS
-
-
 class CorePlanExecutor(Behaviour):
-    """Execute planner steps owned by the core tree, with camera steps disabled."""
-
-    _VISION_STEPS = {"take_photo", "record_video", "describe_scene"}
+    """Execute planner steps owned by the core tree."""
 
     def __init__(self, name: str, config):
         super().__init__(name)
@@ -100,8 +72,17 @@ class CorePlanExecutor(Behaviour):
         return Status.SUCCESS
 
     def _execute_action(self, name: str, args: dict) -> str:
-        if name in self._VISION_STEPS:
-            return "视觉功能正在重构，暂时还不能使用。"
+        if name == "take_photo":
+            return execute_take_photo(self._config)
+        if name == "record_video":
+            return execute_record_video(
+                self._config, duration=args.get("duration")
+            )
+        if name == "describe_scene":
+            return execute_describe_scene(
+                self._config,
+                question=args.get("question", "请描述你看到的场景"),
+            )
         if name == "navigate":
             return execute_navigate(self._config, args.get("destination", "未知位置"))
         if name == "control_robot_arm":
@@ -134,5 +115,4 @@ __all__ = [
     "LLMDialogAction",
     "NavigationAction",
     "RobotArmAction",
-    "VisionDisabledAction",
 ]

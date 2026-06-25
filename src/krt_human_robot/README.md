@@ -19,11 +19,14 @@
 cd /home/nvidia/WorkSpace/KrtHumanRobot
 source install/setup.bash
 
-# 默认入口：先拉起 voice_stack，再启动核心行为树
+# 默认入口：先拉起相机栈和 voice_stack，再启动核心行为树
 ros2 launch krt_human_robot robot.launch.py
 
 # 只测核心，不启动语音栈
 ros2 launch krt_human_robot robot.launch.py enable_voice_stack:=false
+
+# 不启动相机栈
+ros2 launch krt_human_robot robot.launch.py enable_camera_stack:=false
 ```
 
 常用参数：
@@ -31,15 +34,24 @@ ros2 launch krt_human_robot robot.launch.py enable_voice_stack:=false
 - `config_file`：核心配置，默认 `config/krt_human_robot.yaml`。
 - `voice_config_file`：语音栈配置，默认 `voice_assistant/config/voice_assistant.yaml`。
 - `enable_voice_stack`：是否一起启动语音栈。
-- `core_start_delay_s`：语音栈启动后延迟多少秒启动核心。
+- `enable_camera_stack`：是否一起启动 RealSense 和左右手 USB 相机。
+- `core_start_delay_s`：相机/语音栈启动后延迟多少秒启动核心。
 
 ## 验证
 
 ```bash
-colcon build --packages-select voice_assistant krt_human_robot --symlink-install
+colcon build --packages-select hand_camera_driver krt_human_robot --symlink-install
 
 ROS_LOG_DIR=/tmp/ros_log ros2 launch krt_human_robot robot.launch.py --show-args
 ROS_LOG_DIR=/tmp/ros_log ros2 launch krt_human_robot robot.launch.py enable_voice_stack:=false
 ```
 
-视觉命令当前统一返回“视觉功能正在重构，暂时还不能使用。”，不会访问 `/dev/*`。
+相机话题检查：
+
+```bash
+ros2 topic hz /camera/camera/color/image_raw
+ros2 topic hz /camera/camera/depth/image_rect_raw
+ros2 topic hz /camera/camera/aligned_depth_to_color/image_raw
+ros2 topic hz /left_gripper/image_raw
+ros2 topic hz /right_gripper/image_raw
+```

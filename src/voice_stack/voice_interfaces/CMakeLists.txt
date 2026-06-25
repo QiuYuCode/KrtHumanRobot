@@ -16,6 +16,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/VoiceKwsEvent.msg"
   "msg/VoiceVadEvent.msg"
   "srv/RecognizeSpeech.srv"
+  "srv/DescribeScene.srv"
   "srv/SynthesizeSpeech.srv"
   "srv/SetVolume.srv"
   "srv/GetVolume.srv"
