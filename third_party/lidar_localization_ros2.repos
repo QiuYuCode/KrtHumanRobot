@@ -1,0 +1,9 @@
+repositories:
+  lidar_localization_ros2:
+    type: git
+    url: https://github.com/QiuYuCode/lidar_localization_ros2.git
+    version: krt-nav2-map-odom
+  ndt_omp_ros2:
+    type: git
+    url: https://github.com/QiuYuCode/ndt_omp_ros2.git
+    version: humble

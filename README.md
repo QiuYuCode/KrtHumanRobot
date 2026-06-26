@@ -175,3 +175,124 @@ ros2 run ranger_nav waypoint_manager cruise --loop
 ```
 
 同一点想“先等待再拍照/讲解”时，保存两个同位姿点即可：第一个 `wait`，第二个 `photo` 或 `describe`，并保持 YAML 顺序。
+
+## 七、3D Localization Mode with QiuYuCode/lidar_localization_ros2
+
+新增 3D localization 导航模式，保留原 AMCL `navigation.launch.py` 不变。
+
+- `map`：2D occupancy map yaml，供 Nav2 `map_server` 使用。
+- `pcd_map_path`：3D PCD map，供 `pcl_localization_ros2` NDT/GICP 配准使用。
+- AMCL 模式和 3D localization 模式不能同时启动；两者都会发布 `map -> odom`。
+
+依赖导入：
+
+```bash
+./scripts/import_3dloc_deps.sh
+```
+
+脚本要求 `QiuYuCode/lidar_localization_ros2` 已存在远程分支
+`krt-nav2-map-odom`；不存在会直接停止，不回退到 `humble`。
+
+构建：
+
+```bash
+cd /home/nvidia/WorkSpace/KrtHumanRobot
+colcon build --symlink-install --packages-up-to ranger_nav pcl_localization_ros2
+source install/setup.bash
+ros2 pkg prefix ranger_nav
+ros2 pkg prefix pcl_localization_ros2
+```
+
+启动：
+
+```bash
+ros2 launch ranger_nav navigation_3dloc.launch.py \
+  map:=$HOME/maps/map.yaml \
+  pcd_map_path:=$HOME/maps/scans.pcd
+```
+
+如果要通过命令行给初始位姿，而不是在 RViz 里点 **2D Pose Estimate**：
+
+```bash
+ros2 launch ranger_nav navigation_3dloc.launch.py \
+  map:=$HOME/maps/map.yaml \
+  pcd_map_path:=$HOME/maps/cloud.pcd \
+  set_initial_pose:=true \
+  initial_pose_x:=0.0 \
+  initial_pose_y:=0.0 \
+  initial_pose_yaw:=0.0
+```
+
+单独查看 3D localizer wrapper 参数：
+
+```bash
+ros2 launch ranger_nav lidar_localization_ros2_krt.launch.py --show-args
+```
+
+运行时诊断：
+
+```bash
+ros2 run ranger_nav nav_tf_diagnostics
+```
+
+验证 3D 定位是否生效：
+
+```bash
+ros2 node list | rg 'amcl|pcl_localization'
+ros2 topic echo /alignment_status --once
+ros2 topic hz /pcl_pose
+ros2 topic hz /cloud_registered_body
+ros2 run tf2_ros tf2_echo map odom
+ros2 run ranger_nav nav_tf_diagnostics
+```
+
+期望结果：
+
+- 有 `/pcl_localization`，没有 `/amcl`。
+- `/alignment_status` 为 `data: true`。
+- `/pcl_pose` 和 `/cloud_registered_body` 有稳定频率，实测约 10 Hz。
+- `map -> odom` 持续输出。
+- `nav_tf_diagnostics` 全部 `OK`。
+
+RViz 显示：
+
+- 默认看到的 `Map` 是 2D occupancy map，这是 Nav2 规划用地图。
+- 要看 3D PCD 地图，添加 `PointCloud2`，Topic 选 `/initial_map`。
+- 要看实时点云，添加 `PointCloud2`，Topic 选 `/cloud_registered_body`。
+- 要看路线，添加 `Path`，Topic 可选 `/plan`、`/plan_smoothed`、`/local_plan`。
+- Fixed Frame 使用 `map`。
+
+注意事项：
+
+- 不要同时启动原 AMCL `navigation.launch.py` 和 3D localization `navigation_3dloc.launch.py`，两者都会发布 `map -> odom`。
+- 当前路线仍是 Nav2 的 2D 路线；3D PCD 地图只用于定位配准，不会生成真正的 3D 路线。
+- `/alignment_status` 为 `false` 时，优先检查初始位姿是否偏太远、`pcd_map_path` 是否匹配当前环境、`/cloud_registered_body` 是否有数据。
+- 如果 `ros2 launch --show-args` 在受限环境报 `~/.ros/log` 只读，可临时加 `ROS_LOG_DIR=/tmp/ros-log-check`。
+
+### 已遇到的编译问题
+
+PCL 查找 VTK/MPI 时可能报错：
+
+```text
+Imported target "MPI::MPI_C" includes non-existent path
+.../src/ndt_omp_ros2/-I/usr/lib/aarch64-linux-gnu/openmpi/include
+```
+
+原因是 CMake/MPI 探测把 OpenMPI 输出的 `-I/usr/lib/.../openmpi/include`
+当成普通路径拼进了源码目录。
+
+清 CMake 缓存并显式传 MPI 路径可通过编译：
+
+```bash
+colcon build --packages-select ndt_omp_ros2 pcl_localization_ros2 \
+  --symlink-install \
+  --cmake-clean-cache \
+  --cmake-args \
+  -DMPI_C_INCLUDE_DIRS=/usr/lib/aarch64-linux-gnu/openmpi/include \
+  -DMPI_C_LIBRARIES=/usr/lib/aarch64-linux-gnu/libmpi.so \
+  -DMPI_CXX_INCLUDE_DIRS=/usr/lib/aarch64-linux-gnu/openmpi/include \
+  -DMPI_CXX_LIBRARIES=/usr/lib/aarch64-linux-gnu/libmpi_cxx.so
+```
+
+另外，`ndt_omp_ros2` 原始 CMake 默认编译 `apps/align.cpp` 示例，会额外拉入
+PCL visualizer/VTK/MPI。当前仅安装并导出 `ndt_omp` 库，定位节点不需要该示例程序。

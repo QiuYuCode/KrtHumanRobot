@@ -25,3 +25,11 @@
 [submodule "src/KISS-Matcher"]
 	path = src/KISS-Matcher
 	url = git@github.com:QiuYuCode/KISS-Matcher.git
+[submodule "src/lidar_localization_ros2"]
+	path = src/lidar_localization_ros2
+	url = https://github.com/QiuYuCode/lidar_localization_ros2.git
+	branch = krt-nav2-map-odom
+[submodule "src/ndt_omp_ros2"]
+	path = src/ndt_omp_ros2
+	url = https://github.com/QiuYuCode/ndt_omp_ros2.git
+	branch = humble

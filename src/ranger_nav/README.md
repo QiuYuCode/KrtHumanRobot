@@ -114,6 +114,22 @@ ros2 launch ranger_nav navigation.launch.py map:=$HOME/maps/map.yaml
 1. 用 **2D Pose Estimate** 设置机器人初始位姿（必须，AMCL 需要初值）；
 2. 用 **Nav2 Goal** 发送导航目标点。
 
+### 4. 3D Localization 导航
+
+```bash
+ros2 launch ranger_nav navigation_3dloc.launch.py \
+  map:=$HOME/maps/map.yaml \
+  pcd_map_path:=$HOME/maps/cloud.pcd
+```
+
+`map` 是 2D occupancy map yaml；`pcd_map_path` 是 3D PCD map。
+该模式由 `pcl_localization_ros2` 发布 `map -> odom`，不要同时启动
+AMCL `navigation.launch.py`。
+
+```bash
+ros2 run ranger_nav nav_tf_diagnostics
+```
+
 ## 地图去噪调参
 
 地图或代价地图上出现杂乱孤立点时，按「现象 → 参数」对照调整。

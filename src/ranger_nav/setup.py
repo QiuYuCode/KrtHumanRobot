@@ -28,6 +28,7 @@ setup(
         'console_scripts': [
             'pcd2pgm = ranger_nav.pcd2pgm:main',
             'waypoint_manager = ranger_nav.waypoint_manager:main',
+            'nav_tf_diagnostics = ranger_nav.nav_tf_diagnostics:main',
         ],
     },
 )
