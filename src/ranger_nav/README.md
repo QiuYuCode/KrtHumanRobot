@@ -103,14 +103,13 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 始终更新为最新地图，供默认导航启动使用。
 `--lidar-height` 必须与 urdf 中的 `lidar_z` 一致。
 
-### 3. 导航
-
-默认语音“开始导航”通过 `krt_human_robot` 启动 3D Localization 模式。
-如需手动启动 AMCL 模式：
+### 3. 2D AMCL 导航
 
 ```bash
 ros2 launch ranger_nav navigation.launch.py map:=$HOME/maps/map.yaml
 ```
+
+`map` 是 2D occupancy map yaml。该模式由 AMCL 发布 `map -> odom`。
 
 在 RViz 中：
 
@@ -130,6 +129,8 @@ ros2 launch ranger_nav navigation_3dloc.launch.py \
 `cloud.pcd` 只是保存地图时的归档副本。
 该模式由 `pcl_localization_ros2` 发布 `map -> odom`，不要同时启动
 AMCL `navigation.launch.py`。
+
+默认语音“开始导航”通过 `krt_human_robot` 启动 3D Localization 模式。
 
 ```bash
 ros2 run ranger_nav nav_tf_diagnostics

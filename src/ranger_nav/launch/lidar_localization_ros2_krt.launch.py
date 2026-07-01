@@ -55,7 +55,7 @@ def generate_launch_description():
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('global_frame_id', default_value='map'),
         DeclareLaunchArgument('odom_frame_id', default_value='odom'),
-        DeclareLaunchArgument('base_frame_id', default_value='base_footprint'),
+        DeclareLaunchArgument('base_frame_id', default_value='body'),
         DeclareLaunchArgument('use_imu', default_value='false'),
         DeclareLaunchArgument('use_odom', default_value='false'),
         DeclareLaunchArgument('set_initial_pose', default_value='false'),

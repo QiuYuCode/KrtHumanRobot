@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import copy
 import json
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +14,7 @@ from typing import Any
 import rclpy
 import yaml
 from builtin_interfaces.msg import Time
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
 from nav2_msgs.action import NavigateToPose
 from rclpy.action import ActionClient
 from rclpy.duration import Duration
@@ -34,6 +36,14 @@ DEFAULT_TTS_SERVICE = "/voice/tts/synthesize"
 DEFAULT_TTS_TIMEOUT_S = 60.0
 DEFAULT_VISION_SERVICE = "/krt_human_robot/vision/describe_scene"
 DEFAULT_ARM_ACTION = "/run_action_group"
+DEFAULT_ARRIVAL_TOLERANCE_M = 0.15
+DEFAULT_ARRIVAL_RETRIES = 1
+DEFAULT_ACCURACY_REPORT = "~/maps/waypoint_accuracy.yaml"
+DEFAULT_CMD_VEL_TOPIC = "/cmd_vel"
+DEFAULT_FINAL_YAW_TOLERANCE = 0.15
+DEFAULT_FINAL_ROTATE_TIMEOUT_S = 30.0
+DEFAULT_FINAL_ROTATE_MAX_WZ = 0.25
+DEFAULT_FINAL_ROTATE_MIN_WZ = 0.06
 DESCRIBE_CAMERA_IDS = {"head", "left_palm", "right_palm"}
 DEFAULT_DESCRIBE_QUESTION = "请描述你在这个巡航点看到的内容"
 
@@ -44,6 +54,19 @@ class Waypoint:
     pose: PoseStamped
     task: str = "wait"
     args: dict[str, Any] | None = None
+
+
+@dataclass
+class AccuracySample:
+    waypoint: str
+    target_x: float
+    target_y: float
+    target_yaw: float
+    actual_x: float
+    actual_y: float
+    actual_yaw: float
+    xy_error: float
+    yaw_error: float
 
 
 class WaypointStore:
@@ -134,6 +157,8 @@ class WaypointNode(Node):
         self.nav_client = ActionClient(self, NavigateToPose, args.navigate_action)
         self.input_seen = False
         self.input_sub = None
+        self.accuracy_samples: list[AccuracySample] = []
+        self.cmd_vel_pub = self.create_publisher(Twist, args.cmd_vel_topic, 10)
 
     def mark(self, name: str | None, task: str, task_args: dict[str, Any]) -> int:
         waypoints = self.store.load()
@@ -205,12 +230,15 @@ class WaypointNode(Node):
             self.get_logger().info(f"开始第 {rounds_done} 轮巡航。")
             for wp in selected:
                 if not self.navigate_to(wp):
+                    self.report_accuracy()
                     return 1
                 if not self.run_task(wp):
+                    self.report_accuracy()
                     return 1
             if loop:
                 continue
         self.get_logger().info("巡航完成。")
+        self.report_accuracy()
         return 0
 
     def select_waypoints(self, names: list[str]) -> list[Waypoint]:
@@ -251,25 +279,169 @@ class WaypointNode(Node):
         )
 
     def navigate_to(self, wp: Waypoint) -> bool:
+        for attempt in range(self.args.arrival_retries + 1):
+            if not self.arrival_reached(wp):
+                if attempt == 0:
+                    goal_pose = self.approach_pose(wp)
+                    phase = "接近 XY"
+                else:
+                    goal_pose = copy.deepcopy(wp.pose)
+                    phase = "修正 XY"
+                if not self.send_nav_goal(goal_pose, wp.name, phase):
+                    return False
+            if not self.arrival_reached(wp):
+                if attempt < self.args.arrival_retries:
+                    self.get_logger().warning("XY 未到达，重试接近点位")
+                    continue
+                self.get_logger().error(f"未正确接近点位: {wp.name}")
+                return False
+            if not self.rotate_to_waypoint_yaw(wp):
+                return False
+            if self.arrival_reached(wp):
+                self.record_accuracy(wp)
+                self.get_logger().info(f"到达点位: {wp.name}")
+                return True
+            if attempt < self.args.arrival_retries:
+                self.get_logger().warning("最终转向后 XY 漂移，重试点位")
+        self.get_logger().error(f"未正确接近点位: {wp.name}")
+        return False
+
+    def send_nav_goal(self, pose: PoseStamped, name: str, phase: str) -> bool:
         goal = NavigateToPose.Goal()
-        goal.pose = wp.pose
+        goal.pose = copy.deepcopy(pose)
         goal.pose.header.stamp = self.get_clock().now().to_msg()
-        self.get_logger().info(f"导航到点位: {wp.name}")
+        self.get_logger().info(f"导航到点位: {name} ({phase})")
         future = self.nav_client.send_goal_async(goal)
         goal_handle = self.wait_future(future, "发送导航目标超时")
         if goal_handle is None or not goal_handle.accepted:
-            self.get_logger().error(f"导航目标被拒绝: {wp.name}")
+            self.get_logger().error(f"导航目标被拒绝: {name}")
             return False
-        result_future = goal_handle.get_result_async()
-        result = self.wait_future(result_future, "等待导航结果超时", timeout=None)
+        result = self.wait_future(
+            goal_handle.get_result_async(), "等待导航结果超时", timeout=None
+        )
         if result is None:
             return False
         status = int(result.status)
         if status != 4:
-            self.get_logger().error(f"导航失败: {wp.name}, status={status}")
+            self.get_logger().error(f"导航失败: {name}, status={status}")
             return False
-        self.get_logger().info(f"到达点位: {wp.name}")
         return True
+
+    def approach_pose(self, wp: Waypoint) -> PoseStamped:
+        current = self.current_pose()
+        target = wp.pose.pose.position
+        actual = current.pose.position
+        yaw = math.atan2(target.y - actual.y, target.x - actual.x)
+        pose = copy.deepcopy(wp.pose)
+        pose.pose.orientation.z = math.sin(yaw / 2.0)
+        pose.pose.orientation.w = math.cos(yaw / 2.0)
+        pose.pose.orientation.x = 0.0
+        pose.pose.orientation.y = 0.0
+        return pose
+
+    def rotate_to_waypoint_yaw(self, wp: Waypoint) -> bool:
+        target_yaw = _yaw_from_pose(wp.pose)
+        deadline = time.monotonic() + self.args.final_rotate_timeout_s
+        while time.monotonic() < deadline:
+            current = self.current_pose()
+            error = _angle_diff(target_yaw, _yaw_from_pose(current))
+            if abs(error) <= self.args.final_yaw_tolerance:
+                self.stop_robot()
+                self.get_logger().info(
+                    f"最终朝向完成: {wp.name}, yaw_error={abs(error):.3f}rad"
+                )
+                return True
+            twist = Twist()
+            speed = min(self.args.final_rotate_max_wz, max(
+                self.args.final_rotate_min_wz, abs(error) * 0.8))
+            twist.angular.z = math.copysign(speed, error)
+            self.cmd_vel_pub.publish(twist)
+            rclpy.spin_once(self, timeout_sec=0.05)
+        self.stop_robot()
+        self.get_logger().error(f"最终朝向超时: {wp.name}")
+        return False
+
+    def stop_robot(self) -> None:
+        self.cmd_vel_pub.publish(Twist())
+
+    def arrival_reached(self, wp: Waypoint) -> bool:
+        current = self.current_pose()
+        target = wp.pose.pose.position
+        actual = current.pose.position
+        distance = math.hypot(actual.x - target.x, actual.y - target.y)
+        tolerance = float(self.args.arrival_tolerance)
+        self.get_logger().info(
+            f"点位验收 {wp.name}: target=({target.x:.3f}, {target.y:.3f}) "
+            f"actual=({actual.x:.3f}, {actual.y:.3f}) "
+            f"distance={distance:.3f}m tolerance={tolerance:.3f}m"
+        )
+        return distance <= tolerance
+
+    def record_accuracy(self, wp: Waypoint) -> None:
+        current = self.current_pose()
+        target = wp.pose.pose
+        actual = current.pose
+        target_yaw = _yaw_from_pose(wp.pose)
+        actual_yaw = _yaw_from_pose(current)
+        sample = AccuracySample(
+            waypoint=wp.name,
+            target_x=float(target.position.x),
+            target_y=float(target.position.y),
+            target_yaw=target_yaw,
+            actual_x=float(actual.position.x),
+            actual_y=float(actual.position.y),
+            actual_yaw=actual_yaw,
+            xy_error=math.hypot(
+                actual.position.x - target.position.x,
+                actual.position.y - target.position.y,
+            ),
+            yaw_error=abs(_angle_diff(actual_yaw, target_yaw)),
+        )
+        self.accuracy_samples.append(sample)
+        self.get_logger().info(
+            f"定位精度 {wp.name}: xy_error={sample.xy_error:.3f}m "
+            f"yaw_error={sample.yaw_error:.3f}rad"
+        )
+
+    def report_accuracy(self) -> None:
+        if not self.accuracy_samples:
+            return
+        xy_errors = [s.xy_error for s in self.accuracy_samples]
+        yaw_errors = [s.yaw_error for s in self.accuracy_samples]
+        xy_rms = math.sqrt(sum(e * e for e in xy_errors) / len(xy_errors))
+        yaw_rms = math.sqrt(sum(e * e for e in yaw_errors) / len(yaw_errors))
+        self.get_logger().info(
+            "巡航定位精度统计: "
+            f"count={len(xy_errors)} "
+            f"xy_avg={sum(xy_errors) / len(xy_errors):.3f}m "
+            f"xy_rms={xy_rms:.3f}m "
+            f"xy_max={max(xy_errors):.3f}m "
+            f"yaw_avg={sum(yaw_errors) / len(yaw_errors):.3f}rad "
+            f"yaw_rms={yaw_rms:.3f}rad "
+            f"yaw_max={max(yaw_errors):.3f}rad"
+        )
+        if not self.args.accuracy_report:
+            return
+        path = Path(self.args.accuracy_report).expanduser()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        data = {
+            "generated_at": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "map_frame": self.args.map_frame,
+            "base_frame": self.args.base_frame,
+            "summary": {
+                "count": len(xy_errors),
+                "xy_avg": sum(xy_errors) / len(xy_errors),
+                "xy_rms": xy_rms,
+                "xy_max": max(xy_errors),
+                "yaw_avg": sum(yaw_errors) / len(yaw_errors),
+                "yaw_rms": yaw_rms,
+                "yaw_max": max(yaw_errors),
+            },
+            "samples": [sample.__dict__ for sample in self.accuracy_samples],
+        }
+        with path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+        self.get_logger().info(f"已写入定位精度报告: {path}")
 
     def run_task(self, wp: Waypoint) -> bool:
         task = (wp.task or "wait").strip()
@@ -458,10 +630,36 @@ def _parse_task_args(raw: str) -> dict[str, Any]:
     return data
 
 
+def _yaw_from_pose(pose: PoseStamped) -> float:
+    q = pose.pose.orientation
+    return math.atan2(
+        2.0 * (q.w * q.z + q.x * q.y),
+        1.0 - 2.0 * (q.y * q.y + q.z * q.z),
+    )
+
+
+def _angle_diff(a: float, b: float) -> float:
+    return math.atan2(math.sin(a - b), math.cos(a - b))
+
+
 def _positive_int(value: str) -> int:
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("必须是正整数")
+    return parsed
+
+
+def _non_negative_int(value: str) -> int:
+    parsed = int(value)
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("必须是非负整数")
+    return parsed
+
+
+def _positive_float(value: str) -> float:
+    parsed = float(value)
+    if parsed <= 0.0:
+        raise argparse.ArgumentTypeError("必须大于 0")
     return parsed
 
 
@@ -479,6 +677,48 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--tts-timeout-s", type=float, default=DEFAULT_TTS_TIMEOUT_S)
     parser.add_argument("--vision-service", default=DEFAULT_VISION_SERVICE)
     parser.add_argument("--arm-action", default=DEFAULT_ARM_ACTION)
+    parser.add_argument("--cmd-vel-topic", default=DEFAULT_CMD_VEL_TOPIC)
+    parser.add_argument(
+        "--accuracy-report",
+        default=DEFAULT_ACCURACY_REPORT,
+        help="巡航定位精度报告 yaml 路径；传空字符串则只打印不写文件",
+    )
+    parser.add_argument(
+        "--arrival-tolerance",
+        type=_positive_float,
+        default=DEFAULT_ARRIVAL_TOLERANCE_M,
+        help="巡航点到达后的 2D 距离验收阈值（米）",
+    )
+    parser.add_argument(
+        "--arrival-retries",
+        type=_non_negative_int,
+        default=DEFAULT_ARRIVAL_RETRIES,
+        help="Nav2 成功但距离验收失败后的重试次数",
+    )
+    parser.add_argument(
+        "--final-yaw-tolerance",
+        type=_positive_float,
+        default=DEFAULT_FINAL_YAW_TOLERANCE,
+        help="最终朝向误差阈值（弧度）",
+    )
+    parser.add_argument(
+        "--final-rotate-timeout-s",
+        type=_positive_float,
+        default=DEFAULT_FINAL_ROTATE_TIMEOUT_S,
+        help="最终原地转向超时（秒）",
+    )
+    parser.add_argument(
+        "--final-rotate-max-wz",
+        type=_positive_float,
+        default=DEFAULT_FINAL_ROTATE_MAX_WZ,
+        help="最终原地转向最大角速度",
+    )
+    parser.add_argument(
+        "--final-rotate-min-wz",
+        type=_positive_float,
+        default=DEFAULT_FINAL_ROTATE_MIN_WZ,
+        help="最终原地转向最小角速度",
+    )
 
     subparsers = parser.add_subparsers(dest="command", required=True)
     mark = subparsers.add_parser("mark")
@@ -504,6 +744,8 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> None:
     parser = build_parser()
     args = parser.parse_args()
+    if args.final_rotate_min_wz > args.final_rotate_max_wz:
+        parser.error("--final-rotate-min-wz 不能大于 --final-rotate-max-wz")
     rclpy.init()
     node = WaypointNode(args)
     try:
