@@ -33,3 +33,6 @@
 	path = src/ndt_omp_ros2
 	url = https://github.com/QiuYuCode/ndt_omp_ros2.git
 	branch = humble
+[submodule "src/pcd2pgm"]
+	path = src/pcd2pgm
+	url = https://github.com/LihanChen2004/pcd2pgm.git

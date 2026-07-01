@@ -157,33 +157,63 @@ class RangerNavAdapter:
         if not self._enabled():
             return NavigationResult(False, "导航功能未启用，无法开始导航。")
 
+        mode = str(self._cfg.get("navigation_mode", "3dloc")).strip().lower()
+        if mode not in {"3dloc", "amcl"}:
+            return NavigationResult(False, f"未知导航定位模式：{mode}。")
+
         map_yaml = self._expand(self._cfg.get("map_yaml", "~/maps/map.yaml"))
         if not Path(map_yaml).is_file():
             return NavigationResult(False, "未找到地图文件，无法开始导航。")
+        launch_file = str(
+            self._cfg.get(
+                "navigation_launch_3d" if mode == "3dloc" else "navigation_launch_2d",
+                self._cfg.get("navigation_launch", "navigation.launch.py"),
+            )
+        )
+        launch_args = [
+            "ros2",
+            "launch",
+            self._package(),
+            launch_file,
+            f"map:={map_yaml}",
+        ]
+        if mode == "3dloc":
+            pcd_map_path = self._expand(
+                self._cfg.get(
+                    "pcd_map_path",
+                    self._cfg.get("fast_lio_pcd", "~/maps/scans.pcd"),
+                )
+            )
+            if not Path(pcd_map_path).is_file():
+                return NavigationResult(False, f"未找到 3D PCD 地图：{pcd_map_path}。")
+            launch_args.append(f"pcd_map_path:={pcd_map_path}")
         if self._running(self._navigation_process):
             return NavigationResult(True, "导航已经启动。")
 
         self._stop_mapping()
         try:
-            self._navigation_process = self._popen([
-                "ros2",
-                "launch",
-                self._package(),
-                self._cfg.get("navigation_launch", "navigation.launch.py"),
-                f"map:={map_yaml}",
-            ], start_new_session=True)
+            self._navigation_process = self._popen(
+                launch_args,
+                start_new_session=True,
+            )
         except OSError as exc:
             return NavigationResult(False, f"启动导航失败：{exc}。")
-        logger.info(f"已启动导航 launch: pid={self._navigation_process.pid}")
+        logger.info(
+            f"已启动导航 launch: mode={mode}, launch={launch_file}, "
+            f"pid={self._navigation_process.pid}"
+        )
         return NavigationResult(True, "已开始导航。")
 
     def stop_navigation(self) -> NavigationResult:
         if self._running(self._cruise_process):
             self.stop_cruise()
         if not self._running(self._navigation_process):
-            if self._stop_launches_by_name(
-                self._cfg.get("navigation_launch", "navigation.launch.py")
-            ):
+            launch_files = {
+                self._cfg.get("navigation_launch", "navigation.launch.py"),
+                self._cfg.get("navigation_launch_2d", "navigation.launch.py"),
+                self._cfg.get("navigation_launch_3d", "navigation_3dloc.launch.py"),
+            }
+            if any(self._stop_launches_by_name(str(name)) for name in launch_files):
                 return NavigationResult(True, "导航已退出。")
             return NavigationResult(False, "导航未启动，无法结束导航。")
         self._stop_navigation()
@@ -271,44 +301,105 @@ class RangerNavAdapter:
 
     def _convert_pcd(self, pcd_path: Path, session_dir: Path) -> NavigationResult:
         map_prefix = str(self._cfg.get("session_map_prefix", "map"))
-        out_prefix = str(session_dir / map_prefix)
-        cmd = [
-            "ros2",
-            "run",
-            self._package(),
-            "pcd2pgm",
-            "--pcd",
-            str(pcd_path),
-            "--out",
-            out_prefix,
-            "--lidar-height",
-            str(self._cfg.get("pcd2pgm_lidar_height", 0.30)),
-            "--z-min",
-            str(self._cfg.get("pcd2pgm_z_min", 0.15)),
-            "--z-max",
-            str(self._cfg.get("pcd2pgm_z_max", 1.2)),
-            "--resolution",
-            str(self._cfg.get("pcd2pgm_resolution", 0.05)),
-            "--occ-thresh",
-            str(self._cfg.get("pcd2pgm_occ_thresh", 1)),
-            "--min-blob",
-            str(self._cfg.get("pcd2pgm_min_blob", 2)),
-        ]
-        ror_radius = float(self._cfg.get("pcd2pgm_ror_radius", 0.0))
-        if ror_radius > 0:
-            cmd.extend([
-                "--ror-radius",
-                str(ror_radius),
-                "--ror-min-pts",
-                str(self._cfg.get("pcd2pgm_ror_min_pts", 5)),
-            ])
-        result = self._call(cmd)
-        if result.success:
-            latest_result = self._update_latest_map(Path(out_prefix))
+        out_prefix = session_dir / map_prefix
+        params_path = session_dir / "pcd2pgm.yaml"
+        self._write_pcd2pgm_params(pcd_path, params_path)
+
+        process: subprocess.Popen | None = None
+        try:
+            process = self._popen(
+                [
+                    "ros2",
+                    "run",
+                    "pcd2pgm",
+                    "pcd2pgm_node",
+                    "--ros-args",
+                    "--params-file",
+                    str(params_path),
+                ],
+                start_new_session=True,
+            )
+            result = self._save_published_map(out_prefix, process)
+            if not result.success:
+                return result
+            latest_result = self._update_latest_map(out_prefix)
             if not latest_result.success:
                 return latest_result
             return NavigationResult(True, "地图已保存并转换完成。")
-        return result
+        except OSError as exc:
+            return NavigationResult(False, f"启动 pcd2pgm 失败：{exc}。")
+        finally:
+            if process is not None and self._running(process):
+                self._terminate_process_tree(process)
+                try:
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    self._kill_process_tree(process)
+                    process.wait(timeout=3)
+
+    def _write_pcd2pgm_params(self, pcd_path: Path, params_path: Path) -> None:
+        lidar_height = float(self._cfg.get("pcd2pgm_lidar_height", 0.30))
+        params = {
+            "pcd2pgm": {
+                "ros__parameters": {
+                    "pcd_file": str(pcd_path),
+                    "odom_to_lidar_odom": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    "flag_pass_through": False,
+                    "map_resolution": float(self._cfg.get("pcd2pgm_resolution", 0.05)),
+                    "map_topic_name": "map",
+                    "thre_radius": float(self._cfg.get("pcd2pgm_ror_radius", 0.1)),
+                    "thres_point_count": int(self._cfg.get("pcd2pgm_ror_min_pts", 10)),
+                    "thre_z_min": -lidar_height
+                    + float(self._cfg.get("pcd2pgm_z_min", 0.15)),
+                    "thre_z_max": -lidar_height
+                    + float(self._cfg.get("pcd2pgm_z_max", 1.2)),
+                }
+            }
+        }
+        with params_path.open("w", encoding="utf-8") as f:
+            yaml.safe_dump(params, f, sort_keys=False)
+
+    def _save_published_map(
+        self,
+        out_prefix: Path,
+        pcd2pgm_process: subprocess.Popen,
+    ) -> NavigationResult:
+        timeout_s = float(self._cfg.get("map_save_wait_s", 30.0))
+        deadline = time.monotonic() + timeout_s
+        cmd = [
+            "ros2",
+            "run",
+            "nav2_map_server",
+            "map_saver_cli",
+            "-t",
+            "map",
+            "-f",
+            str(out_prefix),
+            "--fmt",
+            "pgm",
+            "--mode",
+            "trinary",
+        ]
+        last_error = "等待 /map 生成超时。"
+        while time.monotonic() < deadline:
+            if pcd2pgm_process.poll() is not None:
+                return NavigationResult(False, "pcd2pgm 节点提前退出，地图未生成。")
+            try:
+                completed = self._call_completed(cmd)
+            except subprocess.TimeoutExpired:
+                last_error = "map_saver_cli 超时。"
+            except OSError as exc:
+                last_error = f"map_saver_cli 执行失败：{exc}。"
+            else:
+                if completed.returncode == 0:
+                    return NavigationResult(True, "地图已保存。")
+                detail = (
+                    completed.stderr or completed.stdout or ""
+                ).strip().splitlines()
+                if detail:
+                    last_error = detail[-1]
+            self._sleep(0.5)
+        return NavigationResult(False, f"地图转换失败：{last_error}")
 
     def _create_map_session_dir(self) -> Path:
         archive_dir = Path(

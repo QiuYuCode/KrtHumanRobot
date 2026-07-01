@@ -105,6 +105,9 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 
 ### 3. 导航
 
+默认语音“开始导航”通过 `krt_human_robot` 启动 3D Localization 模式。
+如需手动启动 AMCL 模式：
+
 ```bash
 ros2 launch ranger_nav navigation.launch.py map:=$HOME/maps/map.yaml
 ```
@@ -119,10 +122,12 @@ ros2 launch ranger_nav navigation.launch.py map:=$HOME/maps/map.yaml
 ```bash
 ros2 launch ranger_nav navigation_3dloc.launch.py \
   map:=$HOME/maps/map.yaml \
-  pcd_map_path:=$HOME/maps/cloud.pcd
+  pcd_map_path:=$HOME/maps/scans.pcd
 ```
 
 `map` 是 2D occupancy map yaml；`pcd_map_path` 是 3D PCD map。
+默认 3D 定位使用固定的 `$HOME/maps/scans.pcd`；时间戳目录里的
+`cloud.pcd` 只是保存地图时的归档副本。
 该模式由 `pcl_localization_ros2` 发布 `map -> odom`，不要同时启动
 AMCL `navigation.launch.py`。
 
@@ -144,24 +149,20 @@ ros2 run ranger_nav nav_tf_diagnostics
    `/cloud_registered` 是否发布全量去畸变点云；建图保存推荐保持 `true`。
 2. `config/kiss_matcher_sam.yaml` 的 `save_voxel_resolution` 控制回环优化地图
    保存体素；当前按 5 cm 栅格地图设为 `0.05`。
-3. `pcd2pgm` 的 `--occ-thresh` 控制每个 2D 栅格至少需要几个点才算障碍；
-   Spark-SAM 稀疏墙面优先用 `1`，噪点多时再调高。
+3. 外部 `pcd2pgm` 的 `thre_radius` / `thres_point_count` 控制 PCL 半径离群点滤波。
 
-参数都在 `pcd2pgm` 命令行，推荐起步命令：
+自动保存地图时，`krt_human_robot` 会启动外部 `pcd2pgm_node` 发布 `/map`，
+再用 Nav2 `map_saver_cli` 生成标准 `map.pgm` / `map.yaml`。手动转换可用：
 
 ```bash
-ros2 run ranger_nav pcd2pgm --pcd ~/maps/scans.pcd --out ~/maps/map \
-    --lidar-height 0.30 --occ-thresh 1 --min-blob 2
+ros2 run pcd2pgm pcd2pgm_node --ros-args --params-file pcd2pgm.yaml
+ros2 run nav2_map_server map_saver_cli -t map -f ~/maps/map --fmt pgm --mode trinary
 ```
 
-| 参数 | 默认 | 作用与调整方向 |
-|------|------|----------------|
-| `--occ-thresh` | 2 | 栅格内点数达到该值才视为占据。Spark-SAM 墙线断裂 → 1；孤立点多 → 调大（3~5） |
-| `--min-blob` | 3 | 剔除面积小于 N 格的孤立占据块（4 连通域分析）。Spark-SAM 起步 2；噪团偏大 → 调大（4~8）；0 关闭 |
-| `--ror-radius` / `--ror-min-pts` | 0（关）/ 5 | 3D 半径离群点滤波：半径 R 内邻居少于 K 的点被丢弃。成片稀疏虚假障碍（玻璃反射、动态物体轨迹）→ 试 `--ror-radius 0.3 --ror-min-pts 5` |
-| `--z-min` | 0.15 | 障碍切片下限（相对地面）。地面被误判为障碍 → 调大（0.2）；低矮障碍漏检 → 调小 |
+`pcd2pgm.yaml` 的关键参数由 `krt_human_robot` 配置生成：
+`pcd2pgm_resolution`、`pcd2pgm_z_min`、`pcd2pgm_z_max`、
+`pcd2pgm_lidar_height`、`pcd2pgm_ror_radius`、`pcd2pgm_ror_min_pts`。
 
-每步处理会打印剔除的点数/格数，按输出逐项调参。
 注意：建图时定位漂移产生的"重影墙"不是噪点，滤波救不了，
 需要控制建图环境（避开行人、降低速度）重新建图。
 

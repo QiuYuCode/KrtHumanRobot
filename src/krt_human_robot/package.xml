@@ -19,6 +19,8 @@
   <exec_depend>realsense2_camera</exec_depend>
   <exec_depend>voice_assistant</exec_depend>
   <exec_depend>ranger_nav</exec_depend>
+  <exec_depend>pcd2pgm</exec_depend>
+  <exec_depend>nav2_map_server</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>python3-opencv</exec_depend>
   <exec_depend>py_trees</exec_depend>
