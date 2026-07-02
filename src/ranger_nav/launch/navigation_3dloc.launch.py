@@ -56,7 +56,7 @@ def generate_launch_description():
         output='screen',
         parameters=[os.path.join(agx_share, 'config', 'agx_bringup.yaml')],
         remappings=[
-            ('/sub_cmd_vel', '/cmd_vel'),
+            ('/sub_cmd_vel', '/cmd_vel_safe'),
             ('/wheel/odom', '/odom'),
         ],
     )
@@ -141,6 +141,29 @@ def generate_launch_description():
         }.items(),
     )
 
+    collision_monitor_node = Node(
+        package='nav2_collision_monitor',
+        executable='collision_monitor',
+        name='collision_monitor',
+        output='screen',
+        parameters=[
+            os.path.join(ranger_nav_share, 'config', 'nav2_params_3dloc.yaml'),
+            {'use_sim_time': use_sim_time},
+        ],
+    )
+
+    lifecycle_manager_collision_monitor = Node(
+        package='nav2_lifecycle_manager',
+        executable='lifecycle_manager',
+        name='lifecycle_manager_collision_monitor',
+        output='screen',
+        parameters=[{
+            'use_sim_time': use_sim_time,
+            'autostart': True,
+            'node_names': ['collision_monitor'],
+        }],
+    )
+
     lidar_localization = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             ranger_nav_share, 'launch', 'lidar_localization_ros2_krt.launch.py')),
@@ -187,6 +210,8 @@ def generate_launch_description():
         map_server,
         lifecycle_manager_map_server,
         nav2_navigation,
+        collision_monitor_node,
+        lifecycle_manager_collision_monitor,
         lidar_localization,
         rviz_node,
     ])
