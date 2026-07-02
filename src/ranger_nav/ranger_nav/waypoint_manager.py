@@ -36,7 +36,7 @@ DEFAULT_TTS_SERVICE = "/voice/tts/synthesize"
 DEFAULT_TTS_TIMEOUT_S = 60.0
 DEFAULT_VISION_SERVICE = "/krt_human_robot/vision/describe_scene"
 DEFAULT_ARM_ACTION = "/run_action_group"
-DEFAULT_ARRIVAL_TOLERANCE_M = 0.15
+DEFAULT_ARRIVAL_TOLERANCE_M = 0.25
 DEFAULT_ARRIVAL_RETRIES = 1
 DEFAULT_ACCURACY_REPORT = "~/maps/waypoint_accuracy.yaml"
 DESCRIBE_CAMERA_IDS = {"head", "left_palm", "right_palm"}
@@ -280,13 +280,15 @@ class WaypointNode(Node):
                 if attempt < self.args.arrival_retries:
                     self.get_logger().warning("XY 未到达，重试接近点位")
                     continue
-                self.get_logger().error(f"未正确接近点位: {wp.name}")
-                return False
+                self.record_accuracy(wp)
+                self.get_logger().warning(f"未正确接近点位，继续巡航: {wp.name}")
+                return True
             self.record_accuracy(wp)
             self.get_logger().info(f"到达点位: {wp.name}")
             return True
-        self.get_logger().error(f"未正确接近点位: {wp.name}")
-        return False
+        self.record_accuracy(wp)
+        self.get_logger().warning(f"未正确接近点位，继续巡航: {wp.name}")
+        return True
 
     def send_nav_goal(self, pose: PoseStamped, name: str, phase: str) -> bool:
         goal = NavigateToPose.Goal()
