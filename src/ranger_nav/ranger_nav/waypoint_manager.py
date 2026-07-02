@@ -39,6 +39,7 @@ DEFAULT_ARM_ACTION = "/run_action_group"
 DEFAULT_ARRIVAL_TOLERANCE_M = 0.25
 DEFAULT_ARRIVAL_RETRIES = 1
 DEFAULT_ACCURACY_REPORT = "~/maps/waypoint_accuracy.yaml"
+DEFAULT_APPROACH_DISTANCE_M = 0.0
 DESCRIBE_CAMERA_IDS = {"head", "left_palm", "right_palm"}
 DEFAULT_DESCRIBE_QUESTION = "请描述你在这个巡航点看到的内容"
 
@@ -274,6 +275,11 @@ class WaypointNode(Node):
 
     def navigate_to(self, wp: Waypoint) -> bool:
         for attempt in range(self.args.arrival_retries + 1):
+            approach = self.approach_pose(wp)
+            if approach is not None and not self.send_nav_goal(
+                approach, wp.name, "预进场"
+            ):
+                return False
             if not self.send_nav_goal(wp.pose, wp.name, "完整位姿"):
                 return False
             if not self.arrival_reached(wp):
@@ -289,6 +295,18 @@ class WaypointNode(Node):
         self.record_accuracy(wp)
         self.get_logger().warning(f"未正确接近点位，继续巡航: {wp.name}")
         return True
+
+    def approach_pose(self, wp: Waypoint) -> PoseStamped | None:
+        distance = float((wp.args or {}).get(
+            "approach_distance", self.args.approach_distance
+        ))
+        if distance <= 0.0:
+            return None
+        yaw = _yaw_from_pose(wp.pose)
+        pose = copy.deepcopy(wp.pose)
+        pose.pose.position.x -= math.cos(yaw) * distance
+        pose.pose.position.y -= math.sin(yaw) * distance
+        return pose
 
     def send_nav_goal(self, pose: PoseStamped, name: str, phase: str) -> bool:
         goal = NavigateToPose.Goal()
@@ -640,6 +658,12 @@ def build_parser() -> argparse.ArgumentParser:
         type=_non_negative_int,
         default=DEFAULT_ARRIVAL_RETRIES,
         help="Nav2 成功但距离验收失败后的重试次数",
+    )
+    parser.add_argument(
+        "--approach-distance",
+        type=float,
+        default=DEFAULT_APPROACH_DISTANCE_M,
+        help="终点前沿目标 yaw 反方向插入预进场点距离（米）；0 表示关闭",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
     mark = subparsers.add_parser("mark")
