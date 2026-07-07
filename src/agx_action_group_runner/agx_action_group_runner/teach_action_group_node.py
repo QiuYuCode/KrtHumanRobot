@@ -98,6 +98,9 @@ class TeachActionGroupNode(Node):
         if not groups_file:
             raise RuntimeError("groups_file parameter is empty")
         self.groups_file = Path(groups_file)
+        if not self.groups_file.exists():
+            self.groups_file.parent.mkdir(parents=True, exist_ok=True)
+            self.groups_file.write_text("groups: {}\n", encoding="utf-8")
         self.step_timeout_sec = float(self.get_parameter("step_timeout_sec").value)
         self.service_timeout_sec = float(self.get_parameter("service_timeout_sec").value)
         self.playback_step_interval_sec = float(

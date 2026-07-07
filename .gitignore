@@ -211,6 +211,10 @@ pyrightconfig.json
 install/
 log/
 
+# Runtime-recorded AGX arm action groups
+src/agx_action_group_runner/config/action_groups.yaml
+src/agx_action_group_runner/config/steps/
+
 # Ignore generated docs
 *.dox
 *.wikidoc
