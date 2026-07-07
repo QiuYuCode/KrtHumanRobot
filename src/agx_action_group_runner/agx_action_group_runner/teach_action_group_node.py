@@ -1,3 +1,4 @@
+import hashlib
 import re
 import shutil
 import threading
@@ -212,7 +213,9 @@ class TeachActionGroupNode(Node):
             with self.groups_file.open("r", encoding="utf-8") as f:
                 data = yaml.safe_load(f) or {}
         groups = data.setdefault("groups", {})
-        safe = re.sub(r"[^0-9A-Za-z_.-]+", "_", group_name).strip("_") or "group"
+        base = re.sub(r"[^0-9A-Za-z_.-]+", "_", group_name).strip("_") or "group"
+        digest = hashlib.sha1(group_name.encode("utf-8")).hexdigest()[:8]
+        safe = f"{base}_{digest}"
         steps_dir = self.groups_file.parent / "steps" / safe
         if steps_dir.exists():
             shutil.rmtree(steps_dir)
