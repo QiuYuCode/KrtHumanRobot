@@ -91,6 +91,7 @@ class TeachActionGroupNode(Node):
         self.declare_parameter("step_timeout_sec", 8.0)
         self.declare_parameter("service_timeout_sec", 5.0)
         self.declare_parameter("min_joint_delta_rad", 0.01)
+        self.declare_parameter("playback_step_interval_sec", 0.02)
 
         groups_file = str(self.get_parameter("groups_file").value)
         if not groups_file:
@@ -98,6 +99,9 @@ class TeachActionGroupNode(Node):
         self.groups_file = Path(groups_file)
         self.step_timeout_sec = float(self.get_parameter("step_timeout_sec").value)
         self.service_timeout_sec = float(self.get_parameter("service_timeout_sec").value)
+        self.playback_step_interval_sec = float(
+            self.get_parameter("playback_step_interval_sec").value
+        )
         min_joint_delta_rad = float(self.get_parameter("min_joint_delta_rad").value)
         self.recorders = {
             "left": ArmRecorder(
@@ -234,6 +238,8 @@ class TeachActionGroupNode(Node):
                 "type": "move_j",
                 "payload_file": rel.as_posix(),
                 "timeout_sec": self.step_timeout_sec,
+                "wait_reach": False,
+                "hold_sec": self.playback_step_interval_sec,
             })
         groups[group_name] = {"repeat_count": 1, "steps": steps}
         with self.groups_file.open("w", encoding="utf-8") as f:

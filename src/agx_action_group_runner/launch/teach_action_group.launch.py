@@ -15,6 +15,9 @@ def generate_launch_description():
     right_namespace_arg = DeclareLaunchArgument(
         "right_namespace", default_value="/right", description="Right arm namespace"
     )
+    stream_step_interval_arg = DeclareLaunchArgument(
+        "stream_step_interval_sec", default_value="0.02", description="Streaming replay interval"
+    )
 
     runner = Node(
         package="agx_action_group_runner",
@@ -26,6 +29,7 @@ def generate_launch_description():
             "groups_file": LaunchConfiguration("groups_file"),
             "left_namespace": LaunchConfiguration("left_namespace"),
             "right_namespace": LaunchConfiguration("right_namespace"),
+            "stream_step_interval_sec": LaunchConfiguration("stream_step_interval_sec"),
         }],
     )
 
@@ -39,7 +43,15 @@ def generate_launch_description():
             "groups_file": LaunchConfiguration("groups_file"),
             "left_namespace": LaunchConfiguration("left_namespace"),
             "right_namespace": LaunchConfiguration("right_namespace"),
+            "playback_step_interval_sec": LaunchConfiguration("stream_step_interval_sec"),
         }],
     )
 
-    return LaunchDescription([groups_file_arg, left_namespace_arg, right_namespace_arg, runner, teach])
+    return LaunchDescription([
+        groups_file_arg,
+        left_namespace_arg,
+        right_namespace_arg,
+        stream_step_interval_arg,
+        runner,
+        teach,
+    ])
