@@ -24,6 +24,7 @@ setup(
     entry_points={
         "console_scripts": [
             "action_group_runner = agx_action_group_runner.runner_node:main",
+            "teach_action_group = agx_action_group_runner.teach_action_group_node:main",
             "teach_record_replay = agx_action_group_runner.teach_record_replay_node:main",
         ],
     },

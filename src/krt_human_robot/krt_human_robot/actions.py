@@ -92,6 +92,7 @@ class CorePlanExecutor(Behaviour):
                 arm_side=args.get("arm_side"),
                 operation=args.get("operation"),
                 group_name=args.get("group_name"),
+                node=self._node,
             )
         if name == "control_gripper":
             return execute_gripper_action(

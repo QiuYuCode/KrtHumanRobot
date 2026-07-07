@@ -125,6 +125,12 @@ robot_arm_firmware: v112
 robot_arm_channels: {left: can_left, right: can_right}
 robot_arm_teach_save_dir: captures/arm_teach
 robot_arm_teach_file_template: "{arm}_teach_records.json"
+robot_arm_teach_start_service: /agx_action_group/start_teach
+robot_arm_teach_stop_service: /agx_action_group/stop_teach
+robot_arm_teach_service_timeout_s: 8.0
+robot_arm_action_group_action: /agx_action_group/run_action_group
+robot_arm_action_timeout_s: 60.0
+robot_arm_action_repeat_count: 1
 robot_arm_sample_interval_s: 0.005
 robot_arm_replay_speed_percent: 30
 robot_arm_replay_use_timing: true

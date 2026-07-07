@@ -172,6 +172,7 @@ class DescribeSceneAction(Behaviour):
         self._preset_arm_side = preset_arm_side
         self._preset_capture_delay_s = float(preset_capture_delay_s)
         self._preset_wait_replay_finish = bool(preset_wait_replay_finish)
+        self._node = None
 
         self.blackboard = self.attach_blackboard_client(
             name=name, namespace="dialog"
@@ -185,6 +186,9 @@ class DescribeSceneAction(Behaviour):
         self.blackboard.register_key(
             key="response_text", access=py_trees.common.Access.WRITE
         )
+
+    def setup(self, **kwargs):
+        self._node = kwargs.get("node")
 
     def _run_preset_arm_before_vision(self) -> None:
         """若配置了 preset 动作组，则启动对应臂的示教回放（默认与拍照并行）。"""
@@ -208,6 +212,7 @@ class DescribeSceneAction(Behaviour):
                     arm_side=self._preset_arm_side,
                     operation="run_group",
                     group_name=self._preset_group,
+                    node=self._node,
                 )
             except Exception as exc:
                 logger.exception(
