@@ -1,5 +1,5 @@
-import asyncio
 import copy
+import time
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -199,7 +199,7 @@ class ActionGroupRunnerNode(Node):
             return msg
         raise ValueError(f"Unsupported step type: {step_type}")
 
-    async def _wait_reach(self, arm: ArmIo, timeout_sec: float) -> bool:
+    def _wait_reach(self, arm: ArmIo, timeout_sec: float) -> bool:
         waited = 0.0
         while waited < timeout_sec:
             status = arm.latest_status
@@ -208,11 +208,11 @@ class ActionGroupRunnerNode(Node):
                     return False
                 if status.motion_status == 0:
                     return True
-            await asyncio.sleep(self.poll_interval_sec)
+            time.sleep(self.poll_interval_sec)
             waited += self.poll_interval_sec
         return False
 
-    async def _run_single_step(
+    def _run_single_step(
         self,
         goal_handle,
         step: dict,
@@ -248,7 +248,7 @@ class ActionGroupRunnerNode(Node):
             msg = self._build_msg(step_type, payload)
             target_arm = self.left_arm if arm_target == "left" else self.right_arm
             target_arm.publish(step_type, msg)
-            ok = await self._wait_reach(target_arm, timeout_sec)
+            ok = self._wait_reach(target_arm, timeout_sec)
             if not ok:
                 raise RuntimeError(f"{step_name} did not reach target in {timeout_sec}s")
         else:
@@ -266,19 +266,17 @@ class ActionGroupRunnerNode(Node):
             right_msg = self._build_msg(step_type, right_payload)
             self.left_arm.publish(step_type, left_msg)
             self.right_arm.publish(step_type, right_msg)
-            left_ok, right_ok = await asyncio.gather(
-                self._wait_reach(self.left_arm, timeout_sec),
-                self._wait_reach(self.right_arm, timeout_sec),
-            )
+            left_ok = self._wait_reach(self.left_arm, timeout_sec)
+            right_ok = self._wait_reach(self.right_arm, timeout_sec)
             if not left_ok or not right_ok:
                 raise RuntimeError(f"{step_name} did not reach target on both arms")
 
         if hold_sec > 0.0:
             feedback.state = "hold"
             goal_handle.publish_feedback(feedback)
-            await asyncio.sleep(hold_sec)
+            time.sleep(hold_sec)
 
-    async def _execute_callback(self, goal_handle):
+    def _execute_callback(self, goal_handle):
         self._running_goal = True
         try:
             goal = goal_handle.request
@@ -302,7 +300,7 @@ class ActionGroupRunnerNode(Node):
                         result.failed_step = step.get("name", f"step_{step_index + 1}")
                         return result
 
-                    await self._run_single_step(
+                    self._run_single_step(
                         goal_handle=goal_handle,
                         step=step,
                         step_index=step_index,
@@ -343,4 +341,3 @@ def main(args=None):
         executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
-
