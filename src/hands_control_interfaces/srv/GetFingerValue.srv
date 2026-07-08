@@ -1,0 +1,5 @@
+uint8 finger_id
+---
+bool success
+float32 value
+string error_message

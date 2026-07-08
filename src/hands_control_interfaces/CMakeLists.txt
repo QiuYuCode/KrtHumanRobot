@@ -17,6 +17,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/GetNormalPressure.srv"
   "srv/GetTangentPressure.srv"
   "srv/GetApproachingValue.srv"
+  "srv/GetDeviceId.srv"
+  "srv/GetDeviceString.srv"
+  "srv/GetFingerValue.srv"
+  "srv/SetFingerValue.srv"
   DEPENDENCIES action_msgs
 )
 

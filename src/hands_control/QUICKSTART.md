@@ -114,6 +114,23 @@ ros2 service call /right/get_approaching_value hands_control_interfaces/srv/GetA
 
 左手没有压力和接近觉传感器，所以不会提供这些服务。
 
+### 7. 查询状态、设置安全阈值和清错
+
+```bash
+source install/setup.bash
+
+ros2 service call /right/get_device_id hands_control_interfaces/srv/GetDeviceId "{channel: 0}"
+ros2 service call /right/get_firmware_version hands_control_interfaces/srv/GetDeviceString "{}"
+ros2 service call /right/get_motor_current hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_motor_velocity hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_motor_temperature hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_joint_degree hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_error_code hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/set_safe_current hands_control_interfaces/srv/SetFingerValue "{finger_id: 1, value: 250}"
+ros2 service call /right/set_safe_temperature hands_control_interfaces/srv/SetFingerValue "{finger_id: 1, value: 85}"
+ros2 service call /right/clear_error std_srvs/srv/Trigger "{}"
+```
+
 ## 常用命令
 
 ### 查看 Action 接口

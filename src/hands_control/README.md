@@ -10,6 +10,7 @@ ROS 2 功能包，用于通过 Action 接口控制两个 DexHand021S 灵巧手�
 - 支持手部重置功能
 - 提供实时位置反馈
 - 支持通过参数服务器控制底层反馈监听与实时反馈线程
+- 提供设备信息、清错、安全阈值和电机状态查询 ROS Service
 - 右手额外提供指尖法向压力、切向压力和接近觉 ROS Service
 - 默认不启用监听和实时反馈，需要时再通过参数打开
 
@@ -88,74 +89,193 @@ ros2 launch hands_control hand_control_launch.py \
 ros2 run hands_control hand_control_client
 ```
 
-### 3. 控制监听与自动反馈
+### 3. 逐接口测试
 
-默认不启动监听和自动反馈。可以在 launch 时直接指定初始状态：
+先启动服务端：
 
 ```bash
-ros2 launch hands_control hand_control_launch.py \
-    left_hand_listen:=true \
-    right_hand_listen:=false \
-    left_hand_realtime_response:=true \
-    right_hand_realtime_response:=false
+source install/setup.bash
+ros2 launch hands_control hand_control_launch.py
 ```
 
-运行时也可以通过参数服务器切换：
+另开终端加载环境：
+
+```bash
+source install/setup.bash
+```
+
+#### 3.1 listen(enable)
+
+默认关闭，可通过参数服务器打开或关闭：
 
 ```bash
 ros2 param set /left/hand_control_server listen_enabled true
-ros2 param set /left/hand_control_server realtime_response_enabled true
+ros2 param get /left/hand_control_server listen_enabled
+ros2 param set /left/hand_control_server listen_enabled false
+
+ros2 param set /right/hand_control_server listen_enabled true
+ros2 param get /right/hand_control_server listen_enabled
 ros2 param set /right/hand_control_server listen_enabled false
+```
+
+#### 3.2 enable_realtime_response(device_id, enable)
+
+默认关闭，可通过参数服务器打开或关闭：
+
+```bash
+ros2 param set /left/hand_control_server realtime_response_enabled true
+ros2 param get /left/hand_control_server realtime_response_enabled
+ros2 param set /left/hand_control_server realtime_response_enabled false
+
+ros2 param set /right/hand_control_server realtime_response_enabled true
+ros2 param get /right/hand_control_server realtime_response_enabled
 ros2 param set /right/hand_control_server realtime_response_enabled false
 ```
 
-### 4. 右手压力传感器
-
-右手节点会额外提供以下服务，左手不提供这些服务：
+#### 3.3 get_device_id(channel)
 
 ```bash
-ros2 service call /right/get_normal_pressure hands_control_interfaces/srv/GetNormalPressure "{finger_id: 1}"
-ros2 service call /right/get_tangent_pressure hands_control_interfaces/srv/GetTangentPressure "{finger_id: 1}"
-ros2 service call /right/get_approaching_value hands_control_interfaces/srv/GetApproachingValue "{finger_id: 1}"
+ros2 service call /left/get_device_id hands_control_interfaces/srv/GetDeviceId "{channel: 0}"
+ros2 service call /right/get_device_id hands_control_interfaces/srv/GetDeviceId "{channel: 0}"
 ```
 
-### 5. 命令行调用 Action
-
-#### 控制手指移动
+#### 3.4 get_firmware_version(device_id)
 
 ```bash
-# 左手手指 1 移动到位置 1000
+ros2 service call /left/get_firmware_version hands_control_interfaces/srv/GetDeviceString "{}"
+ros2 service call /right/get_firmware_version hands_control_interfaces/srv/GetDeviceString "{}"
+```
+
+#### 3.5 move_finger(...), 单指运动
+
+```bash
 ros2 action send_goal /left/hand_control hands_control_interfaces/action/HandControl \
-    "{adapter_index: 0, finger_id: 1, position: 1000, speed: 600, force: 85, wait_time: 10}" \
+    "{adapter_index: 0, finger_id: 1, position: 800, speed: 500, force: 85, wait_time: 10}" \
     --feedback
 
-# 左手所有手指闭合
-ros2 action send_goal /left/hand_control hands_control_interfaces/action/HandControl \
-    "{adapter_index: 0, finger_id: 0, position: 1000, speed: 600, force: 85, wait_time: 10}" \
-    --feedback
-
-# 右手所有手指张开
 ros2 action send_goal /right/hand_control hands_control_interfaces/action/HandControl \
-    "{adapter_index: 1, finger_id: 0, position: 0, speed: 600, force: 85, wait_time: 10}" \
-    --feedback
-
-# 右手手指 2 移动到位置 800
-ros2 action send_goal /right/hand_control hands_control_interfaces/action/HandControl \
-    "{adapter_index: 1, finger_id: 2, position: 800, speed: 500, force: 85, wait_time: 10}" \
+    "{adapter_index: 1, finger_id: 1, position: 800, speed: 500, force: 85, wait_time: 10}" \
     --feedback
 ```
 
-#### 重置手部
+#### 3.6 move_finger(...), 三指一起运动
+
+`finger_id: 0` 表示三根手指一起执行同一动作：
 
 ```bash
-# 重置左手
+ros2 action send_goal /left/hand_control hands_control_interfaces/action/HandControl \
+    "{adapter_index: 0, finger_id: 0, position: 1000, speed: 500, force: 85, wait_time: 10}" \
+    --feedback
+
+ros2 action send_goal /right/hand_control hands_control_interfaces/action/HandControl \
+    "{adapter_index: 1, finger_id: 0, position: 1000, speed: 500, force: 85, wait_time: 10}" \
+    --feedback
+```
+
+#### 3.7 reset_joints(device_id)
+
+```bash
 ros2 action send_goal /left/reset_hand hands_control_interfaces/action/ResetHand \
     "{adapter_index: 0}" --feedback
 
-# 重置右手
 ros2 action send_goal /right/reset_hand hands_control_interfaces/action/ResetHand \
     "{adapter_index: 1}" --feedback
 ```
+
+#### 3.8 clear_error(device_id)
+
+```bash
+ros2 service call /left/clear_error std_srvs/srv/Trigger "{}"
+ros2 service call /right/clear_error std_srvs/srv/Trigger "{}"
+```
+
+#### 3.9 set_safe_current(device_id, finger_id, max_current)
+
+```bash
+ros2 service call /left/set_safe_current hands_control_interfaces/srv/SetFingerValue "{finger_id: 1, value: 250}"
+ros2 service call /right/set_safe_current hands_control_interfaces/srv/SetFingerValue "{finger_id: 1, value: 250}"
+```
+
+#### 3.10 get_safe_current(device_id, finger_id)
+
+```bash
+ros2 service call /left/get_safe_current hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_safe_current hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+```
+
+#### 3.11 set_safe_temperature(device_id, finger_id, max_temperature)
+
+```bash
+ros2 service call /left/set_safe_temperature hands_control_interfaces/srv/SetFingerValue "{finger_id: 1, value: 85}"
+ros2 service call /right/set_safe_temperature hands_control_interfaces/srv/SetFingerValue "{finger_id: 1, value: 85}"
+```
+
+#### 3.12 get_safe_temperature(device_id, finger_id)
+
+```bash
+ros2 service call /left/get_safe_temperature hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_safe_temperature hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+```
+
+#### 3.13 get_error_code(device_id, finger_id)
+
+```bash
+ros2 service call /left/get_error_code hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_error_code hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+```
+
+#### 3.14 get_motor_current(device_id, finger_id)
+
+```bash
+ros2 service call /left/get_motor_current hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_motor_current hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+```
+
+#### 3.15 get_motor_velocity(device_id, finger_id)
+
+```bash
+ros2 service call /left/get_motor_velocity hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_motor_velocity hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+```
+
+#### 3.16 get_motor_temperature(device_id, finger_id)
+
+```bash
+ros2 service call /left/get_motor_temperature hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_motor_temperature hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+```
+
+#### 3.17 get_joint_degree(device_id, finger_id)
+
+```bash
+ros2 service call /left/get_joint_degree hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_joint_degree hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+```
+
+#### 3.18 get_normal_pressure(device_id, finger_id)
+
+右手有压力传感器，测试压力接口前建议打开右手监听和自动反馈：
+
+```bash
+ros2 param set /right/hand_control_server listen_enabled true
+ros2 param set /right/hand_control_server realtime_response_enabled true
+ros2 service call /right/get_normal_pressure hands_control_interfaces/srv/GetNormalPressure "{finger_id: 1}"
+```
+
+#### 3.19 get_tangent_pressure(device_id, finger_id)
+
+```bash
+ros2 service call /right/get_tangent_pressure hands_control_interfaces/srv/GetTangentPressure "{finger_id: 1}"
+```
+
+#### 3.20 get_approaching_value(device_id, finger_id)
+
+```bash
+ros2 service call /right/get_approaching_value hands_control_interfaces/srv/GetApproachingValue "{finger_id: 1}"
+```
+
+左手没有压力和接近觉传感器，所以不会提供 `/left/get_normal_pressure`、
+`/left/get_tangent_pressure`、`/left/get_approaching_value`。
 
 ## Action 接口说明
 
