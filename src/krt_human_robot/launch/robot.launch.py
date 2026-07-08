@@ -21,6 +21,7 @@ def _launch_setup(context, *args, **kwargs):
     del args, kwargs
     pkg_share = get_package_share_directory("krt_human_robot")
     voice_share = get_package_share_directory("voice_assistant")
+    hands_share = get_package_share_directory("hands_control")
     run_script = os.path.join(pkg_share, "scripts", "run_krt_human_robot_node.sh")
 
     config_file = LaunchConfiguration("config_file").perform(context)
@@ -37,6 +38,13 @@ def _launch_setup(context, *args, **kwargs):
     core_start_delay_s = LaunchConfiguration("core_start_delay_s")
     enable_voice_stack = (
         LaunchConfiguration("enable_voice_stack").perform(context).strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    enable_hands_control_stack = (
+        LaunchConfiguration("enable_hands_control_stack")
+        .perform(context)
+        .strip()
+        .lower()
         in {"1", "true", "yes", "on"}
     )
     enable_camera_stack = (
@@ -94,7 +102,22 @@ def _launch_setup(context, *args, **kwargs):
             launch_arguments={"config_file": voice_config_file}.items(),
         ))
 
-    if enable_voice_stack or enable_camera_stack:
+    if enable_hands_control_stack:
+        actions.append(IncludeLaunchDescription(
+            PythonLaunchDescriptionSource(
+                os.path.join(
+                    hands_share, "launch", "hand_control_launch.py"
+                )
+            ),
+            launch_arguments={
+                "left_hand_listen": "false",
+                "right_hand_listen": "false",
+                "left_hand_realtime_response": "false",
+                "right_hand_realtime_response": "false",
+            }.items(),
+        ))
+
+    if enable_voice_stack or enable_camera_stack or enable_hands_control_stack:
         actions.append(TimerAction(period=core_start_delay_s, actions=[core_node]))
     else:
         actions.append(core_node)
@@ -114,6 +137,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("config_file", default_value=default_config),
         DeclareLaunchArgument("voice_config_file", default_value=default_voice_config),
         DeclareLaunchArgument("enable_voice_stack", default_value="true"),
+        DeclareLaunchArgument("enable_hands_control_stack", default_value="true"),
         DeclareLaunchArgument("enable_camera_stack", default_value="true"),
         DeclareLaunchArgument("core_start_delay_s", default_value="8.0"),
         DeclareLaunchArgument("tick_interval_ms", default_value="100"),

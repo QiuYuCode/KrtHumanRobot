@@ -2,41 +2,26 @@
 
 from __future__ import annotations
 
-import sys
 import time
 from dataclasses import dataclass
-from pathlib import Path
 from threading import Lock
 from typing import Any
 
-from loguru import logger
-
 import py_trees
+import rclpy
+from loguru import logger
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
+from rclpy.action import ActionClient
+
+from hands_control_interfaces.action import HandControl
+from hands_control_interfaces.srv import (
+    GetApproachingValue,
+    GetNormalPressure,
+    GetTangentPressure,
+)
 
 from krt_human_robot.config import RobotConfig
-
-_DEXHAND_IMPORT_ERROR: Exception | None = None
-try:
-    from dexhand.dexhand import AdapterType, DexHand021S
-except (ImportError, OSError) as e:
-    _DEXHAND_IMPORT_ERROR = e
-    # 回退：在未走 uv 环境时，尝试从仓库同级目录加载 dexhand_sdk_python。
-    repo_root = Path(__file__).resolve().parents[2]
-    local_dexhand_repo = repo_root.parent / "dexhand_sdk_python"
-    if local_dexhand_repo.exists():
-        sys.path.insert(0, str(local_dexhand_repo))
-        try:
-            from dexhand.dexhand import AdapterType, DexHand021S
-            _DEXHAND_IMPORT_ERROR = None
-        except (ImportError, OSError) as inner_e:
-            _DEXHAND_IMPORT_ERROR = inner_e
-            AdapterType = None
-            DexHand021S = None
-    else:
-        AdapterType = None
-        DexHand021S = None
 
 
 _HAND_ALIASES = {
@@ -85,28 +70,15 @@ class _HandSpec:
     has_pressure_sensor: bool
 
 
-class DexHandManager:
-    """DexHand 双手实例管理器。"""
+class RosGripperManager:
+    """DexHand 的 ROS 接口管理器。"""
 
-    def __init__(self, config: RobotConfig):
+    def __init__(self, config: RobotConfig, node):
         self._config = config
+        self._node = node
         self._lock = Lock()
-        self._hands: dict[str, Any] = {}
-
-    def _adapter_type(self) -> Any:
-        if AdapterType is None:
-            detail = f" 原始错误: {_DEXHAND_IMPORT_ERROR}" if _DEXHAND_IMPORT_ERROR else ""
-            raise RuntimeError(f"未安装 dexhand SDK，请先安装并配置 dexhand_sdk_python。{detail}")
-
-        mapping = {
-            "zlg_mini": AdapterType.ZLG_MINI,
-            "zlg_200u": AdapterType.ZLG_200U,
-            "lys_mini": AdapterType.LYS_MINI,
-        }
-        key = str(self._config.gripper_adapter_type).strip().lower()
-        if key not in mapping:
-            raise RuntimeError(f"不支持的 gripper_adapter_type: {self._config.gripper_adapter_type}")
-        return mapping[key]
+        self._hand_clients: dict[str, ActionClient] = {}
+        self._pressure_clients: dict[str, dict[str, Any]] = {}
 
     def _hand_spec(self, side: str) -> _HandSpec:
         raw = self._config.left_gripper if side == "left" else self._config.right_gripper
@@ -117,44 +89,195 @@ class DexHandManager:
             has_pressure_sensor=bool(raw.get("has_pressure_sensor", False)),
         )
 
-    def get_hand(self, side: str) -> tuple[Any, _HandSpec]:
+    def _hand_client(self, side: str) -> ActionClient:
         with self._lock:
-            if side in self._hands:
-                return self._hands[side], self._hand_spec(side)
+            client = self._hand_clients.get(side)
+            if client is None:
+                client = ActionClient(
+                    self._node,
+                    HandControl,
+                    f"/{side}/hand_control",
+                )
+                self._hand_clients[side] = client
+            return client
 
-            if DexHand021S is None:
-                detail = f" 原始错误: {_DEXHAND_IMPORT_ERROR}" if _DEXHAND_IMPORT_ERROR else ""
-                raise RuntimeError(f"未安装 dexhand SDK，请先安装并配置 dexhand_sdk_python。{detail}")
+    def _pressure_client(self, side: str, metric: str):
+        spec = self._hand_spec(side)
+        if not spec.has_pressure_sensor:
+            return None
 
-            spec = self._hand_spec(side)
-            if self._hands:
-                time.sleep(float(self._config.gripper_second_hand_init_delay))
-            hand = DexHand021S(
-                adapter_type=self._adapter_type(),
-                adapter_index=spec.adapter_index,
+        service_map = {
+            "normal": (GetNormalPressure, "get_normal_pressure"),
+            "tangent": (GetTangentPressure, "get_tangent_pressure"),
+            "approach": (GetApproachingValue, "get_approaching_value"),
+        }
+        if metric not in service_map:
+            raise ValueError(f"不支持的压力类型: {metric}")
+
+        with self._lock:
+            side_clients = self._pressure_clients.setdefault(side, {})
+            client = side_clients.get(metric)
+            if client is None:
+                service_type, service_name = service_map[metric]
+                client = self._node.create_client(
+                    service_type,
+                    f"/{side}/{service_name}",
+                )
+                side_clients[metric] = client
+            return client
+
+    def _call_service(self, client, request, timeout: float):
+        if not client.wait_for_service(timeout_sec=timeout):
+            raise RuntimeError(f"ROS 服务不可用: {client.srv_name}")
+        future = client.call_async(request)
+        rclpy.spin_until_future_complete(self._node, future, timeout_sec=timeout)
+        if not future.done():
+            raise RuntimeError(f"ROS 服务超时: {client.srv_name}")
+        result = future.result()
+        if result is None:
+            raise RuntimeError(f"ROS 服务调用失败: {client.srv_name}")
+        return result
+
+    def _call_action(self, side: str, goal: HandControl.Goal, timeout: float):
+        client = self._hand_client(side)
+        if not client.wait_for_server(timeout_sec=timeout):
+            raise RuntimeError(f"动作服务器不可用: /{side}/hand_control")
+
+        send_future = client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(self._node, send_future, timeout_sec=timeout)
+        if not send_future.done():
+            raise RuntimeError(f"动作目标发送超时: /{side}/hand_control")
+
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            raise RuntimeError(f"动作目标被拒绝: /{side}/hand_control")
+
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(self._node, result_future, timeout_sec=timeout)
+        if not result_future.done():
+            raise RuntimeError(f"动作执行超时: /{side}/hand_control")
+
+        result = result_future.result().result
+        if not result.success:
+            raise RuntimeError(result.message)
+        return result
+
+    def move_fingers(
+        self,
+        side: str,
+        target: int,
+        speed: int,
+        control_mode: int,
+        delay_ms: int,
+        finger_ids: list[int],
+        inter_finger_delay: float = 0.0,
+    ) -> None:
+        spec = self._hand_spec(side)
+        finger_ids = [int(fid) for fid in finger_ids]
+        timeout = max(5.0, float(delay_ms) * 0.1 + 5.0)
+
+        if not finger_ids:
+            return
+
+        if finger_ids == [1, 2, 3]:
+            goal = HandControl.Goal()
+            goal.adapter_index = spec.adapter_index
+            goal.finger_id = 0
+            goal.position = int(target)
+            goal.speed = int(speed)
+            goal.force = int(control_mode)
+            goal.wait_time = int(delay_ms)
+            self._call_action(side, goal, timeout)
+            return
+
+        for index, finger_id in enumerate(finger_ids):
+            goal = HandControl.Goal()
+            goal.adapter_index = spec.adapter_index
+            goal.finger_id = int(finger_id)
+            goal.position = int(target)
+            goal.speed = int(speed)
+            goal.force = int(control_mode)
+            goal.wait_time = int(delay_ms)
+            self._call_action(side, goal, timeout)
+            if inter_finger_delay > 0 and index + 1 < len(finger_ids):
+                time.sleep(inter_finger_delay)
+
+    def read_pressure_text(self, side: str, finger_ids: list[int]) -> str:
+        spec = self._hand_spec(side)
+        if not spec.has_pressure_sensor:
+            return ""
+
+        values: list[float] = []
+        for finger_id in finger_ids:
+            value = self.read_normal_pressure(side, finger_id)
+            if value is None:
+                continue
+            values.append(float(value))
+
+        if not values:
+            return ""
+
+        peak = max(abs(v) for v in values)
+        if peak < 1e-6:
+            return "，压力读数接近零。"
+        if peak < 0.5:
+            return "，压力读数较低。"
+        return "，压力读数已更新。"
+
+    def read_normal_pressure(self, side: str, finger_id: int) -> float | None:
+        return self._read_pressure_metric(side, "normal", finger_id)
+
+    def read_tangent_pressure(self, side: str, finger_id: int) -> float | None:
+        return self._read_pressure_metric(side, "tangent", finger_id)
+
+    def read_approaching_value(self, side: str, finger_id: int) -> float | None:
+        return self._read_pressure_metric(side, "approach", finger_id)
+
+    def _read_pressure_metric(
+        self,
+        side: str,
+        metric: str,
+        finger_id: int,
+    ) -> float | None:
+        spec = self._hand_spec(side)
+        if not spec.has_pressure_sensor:
+            return None
+
+        client = self._pressure_client(side, metric)
+        if client is None:
+            return None
+
+        if finger_id not in [0x01, 0x02, 0x03]:
+            raise ValueError(f"无效的 finger_id: {finger_id} (支持 1,2,3)")
+
+        request = client.srv_type.Request()
+        request.finger_id = int(finger_id)
+        try:
+            response = self._call_service(client, request, timeout=2.0)
+        except Exception as exc:
+            logger.warning(
+                "压力读取失败: side={}, metric={}, finger_id={}, error={}",
+                side,
+                metric,
+                finger_id,
+                exc,
             )
-            hand.listen(enable=True)
-            hand.enable_realtime_response(device_id=spec.device_id, enable=True)
+            return None
 
-            hand.clear_error(spec.device_id)
-            if self._config.gripper_set_safe_current:
-                max_current = int(self._config.gripper_safe_current)
-                for fid in self._config.gripper_finger_ids:
-                    hand.set_safe_current(spec.device_id, int(fid), max_current)
-
-            hand.reset_joints(spec.device_id)
-            time.sleep(float(self._config.gripper_post_reset_sleep))
-            self._hands[side] = hand
-            return hand, spec
+        if not response.success or not response.available:
+            return None
+        return float(response.value)
 
 
-_MANAGER: DexHandManager | None = None
+_MANAGER: RosGripperManager | None = None
 
 
-def _get_manager(config: RobotConfig) -> DexHandManager:
+def _get_manager(config: RobotConfig, node=None) -> RosGripperManager:
     global _MANAGER
     if _MANAGER is None:
-        _MANAGER = DexHandManager(config)
+        if node is None:
+            raise RuntimeError("夹爪 ROS 管理器尚未初始化")
+        _MANAGER = RosGripperManager(config, node)
     return _MANAGER
 
 
@@ -185,46 +308,11 @@ def _parse_side_action(command_or_args: str | dict[str, Any]) -> tuple[str | Non
     return side, action
 
 
-def _move_all_fingers(
-    hand: Any,
-    device_id: int,
-    target: int,
-    speed: int,
-    mode: int,
-    delay_ms: int,
-    finger_ids: list[int],
-    inter_finger_delay: float = 0.0,
-) -> None:
-    for i, finger_id in enumerate(finger_ids):
-        hand.move_finger(device_id, finger_id, target, speed, mode, delay_ms)
-        if inter_finger_delay > 0 and i + 1 < len(finger_ids):
-            time.sleep(inter_finger_delay)
-
-
-def _clear_finger_errors(hand: Any, device_id: int, _finger_ids: list[int]) -> None:
-    hand.clear_error(device_id)
-
-
-def _read_pressure_text(hand: Any, spec: _HandSpec, finger_ids: list[int]) -> str:
-    """返回仅含中文的简短说明，避免本地 VITS 对英文/冒号/数字发音崩溃。"""
-    if not spec.has_pressure_sensor:
-        return ""
-    values: list[float] = []
-    for finger_id in finger_ids:
-        v = float(hand.get_normal_pressure(spec.device_id, finger_id))
-        values.append(v)
-        logger.debug("压力 device_id={} finger={} value={}", spec.device_id, finger_id, v)
-    if not values:
-        return ""
-    peak = max(abs(v) for v in values)
-    if peak < 1e-6:
-        return "，压力读数接近零。"
-    if peak < 0.5:
-        return "，压力读数较低。"
-    return "，压力读数已更新。"
-
-
-def execute_gripper_action(config: RobotConfig, command_or_args: str | dict[str, Any]) -> str:
+def execute_gripper_action(
+    config: RobotConfig,
+    command_or_args: str | dict[str, Any],
+    node=None,
+) -> str:
     """夹爪控制核心逻辑。"""
     if not config.gripper_enabled:
         return "夹爪功能未启用。"
@@ -235,76 +323,75 @@ def execute_gripper_action(config: RobotConfig, command_or_args: str | dict[str,
     if action not in {"shake", "open", "handshake"}:
         return "夹爪动作暂不支持，可以说动动、动一下、张开、放一下、握手、握一下。"
 
-    hand, spec = _get_manager(config).get_hand(side)
+    manager = _get_manager(config, node)
     finger_ids = [int(fid) for fid in config.gripper_finger_ids]
     speed_close = int(getattr(config, "gripper_speed_close", config.gripper_default_speed))
     speed_open = int(getattr(config, "gripper_speed_open", config.gripper_default_speed))
-    mode = int(config.gripper_control_mode)
+    control_mode = int(config.gripper_control_mode)
     delay_ms = int(config.gripper_exec_delay_ms)
     pause_close = float(getattr(config, "gripper_shake_pause_close", 0.5))
     pause_open = float(getattr(config, "gripper_shake_pause_open", 0.5))
     inter = float(getattr(config, "gripper_inter_finger_delay", 0.0))
 
-    logger.info("执行夹爪动作: side={}, action={}, device_id={}", side, action, spec.device_id)
+    spec = manager._hand_spec(side)
+    logger.info(
+        "执行夹爪动作: side={}, action={}, device_id={}",
+        side,
+        action,
+        spec.device_id,
+    )
 
     if action == "open":
-        _move_all_fingers(
-            hand,
-            spec.device_id,
+        manager.move_fingers(
+            side,
             int(config.gripper_open_value),
             speed_open,
-            mode,
+            control_mode,
             delay_ms,
             finger_ids,
             inter,
         )
-        _clear_finger_errors(hand, spec.device_id, finger_ids)
         time.sleep(max(pause_open, 0.35))
         return f"{'左' if side == 'left' else '右'}手已张开。"
 
     if action == "handshake":
-        _move_all_fingers(
-            hand,
-            spec.device_id,
+        manager.move_fingers(
+            side,
             int(config.gripper_close_value),
             speed_close,
-            mode,
+            control_mode,
             delay_ms,
             finger_ids,
             inter,
         )
-        _clear_finger_errors(hand, spec.device_id, finger_ids)
         time.sleep(max(0.35, pause_close * 0.5))
-        pressure_text = _read_pressure_text(hand, spec, finger_ids)
+        pressure_text = manager.read_pressure_text(side, finger_ids)
         return f"{'左' if side == 'left' else '右'}手已握紧。{pressure_text}".rstrip("。") + "。"
 
     cycles = max(1, int(config.gripper_shake_cycles))
     for _ in range(cycles):
-        _move_all_fingers(
-            hand,
-            spec.device_id,
+        manager.move_fingers(
+            side,
             int(config.gripper_close_value),
             speed_close,
-            mode,
+            control_mode,
             delay_ms,
             finger_ids,
             inter,
         )
-        _clear_finger_errors(hand, spec.device_id, finger_ids)
         time.sleep(pause_close)
-        _move_all_fingers(
-            hand,
-            spec.device_id,
+        manager.move_fingers(
+            side,
             int(config.gripper_open_value),
             speed_open,
-            mode,
+            control_mode,
             delay_ms,
             finger_ids,
             inter,
         )
-        _clear_finger_errors(hand, spec.device_id, finger_ids)
         time.sleep(pause_open)
-    pressure_text = _read_pressure_text(hand, spec, finger_ids)
+
+    pressure_text = manager.read_pressure_text(side, finger_ids)
     return f"{'左' if side == 'left' else '右'}手动了一下。{pressure_text}".rstrip("。") + "。"
 
 
@@ -314,6 +401,7 @@ class GripperAction(Behaviour):
     def __init__(self, name: str, config: RobotConfig):
         super().__init__(name)
         self._config = config
+        self._node = None
         self.blackboard = self.attach_blackboard_client(
             name="GripperAction", namespace="dialog"
         )
@@ -327,13 +415,22 @@ class GripperAction(Behaviour):
             key="response_text", access=py_trees.common.Access.WRITE
         )
 
+    def setup(self, **kwargs):
+        self._node = kwargs.get("node")
+        if self._node is not None:
+            _get_manager(self._config, self._node)
+
     def update(self) -> Status:
         if self.blackboard.intent != "gripper_control":
             return Status.FAILURE
 
         try:
             command = self.blackboard.user_command
-            self.blackboard.response_text = execute_gripper_action(self._config, command)
+            self.blackboard.response_text = execute_gripper_action(
+                self._config,
+                command,
+                node=self._node,
+            )
             return Status.SUCCESS
         except Exception as e:
             logger.exception("夹爪控制失败")

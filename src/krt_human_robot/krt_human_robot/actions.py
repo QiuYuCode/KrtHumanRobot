@@ -98,6 +98,7 @@ class CorePlanExecutor(Behaviour):
             return execute_gripper_action(
                 self._config,
                 {"hand": args.get("hand", ""), "action": args.get("action", "")},
+                node=self._node,
             )
         if name == "exit_conversation":
             return "好的，我先休息了。"

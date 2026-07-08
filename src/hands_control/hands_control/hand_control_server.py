@@ -5,6 +5,7 @@ import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rcl_interfaces.msg import SetParametersResult
 
 try:
     from dexhand import DexHand021S
@@ -14,6 +15,11 @@ except ImportError:
     DEXHAND_AVAILABLE = False
 
 from hands_control_interfaces.action import HandControl, ResetHand
+from hands_control_interfaces.srv import (
+    GetApproachingValue,
+    GetNormalPressure,
+    GetTangentPressure,
+)
 
 
 class HandControlServer(Node):
@@ -32,11 +38,21 @@ class HandControlServer(Node):
         self.declare_parameter('adapter_index', 0)
         self.declare_parameter('device_id', 0x01)
         self.declare_parameter('hand_name', '')
+        self.declare_parameter('listen_enabled', False)
+        self.declare_parameter('realtime_response_enabled', False)
+        self.declare_parameter('has_pressure_sensor', False)
 
         adapter_type_str = self.get_parameter('adapter_type').value
         self.adapter_index = int(self.get_parameter('adapter_index').value)
         self.device_id = int(self.get_parameter('device_id').value)
         self.hand_name = self.get_parameter('hand_name').value
+        self.listen_enabled = bool(self.get_parameter('listen_enabled').value)
+        self.realtime_response_enabled = bool(
+            self.get_parameter('realtime_response_enabled').value
+        )
+        self.has_pressure_sensor = bool(
+            self.get_parameter('has_pressure_sensor').value
+        )
 
         # 转换 adapter_type
         self.adapter_type = self._parse_adapter_type(adapter_type_str)
@@ -49,13 +65,16 @@ class HandControlServer(Node):
                 adapter_type=self.adapter_type,
                 adapter_index=self.adapter_index
             )
-            self.hand.listen(enable=True)
-            self.hand.enable_realtime_response(
-                device_id=self.device_id,
-                enable=True
-            )
             if not self.hand_name:
                 self.hand_name = '左手' if self.adapter_index == 0 else '右手'
+            self._parameter_callback = self.add_on_set_parameters_callback(
+                self._handle_parameter_update
+            )
+            self._apply_runtime_state(
+                listen_enabled=self.listen_enabled,
+                realtime_response_enabled=self.realtime_response_enabled,
+                force=True,
+            )
             self.get_logger().info(
                 f'{self.hand_name}初始化成功 '
                 f'(adapter_index={self.adapter_index}, device_id={self.device_id})'
@@ -84,6 +103,23 @@ class HandControlServer(Node):
             callback_group=callback_group
         )
 
+        if self.has_pressure_sensor:
+            self._normal_pressure_service = self.create_service(
+                GetNormalPressure,
+                'get_normal_pressure',
+                self._handle_normal_pressure,
+            )
+            self._tangent_pressure_service = self.create_service(
+                GetTangentPressure,
+                'get_tangent_pressure',
+                self._handle_tangent_pressure,
+            )
+            self._approaching_value_service = self.create_service(
+                GetApproachingValue,
+                'get_approaching_value',
+                self._handle_approaching_value,
+            )
+
         self.get_logger().info('手部控制 Action Server 已启动')
 
     def _parse_adapter_type(self, adapter_type_str):
@@ -103,6 +139,156 @@ class HandControlServer(Node):
             except Exception:
                 positions.append(0)
         return positions
+
+    def _validate_finger_id(self, finger_id):
+        """校验手指编号."""
+        return finger_id in [0x01, 0x02, 0x03]
+
+    def _pressure_response(self, value, response):
+        """填充压力服务成功响应."""
+        response.success = True
+        response.available = True
+        response.value = float(value)
+        response.error_message = ''
+        return response
+
+    def _pressure_error(self, message, response, available=True):
+        """填充压力服务失败响应."""
+        response.success = False
+        response.available = available
+        response.value = 0.0
+        response.error_message = message
+        return response
+
+    def _handle_normal_pressure(self, request, response):
+        """查询法向压力."""
+        return self._handle_pressure_query('normal', request, response)
+
+    def _handle_tangent_pressure(self, request, response):
+        """查询切向压力."""
+        return self._handle_pressure_query('tangent', request, response)
+
+    def _handle_approaching_value(self, request, response):
+        """查询接近觉读数."""
+        return self._handle_pressure_query('approach', request, response)
+
+    def _handle_pressure_query(self, metric, request, response):
+        """读取指定压力传感器数据."""
+        finger_id = int(request.finger_id)
+        if not self._validate_finger_id(finger_id):
+            return self._pressure_error(
+                f'无效的 finger_id: {finger_id} (支持 1,2,3)',
+                response,
+            )
+
+        try:
+            with self.comm_lock:
+                if metric == 'normal':
+                    value = self.hand.get_normal_pressure(self.device_id, finger_id)
+                elif metric == 'tangent':
+                    value = self.hand.get_tangent_pressure(self.device_id, finger_id)
+                elif metric == 'approach':
+                    value = self.hand.get_approaching_value(self.device_id, finger_id)
+                else:
+                    return self._pressure_error(
+                        f'不支持的压力类型: {metric}',
+                        response,
+                    )
+            return self._pressure_response(value, response)
+        except Exception as e:
+            self.get_logger().error(
+                f'{self.hand_name} 压力读取失败 metric={metric}, finger_id={finger_id}: {str(e)}'
+            )
+            return self._pressure_error(str(e), response)
+
+    def _apply_runtime_state(
+        self,
+        listen_enabled,
+        realtime_response_enabled,
+        force=False,
+    ):
+        """同步底层监听和实时反馈状态."""
+        with self.comm_lock:
+            if force or listen_enabled != self.listen_enabled:
+                self.hand.listen(enable=listen_enabled)
+                self.listen_enabled = listen_enabled
+
+            if force or realtime_response_enabled != self.realtime_response_enabled:
+                self.hand.enable_realtime_response(
+                    device_id=self.device_id,
+                    enable=realtime_response_enabled
+                )
+                self.realtime_response_enabled = realtime_response_enabled
+
+    def _handle_parameter_update(self, params):
+        """处理运行时参数更新."""
+        allowed_names = {
+            'listen_enabled',
+            'realtime_response_enabled',
+        }
+        static_names = {
+            'adapter_type',
+            'adapter_index',
+            'device_id',
+            'hand_name',
+            'has_pressure_sensor',
+        }
+
+        requested_listen = self.listen_enabled
+        requested_realtime = self.realtime_response_enabled
+
+        for param in params:
+            if param.name in static_names:
+                return SetParametersResult(
+                    successful=False,
+                    reason=f'{param.name} 只允许在启动时设置'
+                )
+
+            if param.name not in allowed_names:
+                return SetParametersResult(
+                    successful=False,
+                    reason=f'不支持的参数: {param.name}'
+                )
+
+            if param.name == 'listen_enabled':
+                requested_listen = bool(param.value)
+            elif param.name == 'realtime_response_enabled':
+                requested_realtime = bool(param.value)
+
+        old_listen = self.listen_enabled
+        old_realtime = self.realtime_response_enabled
+
+        try:
+            self._apply_runtime_state(
+                listen_enabled=requested_listen,
+                realtime_response_enabled=requested_realtime,
+                force=False,
+            )
+        except Exception as e:
+            self.get_logger().error(
+                f'{self.hand_name} 参数更新失败: {str(e)}'
+            )
+            try:
+                self._apply_runtime_state(
+                    listen_enabled=old_listen,
+                    realtime_response_enabled=old_realtime,
+                    force=True,
+                )
+            except Exception as rollback_error:
+                self.get_logger().error(
+                    f'{self.hand_name} 参数回滚失败: {str(rollback_error)}'
+                )
+            return SetParametersResult(
+                successful=False,
+                reason=str(e)
+            )
+
+        self.get_logger().info(
+            f'{self.hand_name} 参数已更新: '
+            f'listen_enabled={self.listen_enabled}, '
+            f'realtime_response_enabled={self.realtime_response_enabled}'
+        )
+        return SetParametersResult(successful=True)
 
     def _execute_hand_control(self, goal_handle):
         """执行手部控制 action."""
@@ -265,6 +451,15 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        if hasattr(node, 'hand'):
+            try:
+                node._apply_runtime_state(
+                    listen_enabled=False,
+                    realtime_response_enabled=False,
+                    force=True,
+                )
+            except Exception:
+                pass
         node.destroy_node()
         rclpy.shutdown()
 

@@ -9,6 +9,9 @@ ROS 2 功能包，用于通过 Action 接口控制两个 DexHand021S 灵巧手�
 - 支持单个手指精确控制
 - 支持手部重置功能
 - 提供实时位置反馈
+- 支持通过参数服务器控制底层反馈监听与实时反馈线程
+- 右手额外提供指尖法向压力、切向压力和接近觉 ROS Service
+- 默认不启用监听和实时反馈，需要时再通过参数打开
 
 ## 依赖
 
@@ -62,13 +65,21 @@ ros2 launch hands_control hand_control_launch.py
 ros2 launch hands_control hand_control_launch.py \
     adapter_type:=ZLG_MINI \
     left_hand_device_id:=1 \
-    right_hand_device_id:=2
+    right_hand_device_id:=2 \
+    left_hand_listen:=false \
+    right_hand_listen:=false \
+    left_hand_realtime_response:=false \
+    right_hand_realtime_response:=false
 ```
 
 **参数说明:**
 - `adapter_type`: ZLG 适配器类型 (默认: ZLG_MINI, 支持: ZLG_MINI, ZLG_200U)
 - `left_hand_device_id`: 左手设备 ID (默认: 1, 即 0x01)
 - `right_hand_device_id`: 右手设备 ID (默认: 2, 即 0x02)
+- `left_hand_listen`: 左手启动时是否开启监听 (默认: false)
+- `right_hand_listen`: 右手启动时是否开启监听 (默认: false)
+- `left_hand_realtime_response`: 左手启动时是否开启自动反馈 (默认: false)
+- `right_hand_realtime_response`: 右手启动时是否开启自动反馈 (默认: false)
 
 ### 2. 测试客户端
 
@@ -77,7 +88,38 @@ ros2 launch hands_control hand_control_launch.py \
 ros2 run hands_control hand_control_client
 ```
 
-### 3. 命令行调用 Action
+### 3. 控制监听与自动反馈
+
+默认不启动监听和自动反馈。可以在 launch 时直接指定初始状态：
+
+```bash
+ros2 launch hands_control hand_control_launch.py \
+    left_hand_listen:=true \
+    right_hand_listen:=false \
+    left_hand_realtime_response:=true \
+    right_hand_realtime_response:=false
+```
+
+运行时也可以通过参数服务器切换：
+
+```bash
+ros2 param set /left/hand_control_server listen_enabled true
+ros2 param set /left/hand_control_server realtime_response_enabled true
+ros2 param set /right/hand_control_server listen_enabled false
+ros2 param set /right/hand_control_server realtime_response_enabled false
+```
+
+### 4. 右手压力传感器
+
+右手节点会额外提供以下服务，左手不提供这些服务：
+
+```bash
+ros2 service call /right/get_normal_pressure hands_control_interfaces/srv/GetNormalPressure "{finger_id: 1}"
+ros2 service call /right/get_tangent_pressure hands_control_interfaces/srv/GetTangentPressure "{finger_id: 1}"
+ros2 service call /right/get_approaching_value hands_control_interfaces/srv/GetApproachingValue "{finger_id: 1}"
+```
+
+### 5. 命令行调用 Action
 
 #### 控制手指移动
 
