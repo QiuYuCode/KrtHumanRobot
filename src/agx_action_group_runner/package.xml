@@ -10,6 +10,7 @@
   <depend>rclpy</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
+  <depend>std_srvs</depend>
   <depend>agx_arm_msgs</depend>
   <depend>agx_action_group_interfaces</depend>
   <depend>launch</depend>

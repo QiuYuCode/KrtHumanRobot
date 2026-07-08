@@ -5,6 +5,8 @@ import rclpy
 from rclpy.action import ActionServer
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rcl_interfaces.msg import SetParametersResult
+from std_srvs.srv import Trigger
 
 try:
     from dexhand import DexHand021S
@@ -14,6 +16,15 @@ except ImportError:
     DEXHAND_AVAILABLE = False
 
 from hands_control_interfaces.action import HandControl, ResetHand
+from hands_control_interfaces.srv import (
+    GetApproachingValue,
+    GetDeviceId,
+    GetDeviceString,
+    GetFingerValue,
+    GetNormalPressure,
+    GetTangentPressure,
+    SetFingerValue,
+)
 
 
 class HandControlServer(Node):
@@ -32,11 +43,21 @@ class HandControlServer(Node):
         self.declare_parameter('adapter_index', 0)
         self.declare_parameter('device_id', 0x01)
         self.declare_parameter('hand_name', '')
+        self.declare_parameter('listen_enabled', False)
+        self.declare_parameter('realtime_response_enabled', False)
+        self.declare_parameter('has_pressure_sensor', False)
 
         adapter_type_str = self.get_parameter('adapter_type').value
         self.adapter_index = int(self.get_parameter('adapter_index').value)
         self.device_id = int(self.get_parameter('device_id').value)
         self.hand_name = self.get_parameter('hand_name').value
+        self.listen_enabled = bool(self.get_parameter('listen_enabled').value)
+        self.realtime_response_enabled = bool(
+            self.get_parameter('realtime_response_enabled').value
+        )
+        self.has_pressure_sensor = bool(
+            self.get_parameter('has_pressure_sensor').value
+        )
 
         # 转换 adapter_type
         self.adapter_type = self._parse_adapter_type(adapter_type_str)
@@ -49,13 +70,16 @@ class HandControlServer(Node):
                 adapter_type=self.adapter_type,
                 adapter_index=self.adapter_index
             )
-            self.hand.listen(enable=True)
-            self.hand.enable_realtime_response(
-                device_id=self.device_id,
-                enable=True
-            )
             if not self.hand_name:
                 self.hand_name = '左手' if self.adapter_index == 0 else '右手'
+            self._parameter_callback = self.add_on_set_parameters_callback(
+                self._handle_parameter_update
+            )
+            self._apply_runtime_state(
+                listen_enabled=self.listen_enabled,
+                realtime_response_enabled=self.realtime_response_enabled,
+                force=True,
+            )
             self.get_logger().info(
                 f'{self.hand_name}初始化成功 '
                 f'(adapter_index={self.adapter_index}, device_id={self.device_id})'
@@ -84,6 +108,40 @@ class HandControlServer(Node):
             callback_group=callback_group
         )
 
+        self._get_device_id_service = self.create_service(
+            GetDeviceId,
+            'get_device_id',
+            self._handle_get_device_id,
+        )
+        self._get_firmware_version_service = self.create_service(
+            GetDeviceString,
+            'get_firmware_version',
+            self._handle_get_firmware_version,
+        )
+        self._clear_error_service = self.create_service(
+            Trigger,
+            'clear_error',
+            self._handle_clear_error,
+        )
+        self._register_finger_services()
+
+        if self.has_pressure_sensor:
+            self._normal_pressure_service = self.create_service(
+                GetNormalPressure,
+                'get_normal_pressure',
+                self._handle_normal_pressure,
+            )
+            self._tangent_pressure_service = self.create_service(
+                GetTangentPressure,
+                'get_tangent_pressure',
+                self._handle_tangent_pressure,
+            )
+            self._approaching_value_service = self.create_service(
+                GetApproachingValue,
+                'get_approaching_value',
+                self._handle_approaching_value,
+            )
+
         self.get_logger().info('手部控制 Action Server 已启动')
 
     def _parse_adapter_type(self, adapter_type_str):
@@ -103,6 +161,325 @@ class HandControlServer(Node):
             except Exception:
                 positions.append(0)
         return positions
+
+    def _validate_finger_id(self, finger_id):
+        """校验手指编号."""
+        return finger_id in [0x01, 0x02, 0x03]
+
+    def _register_finger_services(self):
+        """注册按手指读取/设置的 SDK 服务."""
+        get_services = {
+            'get_safe_current': self.hand.get_safe_current,
+            'get_safe_temperature': self.hand.get_safe_temperature,
+            'get_error_code': self.hand.get_error_code,
+            'get_motor_current': self.hand.get_motor_current,
+            'get_motor_velocity': self.hand.get_motor_velocity,
+            'get_motor_temperature': self.hand.get_motor_temperature,
+            'get_joint_degree': self.hand.get_joint_degree,
+        }
+        set_services = {
+            'set_safe_current': (
+                self.hand.set_safe_current,
+                200,
+                800,
+                'max_current',
+            ),
+            'set_safe_temperature': (
+                self.hand.set_safe_temperature,
+                55,
+                85,
+                'max_temperature',
+            ),
+        }
+
+        self._finger_get_services = [
+            self.create_service(
+                GetFingerValue,
+                service_name,
+                self._make_get_finger_value_handler(service_name, sdk_method),
+            )
+            for service_name, sdk_method in get_services.items()
+        ]
+        self._finger_set_services = [
+            self.create_service(
+                SetFingerValue,
+                service_name,
+                self._make_set_finger_value_handler(
+                    service_name,
+                    sdk_method,
+                    min_value,
+                    max_value,
+                    value_name,
+                ),
+            )
+            for service_name, (
+                sdk_method,
+                min_value,
+                max_value,
+                value_name,
+            ) in set_services.items()
+        ]
+
+    def _handle_get_device_id(self, request, response):
+        """读取指定通道上的设备 ID."""
+        try:
+            with self.comm_lock:
+                response.device_id = int(self.hand.get_device_id(request.channel))
+            response.success = True
+            response.error_message = ''
+        except Exception as e:
+            response.success = False
+            response.device_id = 0
+            response.error_message = str(e)
+        return response
+
+    def _handle_get_firmware_version(self, request, response):
+        """读取固件版本."""
+        del request
+        try:
+            with self.comm_lock:
+                response.value = str(
+                    self.hand.get_firmware_version(self.device_id)
+                )
+            response.success = True
+            response.error_message = ''
+        except Exception as e:
+            response.success = False
+            response.value = ''
+            response.error_message = str(e)
+        return response
+
+    def _handle_clear_error(self, request, response):
+        """清除当前设备错误."""
+        del request
+        try:
+            with self.comm_lock:
+                self.hand.clear_error(self.device_id)
+            response.success = True
+            response.message = f'{self.hand_name} 已清除错误'
+        except Exception as e:
+            response.success = False
+            response.message = str(e)
+        return response
+
+    def _make_get_finger_value_handler(self, service_name, sdk_method):
+        """创建按手指读取数值的服务回调."""
+        def handler(request, response):
+            finger_id = int(request.finger_id)
+            if not self._validate_finger_id(finger_id):
+                response.success = False
+                response.value = 0.0
+                response.error_message = (
+                    f'无效的 finger_id: {finger_id} (支持 1,2,3)'
+                )
+                return response
+
+            try:
+                with self.comm_lock:
+                    response.value = float(
+                        sdk_method(self.device_id, finger_id)
+                    )
+                response.success = True
+                response.error_message = ''
+            except Exception as e:
+                self.get_logger().error(
+                    f'{self.hand_name} {service_name} 失败 '
+                    f'finger_id={finger_id}: {str(e)}'
+                )
+                response.success = False
+                response.value = 0.0
+                response.error_message = str(e)
+            return response
+
+        return handler
+
+    def _make_set_finger_value_handler(
+        self,
+        service_name,
+        sdk_method,
+        min_value,
+        max_value,
+        value_name,
+    ):
+        """创建按手指设置数值的服务回调."""
+        def handler(request, response):
+            finger_id = int(request.finger_id)
+            value = int(request.value)
+            if not self._validate_finger_id(finger_id):
+                response.success = False
+                response.error_message = (
+                    f'无效的 finger_id: {finger_id} (支持 1,2,3)'
+                )
+                return response
+            if value < min_value or value > max_value:
+                response.success = False
+                response.error_message = (
+                    f'{value_name} 超出范围: {value} '
+                    f'(支持 {min_value}-{max_value})'
+                )
+                return response
+
+            try:
+                with self.comm_lock:
+                    sdk_method(self.device_id, finger_id, value)
+                response.success = True
+                response.error_message = ''
+            except Exception as e:
+                self.get_logger().error(
+                    f'{self.hand_name} {service_name} 失败 '
+                    f'finger_id={finger_id}, value={value}: {str(e)}'
+                )
+                response.success = False
+                response.error_message = str(e)
+            return response
+
+        return handler
+
+    def _pressure_response(self, value, response):
+        """填充压力服务成功响应."""
+        response.success = True
+        response.available = True
+        response.value = float(value)
+        response.error_message = ''
+        return response
+
+    def _pressure_error(self, message, response, available=True):
+        """填充压力服务失败响应."""
+        response.success = False
+        response.available = available
+        response.value = 0.0
+        response.error_message = message
+        return response
+
+    def _handle_normal_pressure(self, request, response):
+        """查询法向压力."""
+        return self._handle_pressure_query('normal', request, response)
+
+    def _handle_tangent_pressure(self, request, response):
+        """查询切向压力."""
+        return self._handle_pressure_query('tangent', request, response)
+
+    def _handle_approaching_value(self, request, response):
+        """查询接近觉读数."""
+        return self._handle_pressure_query('approach', request, response)
+
+    def _handle_pressure_query(self, metric, request, response):
+        """读取指定压力传感器数据."""
+        finger_id = int(request.finger_id)
+        if not self._validate_finger_id(finger_id):
+            return self._pressure_error(
+                f'无效的 finger_id: {finger_id} (支持 1,2,3)',
+                response,
+            )
+
+        try:
+            with self.comm_lock:
+                if metric == 'normal':
+                    value = self.hand.get_normal_pressure(self.device_id, finger_id)
+                elif metric == 'tangent':
+                    value = self.hand.get_tangent_pressure(self.device_id, finger_id)
+                elif metric == 'approach':
+                    value = self.hand.get_approaching_value(self.device_id, finger_id)
+                else:
+                    return self._pressure_error(
+                        f'不支持的压力类型: {metric}',
+                        response,
+                    )
+            return self._pressure_response(value, response)
+        except Exception as e:
+            self.get_logger().error(
+                f'{self.hand_name} 压力读取失败 metric={metric}, finger_id={finger_id}: {str(e)}'
+            )
+            return self._pressure_error(str(e), response)
+
+    def _apply_runtime_state(
+        self,
+        listen_enabled,
+        realtime_response_enabled,
+        force=False,
+    ):
+        """同步底层监听和实时反馈状态."""
+        with self.comm_lock:
+            if force or listen_enabled != self.listen_enabled:
+                self.hand.listen(enable=listen_enabled)
+                self.listen_enabled = listen_enabled
+
+            if force or realtime_response_enabled != self.realtime_response_enabled:
+                self.hand.enable_realtime_response(
+                    device_id=self.device_id,
+                    enable=realtime_response_enabled
+                )
+                self.realtime_response_enabled = realtime_response_enabled
+
+    def _handle_parameter_update(self, params):
+        """处理运行时参数更新."""
+        allowed_names = {
+            'listen_enabled',
+            'realtime_response_enabled',
+        }
+        static_names = {
+            'adapter_type',
+            'adapter_index',
+            'device_id',
+            'hand_name',
+            'has_pressure_sensor',
+        }
+
+        requested_listen = self.listen_enabled
+        requested_realtime = self.realtime_response_enabled
+
+        for param in params:
+            if param.name in static_names:
+                return SetParametersResult(
+                    successful=False,
+                    reason=f'{param.name} 只允许在启动时设置'
+                )
+
+            if param.name not in allowed_names:
+                return SetParametersResult(
+                    successful=False,
+                    reason=f'不支持的参数: {param.name}'
+                )
+
+            if param.name == 'listen_enabled':
+                requested_listen = bool(param.value)
+            elif param.name == 'realtime_response_enabled':
+                requested_realtime = bool(param.value)
+
+        old_listen = self.listen_enabled
+        old_realtime = self.realtime_response_enabled
+
+        try:
+            self._apply_runtime_state(
+                listen_enabled=requested_listen,
+                realtime_response_enabled=requested_realtime,
+                force=False,
+            )
+        except Exception as e:
+            self.get_logger().error(
+                f'{self.hand_name} 参数更新失败: {str(e)}'
+            )
+            try:
+                self._apply_runtime_state(
+                    listen_enabled=old_listen,
+                    realtime_response_enabled=old_realtime,
+                    force=True,
+                )
+            except Exception as rollback_error:
+                self.get_logger().error(
+                    f'{self.hand_name} 参数回滚失败: {str(rollback_error)}'
+                )
+            return SetParametersResult(
+                successful=False,
+                reason=str(e)
+            )
+
+        self.get_logger().info(
+            f'{self.hand_name} 参数已更新: '
+            f'listen_enabled={self.listen_enabled}, '
+            f'realtime_response_enabled={self.realtime_response_enabled}'
+        )
+        return SetParametersResult(successful=True)
 
     def _execute_hand_control(self, goal_handle):
         """执行手部控制 action."""
@@ -143,8 +520,7 @@ class HandControlServer(Node):
         try:
             with self.comm_lock:
                 # 清除错误并移动手指
-                for fid in target_fingers:
-                    hand.clear_error(device_id, fid)
+                hand.clear_error(device_id)
 
                 self.get_logger().info(
                     f'{hand_name} - 手指 {target_fingers} 移动到位置 {position}, '
@@ -226,8 +602,7 @@ class HandControlServer(Node):
                 feedback_msg.status = f'清除 {hand_name} 错误'
                 goal_handle.publish_feedback(feedback_msg)
 
-                for finger_id in [0x01, 0x02, 0x03]:
-                    hand.clear_error(device_id, finger_id)
+                hand.clear_error(device_id)
 
                 # 重置关节
                 feedback_msg.status = f'重置 {hand_name} 关节'
@@ -267,6 +642,15 @@ def main(args=None):
     except KeyboardInterrupt:
         pass
     finally:
+        if hasattr(node, 'hand'):
+            try:
+                node._apply_runtime_state(
+                    listen_enabled=False,
+                    realtime_response_enabled=False,
+                    force=True,
+                )
+            except Exception:
+                pass
         node.destroy_node()
         rclpy.shutdown()
 

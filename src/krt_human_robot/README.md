@@ -10,6 +10,7 @@
 - `krt_human_robot/behaviors/voice.py`：语音行为树适配，只调用 `/voice/...` topic/service/action。
 - `krt_human_robot/adapters`：相机、雷达、底盘、导航、机械臂等 ROS 接口适配入口预留。
 - `config/krt_human_robot.yaml`：整机行为树、意图、LLM、动作开关和功能包接口名。
+- 夹爪动作现在通过 `hands_control` 的 ROS action 走，右手压力读数通过 ROS service 走。
 
 依赖方向固定为：`krt_human_robot` 调用功能包 ROS 接口；功能包不反向依赖核心包。
 
@@ -25,6 +26,9 @@ ros2 launch krt_human_robot robot.launch.py
 # 只测核心，不启动语音栈
 ros2 launch krt_human_robot robot.launch.py enable_voice_stack:=false
 
+# 不启动手部控制栈
+ros2 launch krt_human_robot robot.launch.py enable_hands_control_stack:=false
+
 # 不启动相机栈
 ros2 launch krt_human_robot robot.launch.py enable_camera_stack:=false
 ```
@@ -34,6 +38,7 @@ ros2 launch krt_human_robot robot.launch.py enable_camera_stack:=false
 - `config_file`：核心配置，默认 `config/krt_human_robot.yaml`。
 - `voice_config_file`：语音栈配置，默认 `voice_assistant/config/voice_assistant.yaml`。
 - `enable_voice_stack`：是否一起启动语音栈。
+- `enable_hands_control_stack`：是否一起启动左右手控制栈，默认开启。
 - `enable_camera_stack`：是否一起启动 RealSense 和左右手 USB 相机。
 - `core_start_delay_s`：相机/语音栈启动后延迟多少秒启动核心。
 

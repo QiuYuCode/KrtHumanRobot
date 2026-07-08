@@ -33,6 +33,16 @@ source install/setup.bash
 ros2 launch hands_control hand_control_launch.py
 ```
 
+如需在启动时直接控制监听和自动反馈状态：
+
+```bash
+ros2 launch hands_control hand_control_launch.py \
+    left_hand_listen:=false \
+    right_hand_listen:=false \
+    left_hand_realtime_response:=false \
+    right_hand_realtime_response:=false
+```
+
 ### 4. 测试控制
 
 **终端 1 - 运行测试客户端:**
@@ -70,6 +80,57 @@ ros2 action send_goal /left/reset_hand hands_control_interfaces/action/ResetHand
     "{adapter_index: 0}" --feedback
 ```
 
+### 5. 控制监听与自动反馈
+
+默认监听和自动反馈关闭，需要时通过参数服务器打开或关闭：
+
+```bash
+source install/setup.bash
+
+# 开启左手监听
+ros2 param set /left/hand_control_server listen_enabled true
+
+# 关闭左手监听
+ros2 param set /left/hand_control_server listen_enabled false
+
+# 开启左手自动反馈
+ros2 param set /left/hand_control_server realtime_response_enabled true
+
+# 关闭左手自动反馈
+ros2 param set /left/hand_control_server realtime_response_enabled false
+```
+
+右手节点同理，把路径换成 `/right/hand_control_server`。
+
+### 6. 读取右手压力数据
+
+```bash
+source install/setup.bash
+
+ros2 service call /right/get_normal_pressure hands_control_interfaces/srv/GetNormalPressure "{finger_id: 1}"
+ros2 service call /right/get_tangent_pressure hands_control_interfaces/srv/GetTangentPressure "{finger_id: 1}"
+ros2 service call /right/get_approaching_value hands_control_interfaces/srv/GetApproachingValue "{finger_id: 1}"
+```
+
+左手没有压力和接近觉传感器，所以不会提供这些服务。
+
+### 7. 查询状态、设置安全阈值和清错
+
+```bash
+source install/setup.bash
+
+ros2 service call /right/get_device_id hands_control_interfaces/srv/GetDeviceId "{channel: 0}"
+ros2 service call /right/get_firmware_version hands_control_interfaces/srv/GetDeviceString "{}"
+ros2 service call /right/get_motor_current hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_motor_velocity hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_motor_temperature hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_joint_degree hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/get_error_code hands_control_interfaces/srv/GetFingerValue "{finger_id: 1}"
+ros2 service call /right/set_safe_current hands_control_interfaces/srv/SetFingerValue "{finger_id: 1, value: 250}"
+ros2 service call /right/set_safe_temperature hands_control_interfaces/srv/SetFingerValue "{finger_id: 1, value: 85}"
+ros2 service call /right/clear_error std_srvs/srv/Trigger "{}"
+```
+
 ## 常用命令
 
 ### 查看 Action 接口
@@ -89,8 +150,10 @@ ros2 interface show hands_control_interfaces/action/ResetHand
 ros2 action list
 
 # 查看 action 详细信息
-ros2 action info /hand_control
-ros2 action info /reset_hand
+ros2 action info /left/hand_control
+ros2 action info /right/hand_control
+ros2 action info /left/reset_hand
+ros2 action info /right/reset_hand
 ```
 
 ### 监控话题
@@ -100,7 +163,8 @@ ros2 action info /reset_hand
 ros2 node list
 
 # 查看节点信息
-ros2 node info /hand_control_server
+ros2 node info /left/hand_control_server
+ros2 node info /right/hand_control_server
 ```
 
 ## 参数配置
@@ -236,15 +300,18 @@ ls /path/to/dexhand_sdk_python/cpp/sdk/lib/linux/x86_64/libdexhand.so
 ```bash
 ros2 action list
 # 应该看到:
-# /hand_control
-# /reset_hand
+# /left/hand_control
+# /left/reset_hand
+# /right/hand_control
+# /right/reset_hand
 ```
 
 **检查节点状态:**
 ```bash
 ros2 node list
 # 应该看到:
-# /hand_control_server
+# /left/hand_control_server
+# /right/hand_control_server
 ```
 
 ### 问题 4: 权限错误

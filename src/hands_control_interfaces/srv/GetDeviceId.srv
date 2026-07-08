@@ -1,0 +1,5 @@
+uint8 channel
+---
+bool success
+uint8 device_id
+string error_message

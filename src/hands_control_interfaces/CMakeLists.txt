@@ -8,14 +8,20 @@ endif()
 # find dependencies
 find_package(ament_cmake REQUIRED)
 find_package(action_msgs REQUIRED)
-find_package(std_msgs REQUIRED)
 find_package(rosidl_default_generators REQUIRED)
 
 # Generate action interfaces
 rosidl_generate_interfaces(${PROJECT_NAME}
   "action/HandControl.action"
   "action/ResetHand.action"
-  DEPENDENCIES action_msgs std_msgs
+  "srv/GetNormalPressure.srv"
+  "srv/GetTangentPressure.srv"
+  "srv/GetApproachingValue.srv"
+  "srv/GetDeviceId.srv"
+  "srv/GetDeviceString.srv"
+  "srv/GetFingerValue.srv"
+  "srv/SetFingerValue.srv"
+  DEPENDENCIES action_msgs
 )
 
 ament_export_dependencies(rosidl_default_runtime)

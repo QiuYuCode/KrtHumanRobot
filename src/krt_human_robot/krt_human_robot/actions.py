@@ -92,11 +92,13 @@ class CorePlanExecutor(Behaviour):
                 arm_side=args.get("arm_side"),
                 operation=args.get("operation"),
                 group_name=args.get("group_name"),
+                node=self._node,
             )
         if name == "control_gripper":
             return execute_gripper_action(
                 self._config,
                 {"hand": args.get("hand", ""), "action": args.get("action", "")},
+                node=self._node,
             )
         if name == "exit_conversation":
             return "好的，我先休息了。"

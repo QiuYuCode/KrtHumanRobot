@@ -390,6 +390,12 @@ class RobotConfig:
     })
     robot_arm_teach_save_dir: str = "captures/arm_teach"
     robot_arm_teach_file_template: str = "{arm}_teach_records.json"
+    robot_arm_teach_start_service: str = "/agx_action_group/start_teach"
+    robot_arm_teach_stop_service: str = "/agx_action_group/stop_teach"
+    robot_arm_teach_service_timeout_s: float = 8.0
+    robot_arm_action_group_action: str = "/agx_action_group/run_action_group"
+    robot_arm_action_timeout_s: float = 60.0
+    robot_arm_action_repeat_count: int = 1
     robot_arm_sample_interval_s: float = 0.005
     robot_arm_replay_speed_percent: int = 50
     robot_arm_replay_use_timing: bool = True
