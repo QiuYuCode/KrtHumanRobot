@@ -143,8 +143,7 @@ class HandControlServer(Node):
         try:
             with self.comm_lock:
                 # 清除错误并移动手指
-                for fid in target_fingers:
-                    hand.clear_error(device_id, fid)
+                hand.clear_error(device_id)
 
                 self.get_logger().info(
                     f'{hand_name} - 手指 {target_fingers} 移动到位置 {position}, '
@@ -226,8 +225,7 @@ class HandControlServer(Node):
                 feedback_msg.status = f'清除 {hand_name} 错误'
                 goal_handle.publish_feedback(feedback_msg)
 
-                for finger_id in [0x01, 0x02, 0x03]:
-                    hand.clear_error(device_id, finger_id)
+                hand.clear_error(device_id)
 
                 # 重置关节
                 feedback_msg.status = f'重置 {hand_name} 关节'

@@ -25,9 +25,20 @@ class HandControlClient(Node):
         """根据 adapter_index 获取对应的 action clients."""
         if adapter_index not in [0, 1]:
             raise ValueError(f'无效的 adapter_index: {adapter_index} (只支持 0 或 1)')
-        return self._hand_control_clients[adapter_index], self._reset_hand_clients[adapter_index]
+        return (
+            self._hand_control_clients[adapter_index],
+            self._reset_hand_clients[adapter_index],
+        )
 
-    def send_hand_control_goal(self, adapter_index, finger_id, position, speed=600, force=0x55, wait_time=10):
+    def send_hand_control_goal(
+        self,
+        adapter_index,
+        finger_id,
+        position,
+        speed=600,
+        force=0x55,
+        wait_time=10,
+    ):
         """发送手部控制目标."""
         hand_client, _ = self._get_clients(adapter_index)
         goal_msg = HandControl.Goal()
