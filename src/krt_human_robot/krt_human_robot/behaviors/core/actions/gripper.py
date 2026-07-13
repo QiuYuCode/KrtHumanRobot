@@ -402,6 +402,18 @@ class GripperAction(Behaviour):
         super().__init__(name)
         self._config = config
         self._node = None
+        self._manager = None
+        self._side = None
+        self._action = None
+        self._goals = []
+        self._goal_index = 0
+        self._goal_future = None
+        self._result_future = None
+        self._pressure_future = None
+        self._pressure_index = 0
+        self._pressure_values = []
+        self._ready_at = 0.0
+        self._deadline = 0.0
         self.blackboard = self.attach_blackboard_client(
             name="GripperAction", namespace="dialog"
         )
@@ -418,21 +430,203 @@ class GripperAction(Behaviour):
     def setup(self, **kwargs):
         self._node = kwargs.get("node")
         if self._node is not None:
-            _get_manager(self._config, self._node)
+            self._manager = _get_manager(self._config, self._node)
+
+    def initialise(self) -> None:
+        """Prepare goals; later ticks poll their futures without blocking ROS."""
+        self._goals = []
+        self._goal_index = 0
+        self._goal_future = None
+        self._result_future = None
+        self._pressure_future = None
+        self._pressure_index = 0
+        self._pressure_values = []
+        self._ready_at = 0.0
+        self._deadline = time.time()
+
+        command = self.blackboard.user_command
+        self._side, self._action = _parse_side_action(command)
+        if not self._config.gripper_enabled:
+            self.blackboard.response_text = "夹爪功能未启用。"
+            return
+        if self._side is None:
+            self.blackboard.response_text = self._config.tts_responses.get(
+                "gripper_missing_side", "请说明左手还是右手。"
+            )
+            return
+        if self._action not in {"shake", "open", "handshake"}:
+            self.blackboard.response_text = (
+                "夹爪动作暂不支持，可以说动动、动一下、张开、放一下、握手、握一下。"
+            )
+            return
+
+        if self._manager is None:
+            self.blackboard.response_text = "夹爪 ROS 管理器尚未初始化。"
+            return
+
+        close = int(self._config.gripper_close_value)
+        opened = int(self._config.gripper_open_value)
+        close_pause = float(getattr(self._config, "gripper_shake_pause_close", 0.5))
+        open_pause = float(getattr(self._config, "gripper_shake_pause_open", 0.5))
+        if self._action == "open":
+            moves = [
+                (opened, int(self._config.gripper_speed_open), max(open_pause, 0.35))
+            ]
+        elif self._action == "handshake":
+            moves = [
+                (
+                    close,
+                    int(self._config.gripper_speed_close),
+                    max(0.35, close_pause * 0.5),
+                )
+            ]
+        else:
+            moves = [
+                move
+                for _ in range(max(1, int(self._config.gripper_shake_cycles)))
+                for move in (
+                    (close, int(self._config.gripper_speed_close), close_pause),
+                    (opened, int(self._config.gripper_speed_open), open_pause),
+                )
+            ]
+        self._goals = self._build_goals(moves)
+        spec = self._manager._hand_spec(self._side)
+        logger.info(
+            "执行夹爪动作: side={}, action={}, device_id={}",
+            self._side,
+            self._action,
+            spec.device_id,
+        )
+
+    def _build_goals(self, moves: list[tuple[int, int, float]]):
+        finger_ids = [int(fid) for fid in self._config.gripper_finger_ids]
+        spec = self._manager._hand_spec(self._side)
+        goals = []
+        for target, speed, pause in moves:
+            ids = [0] if finger_ids == [1, 2, 3] else finger_ids
+            for index, finger_id in enumerate(ids):
+                goal = HandControl.Goal()
+                goal.adapter_index = spec.adapter_index
+                goal.finger_id = finger_id
+                goal.position = target
+                goal.speed = speed
+                goal.force = int(self._config.gripper_control_mode)
+                goal.wait_time = int(self._config.gripper_exec_delay_ms)
+                inter_delay = float(self._config.gripper_inter_finger_delay)
+                goals.append((goal, pause if index + 1 == len(ids) else inter_delay))
+        return goals
+
+    def _action_timeout(self) -> float:
+        return max(5.0, float(self._config.gripper_exec_delay_ms) * 0.1 + 5.0)
+
+    def _finish(self) -> Status:
+        side_text = "左" if self._side == "left" else "右"
+        if self._action == "open":
+            self.blackboard.response_text = f"{side_text}手已张开。"
+        elif self._action == "handshake":
+            self.blackboard.response_text = (
+                f"{side_text}手已握紧。{self._pressure_text()}"
+            )
+        else:
+            self.blackboard.response_text = (
+                f"{side_text}手动了一下。{self._pressure_text()}"
+            )
+        return Status.SUCCESS
+
+    def _pressure_text(self) -> str:
+        if not self._pressure_values:
+            return ""
+        peak = max(abs(value) for value in self._pressure_values)
+        if peak < 1e-6:
+            return "压力读数接近零。"
+        if peak < 0.5:
+            return "压力读数较低。"
+        return "压力读数已更新。"
+
+    def _poll_pressure(self) -> Status | None:
+        spec = self._manager._hand_spec(self._side)
+        finger_ids = [int(fid) for fid in self._config.gripper_finger_ids]
+        if not spec.has_pressure_sensor or self._pressure_index >= len(finger_ids):
+            return self._finish()
+
+        client = self._manager._pressure_client(self._side, "normal")
+        if self._pressure_future is None:
+            if not client.service_is_ready():
+                return self._finish()
+            request = client.srv_type.Request()
+            request.finger_id = finger_ids[self._pressure_index]
+            self._pressure_future = client.call_async(request)
+            self._deadline = time.time() + 2.0
+            return Status.RUNNING
+        if not self._pressure_future.done():
+            if time.time() > self._deadline:
+                logger.warning("压力读取超时: side={}", self._side)
+                self._pressure_future = None
+                self._pressure_index += 1
+            return Status.RUNNING
+
+        response = self._pressure_future.result()
+        self._pressure_future = None
+        if response is not None and response.success and response.available:
+            self._pressure_values.append(float(response.value))
+        self._pressure_index += 1
+        return Status.RUNNING
 
     def update(self) -> Status:
         if self.blackboard.intent != "gripper_control":
             return Status.FAILURE
+        if not self._goals:
+            return Status.SUCCESS
 
         try:
-            command = self.blackboard.user_command
-            self.blackboard.response_text = execute_gripper_action(
-                self._config,
-                command,
-                node=self._node,
-            )
-            return Status.SUCCESS
-        except Exception as e:
+            now = time.time()
+            if self._result_future is not None:
+                if not self._result_future.done():
+                    if now > self._deadline:
+                        raise RuntimeError(
+                            f"动作执行超时: /{self._side}/hand_control"
+                        )
+                    return Status.RUNNING
+                result = self._result_future.result().result
+                self._result_future = None
+                if not result.success:
+                    raise RuntimeError(result.message)
+                self._goal_index += 1
+                self._ready_at = now + self._goals[self._goal_index - 1][1]
+
+            if self._goal_future is not None:
+                if not self._goal_future.done():
+                    if now > self._deadline:
+                        raise RuntimeError(
+                            f"动作目标发送超时: /{self._side}/hand_control"
+                        )
+                    return Status.RUNNING
+                goal_handle = self._goal_future.result()
+                self._goal_future = None
+                if goal_handle is None or not goal_handle.accepted:
+                    raise RuntimeError(
+                        f"动作目标被拒绝: /{self._side}/hand_control"
+                    )
+                self._result_future = goal_handle.get_result_async()
+                self._deadline = now + self._action_timeout()
+                return Status.RUNNING
+
+            if self._goal_index >= len(self._goals):
+                return self._poll_pressure()
+            if now < self._ready_at:
+                return Status.RUNNING
+
+            client = self._manager._hand_client(self._side)
+            if not client.server_is_ready():
+                if now > self._deadline + self._action_timeout():
+                    raise RuntimeError(
+                        f"动作服务器不可用: /{self._side}/hand_control"
+                    )
+                return Status.RUNNING
+            self._goal_future = client.send_goal_async(self._goals[self._goal_index][0])
+            self._deadline = now + self._action_timeout()
+            return Status.RUNNING
+        except Exception as exc:
             logger.exception("夹爪控制失败")
-            self.blackboard.response_text = f"夹爪控制失败: {e}"
+            self.blackboard.response_text = f"夹爪控制失败: {exc}"
             return Status.SUCCESS
