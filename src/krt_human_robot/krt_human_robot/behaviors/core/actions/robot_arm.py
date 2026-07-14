@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import time
 from dataclasses import dataclass
 from typing import Any
 
@@ -92,6 +93,14 @@ class RobotArmTeachManager:
             raise RuntimeError(res.message)
         return f"{'左臂' if side == 'left' else '右臂'}已进入示教模式，请拖动机械臂完成示教。"
 
+    def start_teach_async(self, side: str, group_name: str | None):
+        if not self._start_client.service_is_ready():
+            return None
+        req = StartTeach.Request()
+        req.arm_target = side
+        req.group_name = group_name or ""
+        return self._start_client.call_async(req)
+
     def exit_teach(self, side: str | None, group_name: str | None) -> str:
         resolved_side = _normalize_side(side) or ""
         req = StopTeach.Request()
@@ -108,6 +117,14 @@ class RobotArmTeachManager:
         if resolved_side in {"left", "right"}:
             side_text = "左臂" if resolved_side == "left" else "右臂"
         return f"{side_text}已退出示教，动作组“{res.group_name}”已保存。"
+
+    def stop_teach_async(self, side: str | None, group_name: str | None):
+        if not self._stop_client.service_is_ready():
+            return None
+        req = StopTeach.Request()
+        req.arm_target = _normalize_side(side) or ""
+        req.group_name = group_name or ""
+        return self._stop_client.call_async(req)
 
     def run_group(self, side: str, group_name: str) -> str:
         timeout = float(getattr(self._config, "robot_arm_action_timeout_s", 60.0))
@@ -212,6 +229,7 @@ def resolve_keyword_robot_arm_action(
 
 
 def parse_robot_arm_command(command: str) -> ParsedRobotArmCommand:
+    command = command.replace("试教", "示教")
     side = None
     if any(k in command for k in ["左臂", "左手", "左边", "左机械臂"]):
         side = "left"
@@ -331,19 +349,94 @@ class RobotArmAction(Behaviour):
         self.blackboard.register_key(key="user_command", access=py_trees.common.Access.READ)
         self.blackboard.register_key(key="response_text", access=py_trees.common.Access.WRITE)
         self._node = None
+        self._manager = None
+        self._future = None
+        self._operation = None
+        self._side = None
+        self._group_name = None
+        self._deadline = 0.0
 
     def setup(self, **kwargs):
         self._node = kwargs.get("node")
 
+    def initialise(self):
+        self._future = None
+        self._operation = None
+        self._side = None
+        self._group_name = None
+        self._deadline = time.time() + float(
+            getattr(self._config, "robot_arm_teach_service_timeout_s", 8.0)
+        )
+
+        if self.blackboard.intent != "robot_arm":
+            return
+        command = self.blackboard.user_command
+        self.logger.info(f"执行: 机械臂控制 ({command})")
+        if not self._config.robot_arm_enabled:
+            self.blackboard.response_text = "机械臂功能未启用。"
+            return
+        parsed = parse_robot_arm_command(command)
+        self._side = parsed.arm_side
+        self._operation = parsed.operation
+        self._group_name = parsed.group_name
+        if self._operation not in {"enter_teach", "exit_teach"}:
+            return
+        if self._operation == "enter_teach" and self._side is None:
+            self.blackboard.response_text = "请说明进入示教的是左臂还是右臂。"
+            return
+        self._manager = _get_manager(self._config, self._node)
+
+    def _finish_teach(self, result) -> Status:
+        if result is None:
+            self.blackboard.response_text = "机械臂操作失败：服务调用失败。"
+        elif not result.success:
+            self.blackboard.response_text = f"机械臂操作失败：{result.message}"
+        elif self._operation == "enter_teach":
+            side_text = "左臂" if self._side == "left" else "右臂"
+            self.blackboard.response_text = f"{side_text}已进入示教模式，请拖动机械臂完成示教。"
+        else:
+            side_text = {"left": "左臂", "right": "右臂"}.get(self._side, "机械臂")
+            if result.sample_count and result.group_name:
+                self.blackboard.response_text = (
+                    f"{side_text}已退出示教，动作组“{result.group_name}”已保存。"
+                )
+            elif result.group_name:
+                self.blackboard.response_text = f"{side_text}已退出示教，但未录到动作，未保存。"
+            else:
+                self.blackboard.response_text = f"{side_text}已退出示教，未提供动作名，未保存。"
+        return Status.SUCCESS
+
     def update(self):
         if self.blackboard.intent != "robot_arm":
             return Status.FAILURE
-        command = self.blackboard.user_command
-        self.logger.info(f"执行: 机械臂控制 ({command})")
+        if self._operation in {"enter_teach", "exit_teach"}:
+            if self._manager is None:
+                return Status.SUCCESS
+            if self._future is None:
+                self._future = (
+                    self._manager.start_teach_async(self._side, self._group_name)
+                    if self._operation == "enter_teach"
+                    else self._manager.stop_teach_async(self._side, self._group_name)
+                )
+                if self._future is None:
+                    if time.time() > self._deadline:
+                        self.blackboard.response_text = "机械臂操作失败：示教服务不可用。"
+                        return Status.SUCCESS
+                    return Status.RUNNING
+            if not self._future.done():
+                if time.time() > self._deadline:
+                    self.blackboard.response_text = "机械臂操作失败：示教服务超时。"
+                    return Status.SUCCESS
+                return Status.RUNNING
+            try:
+                return self._finish_teach(self._future.result())
+            except Exception as exc:
+                self.blackboard.response_text = f"机械臂操作失败：{exc}"
+                return Status.SUCCESS
         try:
             self.blackboard.response_text = execute_robot_arm(
                 config=self._config,
-                action=command,
+                action=self.blackboard.user_command,
                 node=self._node,
             )
         except Exception as exc:

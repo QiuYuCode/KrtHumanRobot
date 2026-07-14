@@ -1,0 +1,16 @@
+routines:
+  唱跳表演:
+    type: sequence
+    steps:
+      - type: speak
+        text: "开始表演。"
+      - type: parallel
+        steps:
+          - type: play_audio
+            file: "~/music/song.wav"
+          - type: arm_group
+            arm_target: both
+            group_name: 跳舞
+            repeat_count: 1
+      - type: speak
+        text: "表演结束。"

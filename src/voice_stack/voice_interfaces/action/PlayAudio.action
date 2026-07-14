@@ -1,4 +1,5 @@
 voice_interfaces/VoiceAudioFrame[] chunks
+string file_path
 uint8 priority
 bool preempt_lower_priority
 ---

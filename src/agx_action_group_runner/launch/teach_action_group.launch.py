@@ -5,10 +5,8 @@ from launch_ros.actions import Node
 
 
 def generate_launch_description():
-    groups_file_arg = DeclareLaunchArgument(
-        "groups_file",
-        description="Absolute path to action groups yaml file",
-    )
+    robot_db_arg = DeclareLaunchArgument("robot_db", default_value="~/maps/krt_robot.db")
+    legacy_groups_file_arg = DeclareLaunchArgument("legacy_groups_file", default_value="")
     left_namespace_arg = DeclareLaunchArgument(
         "left_namespace", default_value="/left", description="Left arm namespace"
     )
@@ -26,7 +24,8 @@ def generate_launch_description():
         name="agx_action_group_runner",
         output="screen",
         parameters=[{
-            "groups_file": LaunchConfiguration("groups_file"),
+                "robot_db": LaunchConfiguration("robot_db"),
+                "legacy_groups_file": LaunchConfiguration("legacy_groups_file"),
             "left_namespace": LaunchConfiguration("left_namespace"),
             "right_namespace": LaunchConfiguration("right_namespace"),
             "stream_step_interval_sec": LaunchConfiguration("stream_step_interval_sec"),
@@ -40,7 +39,8 @@ def generate_launch_description():
         name="teach_action_group",
         output="screen",
         parameters=[{
-            "groups_file": LaunchConfiguration("groups_file"),
+                "robot_db": LaunchConfiguration("robot_db"),
+                "legacy_groups_file": LaunchConfiguration("legacy_groups_file"),
             "left_namespace": LaunchConfiguration("left_namespace"),
             "right_namespace": LaunchConfiguration("right_namespace"),
             "playback_step_interval_sec": LaunchConfiguration("stream_step_interval_sec"),
@@ -48,7 +48,8 @@ def generate_launch_description():
     )
 
     return LaunchDescription([
-        groups_file_arg,
+        robot_db_arg,
+        legacy_groups_file_arg,
         left_namespace_arg,
         right_namespace_arg,
         stream_step_interval_arg,

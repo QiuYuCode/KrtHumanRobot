@@ -341,6 +341,7 @@ class RobotConfig:
             "示教动作", "动作组", "回放轨迹",
             "挥手", "打招呼", "你好",
         ],
+        "routine": ["唱跳表演", "开始表演", "执行流程", "运行流程", "表演"],
         "introduce_self": ["介绍一下你自己", "介绍一下机器人", "介绍一下自己", "你是谁", "你能做什么"],
         "introduce_krt": ["介绍一下湖南科瑞特", "介绍湖南科瑞特"],
         "save_mapping": ["保存建图", "保存地图", "结束建图", "保存电图", "结束电图"],
@@ -376,6 +377,18 @@ class RobotConfig:
             "group_name": "wave",
             "response_text": "你好，很高兴见到你。",
             "priority": 120,
+        },
+    ])
+
+    # --- 命名流程 ---
+    routine_action: str = "/krt_task/run_routine"
+    routine_action_timeout_s: float = 120.0
+    routine_keyword_actions: list[dict[str, Any]] = field(default_factory=lambda: [
+        {
+            "keywords": ["唱跳表演", "开始表演", "表演一下"],
+            "routine_name": "唱跳表演",
+            "response_text": "",
+            "priority": 100,
         },
     ])
 
@@ -518,15 +531,10 @@ class RobotConfig:
             "pcd2pgm_resolution": 0.05,
             "pcd2pgm_ror_radius": 0.1,
             "pcd2pgm_ror_min_pts": 10,
-            "waypoints_file": "~/maps/waypoints.yaml",
+            "robot_db": "~/maps/krt_robot.db",
+            "waypoint_routine_action": "/krt_task/run_routine",
             "waypoint_input_topic": "/input_at_waypoint/input",
-            "waypoint_image_topic": "/camera/camera/color/image_raw",
-            "waypoint_image_dir": "~/maps/waypoint_images",
             "default_waypoint_wait_ms": 200,
-            "waypoint_tts_service": "/voice/tts/synthesize",
-            "waypoint_tts_timeout_s": 60.0,
-            "waypoint_vision_service": "/krt_human_robot/vision/describe_scene",
-            "waypoint_arm_action": "/run_action_group",
             "auto_convert_pcd": True,
             "mapping_stop_delay_s": 3.0,
         },

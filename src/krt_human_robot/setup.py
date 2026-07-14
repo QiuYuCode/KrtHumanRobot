@@ -15,6 +15,7 @@ setup(
         (os.path.join("share", package_name, "launch"), glob("launch/*.py")),
         (os.path.join("share", package_name, "config"), glob("config/*")),
         (os.path.join("share", package_name, "scripts"), glob("scripts/*.sh")),
+        (os.path.join("share", package_name, "templates"), glob("templates/*.html")),
     ],
     install_requires=["setuptools"],
     zip_safe=True,
@@ -25,6 +26,7 @@ setup(
     entry_points={
         "console_scripts": [
             "krt_human_robot_node = krt_human_robot.robot_node:main",
+            "krt_web_create_admin = krt_human_robot.web_auth:create_admin",
         ],
     },
 )

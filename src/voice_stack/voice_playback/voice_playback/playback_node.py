@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import threading
 import time
+import wave
+from pathlib import Path
 
 import numpy as np
 import rclpy
@@ -101,13 +103,46 @@ class VoicePlaybackNode(Node):
             return np.array([], dtype=np.float32), sample_rate
         return np.concatenate(pcm_list), sample_rate
 
+    @staticmethod
+    def _decode_file(file_path: str) -> tuple[np.ndarray, int]:
+        path = Path(file_path).expanduser().resolve()
+        if not path.is_file() or path.suffix.lower() != ".wav":
+            raise FileNotFoundError(f"WAV 文件不存在: {path}")
+        with wave.open(str(path), "rb") as wav_file:
+            if wav_file.getcomptype() != "NONE":
+                raise ValueError("不支持压缩 WAV")
+            channels = int(wav_file.getnchannels())
+            sample_rate = int(wav_file.getframerate())
+            width = int(wav_file.getsampwidth())
+            raw = wav_file.readframes(int(wav_file.getnframes()))
+        if width == 1:
+            samples = (np.frombuffer(raw, dtype=np.uint8).astype(np.float32) - 128) / 128
+        elif width == 2:
+            samples = np.frombuffer(raw, dtype="<i2").astype(np.float32) / 32768
+        elif width == 3:
+            data = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3)
+            values = data[:, 0].astype(np.int32) | data[:, 1].astype(np.int32) << 8
+            values |= data[:, 2].astype(np.int32) << 16
+            values = np.where(values & 0x800000, values | ~0xFFFFFF, values)
+            samples = values.astype(np.float32) / 8388608
+        elif width == 4:
+            samples = np.frombuffer(raw, dtype="<i4").astype(np.float32) / 2147483648
+        else:
+            raise ValueError(f"不支持的 WAV 位深: {width * 8} bit")
+        if channels > 1:
+            samples = samples.reshape(-1, channels).mean(axis=1)
+        return samples, sample_rate
+
     def _execute_play_audio(self, goal_handle):
         goal = goal_handle.request
         result = PlayAudio.Result()
         feedback = PlayAudio.Feedback()
         feedback.played_chunks = 0
 
-        samples, sample_rate = self._decode_chunks(goal.chunks)
+        samples, sample_rate = (
+            self._decode_file(goal.file_path)
+            if goal.file_path else self._decode_chunks(goal.chunks)
+        )
         if len(samples) == 0:
             result.success = False
             result.error_message = "播放数据为空"

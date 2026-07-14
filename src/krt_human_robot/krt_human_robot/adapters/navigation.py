@@ -223,17 +223,20 @@ class RangerNavAdapter:
         self,
         name: str | None = None,
         *,
-        task: str = "wait",
-        task_args: str = "{}",
+        routine: str = "",
     ) -> NavigationResult:
         cmd = self._waypoint_cmd(["mark"])
         if name:
             cmd.append(name)
-        cmd.extend(["--task", task, "--args", task_args])
+        if routine:
+            cmd.extend(["--routine", routine])
         result = self._call(cmd)
         if result.success:
             return NavigationResult(True, f"已保存点位{name or ''}。")
         return result
+
+    def bind_waypoint(self, name: str, routine: str) -> NavigationResult:
+        return self._call(self._waypoint_cmd(["bind", name, "--routine", routine]))
 
     def list_waypoints(self) -> NavigationResult:
         try:
@@ -507,16 +510,11 @@ class RangerNavAdapter:
     def _waypoint_cmd(self, args: list[str]) -> list[str]:
         cmd = ["ros2", "run", self._package(), "waypoint_manager"]
         options = {
-            "--file": self._cfg.get("waypoints_file"),
+            "--robot-db": self._cfg.get("robot_db"),
             "--navigate-action": self._cfg.get("navigate_action"),
+            "--routine-action": self._cfg.get("waypoint_routine_action"),
             "--input-topic": self._cfg.get("waypoint_input_topic"),
-            "--image-topic": self._cfg.get("waypoint_image_topic"),
-            "--image-dir": self._cfg.get("waypoint_image_dir"),
             "--default-wait-ms": self._cfg.get("default_waypoint_wait_ms"),
-            "--tts-service": self._cfg.get("waypoint_tts_service"),
-            "--tts-timeout-s": self._cfg.get("waypoint_tts_timeout_s"),
-            "--vision-service": self._cfg.get("waypoint_vision_service"),
-            "--arm-action": self._cfg.get("waypoint_arm_action"),
         }
         for key, value in options.items():
             if value is not None:

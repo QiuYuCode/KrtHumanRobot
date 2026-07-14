@@ -43,9 +43,8 @@ def generate_launch_description():
     right_installation_pos_arg = DeclareLaunchArgument(
         "right_installation_pos", default_value="right"
     )
-    groups_file_arg = DeclareLaunchArgument(
-        "groups_file", description="Absolute path to action groups yaml file"
-    )
+    robot_db_arg = DeclareLaunchArgument("robot_db", default_value="~/maps/krt_robot.db")
+    legacy_groups_file_arg = DeclareLaunchArgument("legacy_groups_file", default_value="")
 
     left_node = _arm_node("left_arm", "can_left")
     right_node = _arm_node("right_arm", "can_right")
@@ -57,7 +56,8 @@ def generate_launch_description():
         output="screen",
         parameters=[
             {
-                "groups_file": LaunchConfiguration("groups_file"),
+                "robot_db": LaunchConfiguration("robot_db"),
+                "legacy_groups_file": LaunchConfiguration("legacy_groups_file"),
                 "left_namespace": "/left_arm",
                 "right_namespace": "/right_arm",
             }
@@ -73,7 +73,8 @@ def generate_launch_description():
             speed_percent_arg,
             left_installation_pos_arg,
             right_installation_pos_arg,
-            groups_file_arg,
+            robot_db_arg,
+            legacy_groups_file_arg,
             left_node,
             right_node,
             runner,

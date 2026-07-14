@@ -10,6 +10,7 @@
   <depend>rclpy</depend>
   <depend>ament_index_python</depend>
   <depend>voice_interfaces</depend>
+  <depend>krt_task_interfaces</depend>
   <depend>agx_action_group_interfaces</depend>
   <depend>hands_control_interfaces</depend>
   <depend>std_msgs</depend>
@@ -21,6 +22,9 @@
   <exec_depend>realsense2_camera</exec_depend>
   <exec_depend>voice_assistant</exec_depend>
   <exec_depend>ranger_nav</exec_depend>
+  <exec_depend>krt_task</exec_depend>
+  <exec_depend>agx_action_group_runner</exec_depend>
+  <exec_depend>agx_arm_ctrl</exec_depend>
   <exec_depend>pcd2pgm</exec_depend>
   <exec_depend>nav2_map_server</exec_depend>
   <exec_depend>launch_ros</exec_depend>

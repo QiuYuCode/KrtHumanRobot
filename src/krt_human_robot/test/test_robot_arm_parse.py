@@ -25,6 +25,10 @@ def test_parse_teach_commands():
     assert stop.operation == "exit_teach"
     assert stop.group_name == "敬礼"
 
+    asr_stop = parse_robot_arm_command("左边的机械臂退出试教模式")
+    assert asr_stop.arm_side == "left"
+    assert asr_stop.operation == "exit_teach"
+
     run = parse_robot_arm_command("左臂回放动作组挥手")
     assert run.arm_side == "left"
     assert run.operation == "run_group"

@@ -14,6 +14,7 @@ from krt_human_robot.actions import (
     LLMDialogAction,
     NavigationAction,
     RobotArmAction,
+    RoutineAction,
 )
 from krt_human_robot.behaviors.core.actions.camera import (
     RecordVideoAction,
@@ -70,6 +71,7 @@ def _create_keyword_dialog_loop(
         RecordVideoAction("RecordVideo", config=config),
         GripperAction("Gripper", config=config),
         RobotArmAction("RobotArm", config=config),
+        RoutineAction("Routine", config=config),
         NavigationAction("Navigation", config=config),
         LLMDialogAction("LLMDialog", config=config),
         BackToWakeUp("BackToWakeUp"),

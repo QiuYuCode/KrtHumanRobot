@@ -1,5 +1,8 @@
 # Nav2 Waypoint 打点、巡航与到点任务计划
 
+> 本文记录旧版 YAML 设计。当前实现已迁移到 `~/maps/krt_robot.db`，
+> 请以 `docs/routine_runner_test_repro.md` 为准。
+
 ## Summary
 
 - 在 `ranger_nav` 实现 waypoint 数据管理、巡航执行、到点 task 分发。

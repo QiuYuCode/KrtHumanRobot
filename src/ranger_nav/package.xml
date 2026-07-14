@@ -29,8 +29,8 @@
   <exec_depend>pointcloud_to_laserscan</exec_depend>
   <exec_depend>tf2_ros</exec_depend>
   <exec_depend>cv_bridge</exec_depend>
-  <exec_depend>voice_interfaces</exec_depend>
-  <exec_depend>agx_action_group_interfaces</exec_depend>
+  <exec_depend>krt_task_interfaces</exec_depend>
+  <exec_depend>krt_task</exec_depend>
   <exec_depend>xacro</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
 

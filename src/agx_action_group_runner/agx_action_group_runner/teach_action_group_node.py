@@ -1,13 +1,10 @@
-import hashlib
-import re
-import shutil
 import threading
-from pathlib import Path
+from datetime import datetime
 from typing import Optional
 
 import rclpy
-import yaml
 from agx_action_group_interfaces.srv import StartTeach, StopTeach
+from krt_task.robot_db import RobotDatabase
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
@@ -86,7 +83,8 @@ class TeachActionGroupNode(Node):
     def __init__(self):
         super().__init__("teach_action_group")
         self.cb_group = ReentrantCallbackGroup()
-        self.declare_parameter("groups_file", "")
+        self.declare_parameter("robot_db", "~/maps/krt_robot.db")
+        self.declare_parameter("legacy_groups_file", "")
         self.declare_parameter("left_namespace", "/left")
         self.declare_parameter("right_namespace", "/right")
         self.declare_parameter("step_timeout_sec", 8.0)
@@ -94,13 +92,10 @@ class TeachActionGroupNode(Node):
         self.declare_parameter("min_joint_delta_rad", 0.01)
         self.declare_parameter("playback_step_interval_sec", 0.02)
 
-        groups_file = str(self.get_parameter("groups_file").value)
-        if not groups_file:
-            raise RuntimeError("groups_file parameter is empty")
-        self.groups_file = Path(groups_file)
-        if not self.groups_file.exists():
-            self.groups_file.parent.mkdir(parents=True, exist_ok=True)
-            self.groups_file.write_text("groups: {}\n", encoding="utf-8")
+        self.database = RobotDatabase(str(self.get_parameter("robot_db").value))
+        legacy_groups_file = str(self.get_parameter("legacy_groups_file").value)
+        if legacy_groups_file:
+            self.database.migrate_action_groups(legacy_groups_file)
         self.step_timeout_sec = float(self.get_parameter("step_timeout_sec").value)
         self.service_timeout_sec = float(self.get_parameter("service_timeout_sec").value)
         self.playback_step_interval_sec = float(
@@ -137,7 +132,7 @@ class TeachActionGroupNode(Node):
             self._stop_cb,
             callback_group=self.cb_group,
         )
-        self.get_logger().info(f"Teach action group node started. groups_file={self.groups_file}")
+        self.get_logger().info("Teach action group node started.")
 
     def _call_teach_mode(self, recorder: ArmRecorder, enabled: bool) -> tuple[bool, str]:
         if not recorder.client.wait_for_service(timeout_sec=self.service_timeout_sec):
@@ -186,9 +181,8 @@ class TeachActionGroupNode(Node):
                 return response
             group_name = str(request.group_name).strip() or self.active_group
             if not group_name:
-                response.success = False
-                response.message = "group_name is required"
-                return response
+                side_name = "左臂" if arm == "left" else "右臂"
+                group_name = f"未命名-{side_name}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
             samples = self.recorders[arm].stop()
             ok, message = self._call_teach_mode(self.recorders[arm], False)
             self.active_arm = None
@@ -198,58 +192,29 @@ class TeachActionGroupNode(Node):
             response.message = message
             return response
         if not samples:
-            response.success = False
-            response.message = "no joint samples recorded"
+            response.success = True
+            response.message = "exited teach mode; no joint samples recorded"
+            response.group_name = group_name
+            response.sample_count = 0
+            response.groups_file = str(self.database.path)
             return response
-        self._write_group(group_name, samples)
+        self._write_group(group_name, arm, samples)
         response.success = True
         response.message = f"saved action group {group_name}"
         response.group_name = group_name
         response.sample_count = len(samples)
-        response.groups_file = str(self.groups_file)
+        response.groups_file = str(self.database.path)
         return response
 
-    def _write_group(self, group_name: str, samples: list[JointState]):
-        self.groups_file.parent.mkdir(parents=True, exist_ok=True)
-        data = {}
-        if self.groups_file.exists():
-            with self.groups_file.open("r", encoding="utf-8") as f:
-                data = yaml.safe_load(f) or {}
-        groups = data.setdefault("groups", {})
-        base = re.sub(r"[^0-9A-Za-z_.-]+", "_", group_name).strip("_") or "group"
-        digest = hashlib.sha1(group_name.encode("utf-8")).hexdigest()[:8]
-        safe = f"{base}_{digest}"
-        steps_dir = self.groups_file.parent / "steps" / safe
-        if steps_dir.exists():
-            shutil.rmtree(steps_dir)
-        steps_dir.mkdir(parents=True, exist_ok=True)
-
-        steps = []
-        for idx, msg in enumerate(samples):
-            rel = Path("steps") / safe / f"step_{idx:04d}.yaml"
-            with (self.groups_file.parent / rel).open("w", encoding="utf-8") as f:
-                yaml.safe_dump(
-                    {
-                        "name": list(msg.name),
-                        "position": [float(v) for v in msg.position],
-                        "velocity": [],
-                        "effort": [],
-                    },
-                    f,
-                    allow_unicode=True,
-                    sort_keys=False,
-                )
-            steps.append({
-                "name": f"{safe}_{idx:04d}",
-                "type": "move_j",
-                "payload_file": rel.as_posix(),
-                "timeout_sec": self.step_timeout_sec,
-                "wait_reach": False,
-                "hold_sec": self.playback_step_interval_sec,
-            })
-        groups[group_name] = {"repeat_count": 1, "steps": steps}
-        with self.groups_file.open("w", encoding="utf-8") as f:
-            yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
+    def _write_group(self, group_name: str, arm: str, samples: list[JointState]):
+        self.database.save_action_group(group_name, arm, [{
+            "name": list(msg.name),
+            "position": [float(value) for value in msg.position],
+            "velocity": [], "effort": [],
+            "timeout_sec": self.step_timeout_sec,
+            "wait_reach": False,
+            "hold_sec": self.playback_step_interval_sec,
+        } for msg in samples])
 
 
 def main(args=None):

@@ -16,6 +16,7 @@ from krt_human_robot.behaviors.core.actions.gripper import GripperAction, execut
 from krt_human_robot.behaviors.core.actions.llm_dialog import LLMDialogAction
 from krt_human_robot.behaviors.core.actions.navigation import NavigationAction, execute_navigate
 from krt_human_robot.behaviors.core.actions.robot_arm import RobotArmAction, execute_robot_arm
+from krt_human_robot.behaviors.core.actions.routine import RoutineAction, execute_routine
 from krt_human_robot.behaviors.core.actions.vision import execute_describe_scene
 from krt_human_robot.behaviors.voice import speak_blocking
 from voice_interfaces.srv import SynthesizeSpeech
@@ -100,6 +101,12 @@ class CorePlanExecutor(Behaviour):
                 {"hand": args.get("hand", ""), "action": args.get("action", "")},
                 node=self._node,
             )
+        if name == "run_routine":
+            return execute_routine(
+                self._config,
+                routine_name=args.get("routine_name", ""),
+                node=self._node,
+            )
         if name == "exit_conversation":
             return "好的，我先休息了。"
         return f"未知动作: {name}"
@@ -117,4 +124,5 @@ __all__ = [
     "LLMDialogAction",
     "NavigationAction",
     "RobotArmAction",
+    "RoutineAction",
 ]

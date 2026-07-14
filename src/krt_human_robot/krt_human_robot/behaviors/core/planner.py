@@ -71,6 +71,15 @@ def _build_planner_tools():
         return "control_gripper called"
 
     @tool
+    def run_routine(routine_name: str) -> str:
+        """执行已经保存的机器人流程，如唱跳表演、迎宾展示。
+
+        Args:
+            routine_name: robot.db 中的流程名称。
+        """
+        return "run_routine called"
+
+    @tool
     def describe_scene(question: str = "请描述你看到的场景") -> str:
         """用相机拍照并分析画面内容。当用户要求看看、描述场景、识别物体时调用。
 
@@ -90,6 +99,7 @@ def _build_planner_tools():
         navigate,
         control_robot_arm,
         control_gripper,
+        run_routine,
         describe_scene,
         exit_conversation,
     ]

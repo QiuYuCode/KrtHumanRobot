@@ -1,10 +1,7 @@
-import copy
 import time
-from pathlib import Path
 from typing import Dict, List, Optional
 
 import rclpy
-import yaml
 from agx_action_group_interfaces.action import RunActionGroup
 from agx_arm_msgs.msg import AgxArmStatus
 from geometry_msgs.msg import PoseArray, PoseStamped
@@ -12,6 +9,7 @@ from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from sensor_msgs.msg import JointState
+from krt_task.robot_db import RobotDatabase
 
 
 SUPPORTED_STEP_TYPES = {"move_j", "move_p", "move_l", "move_c", "joint_states"}
@@ -75,19 +73,20 @@ class ActionGroupRunnerNode(Node):
     def __init__(self):
         super().__init__("agx_action_group_runner")
 
-        self.declare_parameter("groups_file", "")
+        self.declare_parameter("robot_db", "~/maps/krt_robot.db")
+        self.declare_parameter("legacy_groups_file", "")
         self.declare_parameter("default_step_timeout_sec", 8.0)
         self.declare_parameter("poll_interval_sec", 0.05)
         self.declare_parameter("stream_step_interval_sec", 0.02)
         self.declare_parameter("left_namespace", "/left_arm")
         self.declare_parameter("right_namespace", "/right_arm")
 
-        groups_file = self.get_parameter("groups_file").value
-        if not groups_file:
-            self.get_logger().error("Parameter 'groups_file' is required.")
-            raise RuntimeError("groups_file parameter is empty")
-
-        self.groups_file = Path(groups_file)
+        self.database = RobotDatabase(str(self.get_parameter("robot_db").value))
+        legacy_groups_file = str(self.get_parameter("legacy_groups_file").value)
+        if legacy_groups_file:
+            imported = self.database.migrate_action_groups(legacy_groups_file)
+            if imported:
+                self.get_logger().info(f"Imported {imported} legacy action groups.")
         self.default_step_timeout_sec = float(
             self.get_parameter("default_step_timeout_sec").value
         )
@@ -113,7 +112,7 @@ class ActionGroupRunnerNode(Node):
         )
 
         self.get_logger().info(
-            f"Action group runner started. groups_file={self.groups_file}, "
+            "Action group runner started. "
             f"left_ns={self.left_arm.namespace or '/'}, right_ns={self.right_arm.namespace or '/'}"
         )
 
@@ -136,31 +135,11 @@ class ActionGroupRunnerNode(Node):
         self.get_logger().info("Received cancel request.")
         return CancelResponse.ACCEPT
 
-    def _load_groups(self) -> dict:
-        if not self.groups_file.exists():
-            raise FileNotFoundError(f"groups file not found: {self.groups_file}")
-        with self.groups_file.open("r", encoding="utf-8") as f:
-            data = yaml.safe_load(f) or {}
-        groups = data.get("groups")
-        if not isinstance(groups, dict):
-            raise ValueError("YAML must contain a mapping at top-level key 'groups'")
-        return groups
-
     def _resolve_group(self, group_name: str) -> dict:
-        groups = self._load_groups()
-        if group_name not in groups:
-            raise KeyError(f"group '{group_name}' not found in {self.groups_file}")
-        group = groups[group_name]
-        if not isinstance(group, dict):
-            raise ValueError(f"group '{group_name}' must be a map")
-        if "steps" not in group or not isinstance(group["steps"], list):
-            raise ValueError(f"group '{group_name}' must provide list field 'steps'")
+        group = self.database.get_action_group(group_name)
+        if not group["samples"]:
+            raise ValueError(f"动作组 '{group_name}' 没有采样")
         return group
-
-    def _read_payload(self, rel_file: str) -> dict:
-        payload_path = (self.groups_file.parent / rel_file).resolve()
-        with payload_path.open("r", encoding="utf-8") as f:
-            return yaml.safe_load(f) or {}
 
     def _build_msg(self, step_type: str, payload: dict):
         if step_type == "move_j" or step_type == "joint_states":
@@ -226,11 +205,11 @@ class ActionGroupRunnerNode(Node):
         total_cycles: int,
         arm_target: str,
     ):
-        step_type = step.get("type")
+        step_type = step.get("type", "joint_states")
         if step_type not in SUPPORTED_STEP_TYPES:
             raise ValueError(f"Invalid step.type: {step_type}")
 
-        step_name = step.get("name", f"step_{step_index + 1}")
+        step_name = str(step.get("step_name", f"step_{step_index + 1}"))
         timeout_sec = float(step.get("timeout_sec", self.default_step_timeout_sec))
         wait_reach = bool(step.get("wait_reach", total_steps <= 50))
         hold_sec = float(
@@ -251,11 +230,7 @@ class ActionGroupRunnerNode(Node):
         goal_handle.publish_feedback(feedback)
 
         if arm_target in ("left", "right"):
-            file_key = "payload_file"
-            if file_key not in step:
-                raise ValueError(f"{step_name} needs '{file_key}'")
-            payload = self._read_payload(step[file_key])
-            msg = self._build_msg(step_type, payload)
+            msg = self._build_msg(step_type, step)
             target_arm = self.left_arm if arm_target == "left" else self.right_arm
             target_arm.publish(step_type, msg)
             if wait_reach:
@@ -263,18 +238,8 @@ class ActionGroupRunnerNode(Node):
                 if not ok:
                     raise RuntimeError(f"{step_name} did not reach target in {timeout_sec}s")
         else:
-            left_file = step.get("left_payload_file", step.get("payload_file"))
-            right_file = step.get("right_payload_file", step.get("payload_file"))
-            if not left_file or not right_file:
-                raise ValueError(
-                    f"{step_name} for both-arm target needs payload_file or "
-                    "left_payload_file/right_payload_file"
-                )
-
-            left_payload = self._read_payload(left_file)
-            right_payload = self._read_payload(right_file)
-            left_msg = self._build_msg(step_type, left_payload)
-            right_msg = self._build_msg(step_type, right_payload)
+            left_msg = self._build_msg(step_type, step)
+            right_msg = self._build_msg(step_type, step)
             self.left_arm.publish(step_type, left_msg)
             self.right_arm.publish(step_type, right_msg)
             if wait_reach:
@@ -293,7 +258,13 @@ class ActionGroupRunnerNode(Node):
         try:
             goal = goal_handle.request
             group = self._resolve_group(goal.group_name)
-            steps = copy.deepcopy(group["steps"])
+            recorded_arm = group["arm_target"]
+            if recorded_arm != "unknown" and recorded_arm != goal.arm_target:
+                raise ValueError(
+                    f"动作组 '{goal.group_name}' 录制于 {recorded_arm} 臂，"
+                    f"不能以 {goal.arm_target} 回放"
+                )
+            steps = group["samples"]
             total_steps = len(steps)
             repeat_count = int(goal.repeat_count) if goal.repeat_count > 0 else int(
                 group.get("repeat_count", 1)
@@ -309,7 +280,7 @@ class ActionGroupRunnerNode(Node):
                         result.success = False
                         result.message = "Goal canceled"
                         result.finished_cycles = cycle - 1
-                        result.failed_step = step.get("name", f"step_{step_index + 1}")
+                        result.failed_step = str(step.get("step_name", f"step_{step_index + 1}"))
                         return result
 
                     self._run_single_step(

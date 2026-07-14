@@ -24,7 +24,8 @@ kws_keywords_threshold: 0.25
 kws_num_trailing_blanks: 1
 
 vad_threshold: 0.5
-vad_min_silence_duration: 0.25
+# 语句结束静音阈值；提高到 0.8 秒以避免长指令中短暂停顿被截断。
+vad_min_silence_duration: 0.8
 vad_min_speech_duration: 0.25
 
 asr_backend: local
