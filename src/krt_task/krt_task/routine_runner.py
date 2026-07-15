@@ -234,7 +234,13 @@ class RoutineRunnerNode(Node):
             detail = getattr(response, "error_message", "") if response else ""
             self.get_logger().error(f"TTS 播报失败: {detail}")
             return False
-        return True
+        duration_s = max(0.0, float(response.estimated_duration_sec))
+        # ponytail: estimated completion plus device drain; return the playback
+        # action result from TTS if exact completion timing becomes necessary.
+        return self.wait_task(
+            goal_handle,
+            {"wait_ms": int(round((duration_s + 0.1) * 1000))},
+        )
 
     def describe(self, goal_handle, args: dict[str, Any]) -> bool:
         from voice_interfaces.srv import DescribeScene
