@@ -13,7 +13,7 @@ from typing import Any, Iterator
 import yaml
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 PARALLEL_TASKS = {"play_audio", "arm_group", "gripper", "wait"}
 TASKS = PARALLEL_TASKS | {"sequence", "parallel", "speak", "describe", "photo"}
 
@@ -106,11 +106,21 @@ class RobotDatabase:
                       created_at TEXT NOT NULL,
                       updated_at TEXT NOT NULL
                     );
-                    PRAGMA user_version = 3;
+                    CREATE TABLE gripper_settings (
+                      side TEXT PRIMARY KEY CHECK(side IN ('left', 'right')),
+                      adapter_type TEXT NOT NULL,
+                      adapter_index INTEGER NOT NULL,
+                      device_id INTEGER NOT NULL,
+                      listen_enabled INTEGER NOT NULL,
+                      realtime_response_enabled INTEGER NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    PRAGMA user_version = 4;
                     """
                 )
                 connection.commit()
-            elif version == 1:
+                return
+            if version == 1:
                 connection.executescript(
                     """
                     CREATE TABLE action_groups (
@@ -139,6 +149,23 @@ class RobotDatabase:
                     """
                 )
                 connection.commit()
+                version = 3
+            if version == 3:
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS gripper_settings (
+                      side TEXT PRIMARY KEY CHECK(side IN ('left', 'right')),
+                      adapter_type TEXT NOT NULL,
+                      adapter_index INTEGER NOT NULL,
+                      device_id INTEGER NOT NULL,
+                      listen_enabled INTEGER NOT NULL,
+                      realtime_response_enabled INTEGER NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    PRAGMA user_version = 4;
+                    """
+                )
+                connection.commit()
 
     def is_empty(self) -> bool:
         with self.connect() as connection:
@@ -148,6 +175,99 @@ class RobotDatabase:
                     "routines", "waypoints", "media", "action_groups", "gripper_actions"
                 )
             )
+
+    @staticmethod
+    def _normalize_gripper_settings(side: str, values: dict[str, Any]) -> dict[str, Any]:
+        if side not in {"left", "right"}:
+            raise ValueError("side 必须是 left 或 right")
+        allowed = {
+            "adapter_type", "adapter_index", "device_id",
+            "listen_enabled", "realtime_response_enabled",
+        }
+        unknown = set(values) - allowed
+        if unknown:
+            raise ValueError(f"不支持的夹爪设置: {', '.join(sorted(unknown))}")
+        normalized = dict(values)
+        if "adapter_type" in normalized:
+            normalized["adapter_type"] = str(normalized["adapter_type"]).upper()
+            if normalized["adapter_type"] not in {"ZLG_MINI", "ZLG_200U"}:
+                raise ValueError("adapter_type 不受支持")
+        if "adapter_index" in normalized:
+            normalized["adapter_index"] = int(normalized["adapter_index"])
+            if not 0 <= normalized["adapter_index"] <= 15:
+                raise ValueError("adapter_index 必须在 0 到 15 之间")
+        if "device_id" in normalized:
+            normalized["device_id"] = int(normalized["device_id"])
+            if not 1 <= normalized["device_id"] <= 255:
+                raise ValueError("device_id 必须在 1 到 255 之间")
+        for key in ("listen_enabled", "realtime_response_enabled"):
+            if key in normalized:
+                normalized[key] = bool(normalized[key])
+        return normalized
+
+    def ensure_gripper_settings(self, defaults: dict[str, dict[str, Any]]) -> None:
+        now = utc_now()
+        with self.connect() as connection:
+            for side, values in defaults.items():
+                normalized = self._normalize_gripper_settings(side, values)
+                missing = {
+                    "adapter_type", "adapter_index", "device_id",
+                    "listen_enabled", "realtime_response_enabled",
+                } - set(normalized)
+                if missing:
+                    raise ValueError(f"夹爪默认设置缺少: {', '.join(sorted(missing))}")
+                connection.execute(
+                    """INSERT OR IGNORE INTO gripper_settings(
+                         side, adapter_type, adapter_index, device_id,
+                         listen_enabled, realtime_response_enabled, updated_at
+                       ) VALUES(?, ?, ?, ?, ?, ?, ?)""",
+                    (
+                        side, normalized["adapter_type"], normalized["adapter_index"],
+                        normalized["device_id"], int(normalized["listen_enabled"]),
+                        int(normalized["realtime_response_enabled"]), now,
+                    ),
+                )
+            connection.commit()
+
+    def list_gripper_settings(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                "SELECT * FROM gripper_settings ORDER BY side"
+            ).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["listen_enabled"] = bool(item["listen_enabled"])
+            item["realtime_response_enabled"] = bool(
+                item["realtime_response_enabled"]
+            )
+            result.append(item)
+        return result
+
+    def get_gripper_settings(self, side: str) -> dict[str, Any]:
+        self._normalize_gripper_settings(side, {})
+        matches = [item for item in self.list_gripper_settings() if item["side"] == side]
+        if not matches:
+            raise KeyError(f"夹爪设置不存在: {side}")
+        return matches[0]
+
+    def update_gripper_settings(self, side: str, changes: dict[str, Any]) -> None:
+        normalized = self._normalize_gripper_settings(side, changes)
+        if not normalized:
+            return
+        assignments = ", ".join(f"{key}=?" for key in normalized)
+        values = [
+            int(value) if isinstance(value, bool) else value
+            for value in normalized.values()
+        ]
+        with self.connect() as connection:
+            cursor = connection.execute(
+                f"UPDATE gripper_settings SET {assignments}, updated_at=? WHERE side=?",
+                [*values, utc_now(), side],
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"夹爪设置不存在: {side}")
+            connection.commit()
 
     def list_gripper_actions(self) -> list[dict[str, Any]]:
         with self.connect() as connection:

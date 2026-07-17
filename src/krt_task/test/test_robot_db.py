@@ -80,7 +80,51 @@ def test_gripper_action_storage_and_schema_migration(tmp_path):
     assert database.list_gripper_actions()[0]["name"] == "左手张开"
     assert "targets_json" not in database.list_gripper_actions()[0]
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 3
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 4
+
+
+def test_gripper_system_settings_are_initialized_and_updated(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    defaults = {
+        "left": {
+            "adapter_type": "ZLG_MINI", "adapter_index": 0, "device_id": 1,
+            "listen_enabled": False, "realtime_response_enabled": False,
+        },
+        "right": {
+            "adapter_type": "ZLG_200U", "adapter_index": 1, "device_id": 2,
+            "listen_enabled": True, "realtime_response_enabled": False,
+        },
+    }
+
+    database.ensure_gripper_settings(defaults)
+    database.update_gripper_settings("left", {
+        "adapter_index": 3, "listen_enabled": True,
+    })
+
+    settings = {item["side"]: item for item in database.list_gripper_settings()}
+    assert settings["left"]["adapter_index"] == 3
+    assert settings["left"]["listen_enabled"] is True
+    assert settings["right"]["adapter_type"] == "ZLG_200U"
+
+
+def test_gripper_system_settings_validate_hardware_ranges(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    defaults = {
+        "left": {
+            "adapter_type": "ZLG_MINI", "adapter_index": 0, "device_id": 1,
+            "listen_enabled": False, "realtime_response_enabled": False,
+        },
+    }
+    database.ensure_gripper_settings(defaults)
+
+    with pytest.raises(ValueError, match="adapter_type"):
+        database.update_gripper_settings("left", {"adapter_type": "LYS_MINI"})
+    with pytest.raises(ValueError, match="adapter_index"):
+        database.update_gripper_settings("left", {"adapter_index": 16})
+    with pytest.raises(ValueError, match="device_id"):
+        database.update_gripper_settings("left", {"device_id": 0})
+    with pytest.raises(ValueError, match="side"):
+        database.update_gripper_settings("middle", {"device_id": 3})
 
 
 def test_gripper_action_migrates_existing_v2_database(tmp_path):
