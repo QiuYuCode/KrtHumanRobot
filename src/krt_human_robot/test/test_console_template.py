@@ -56,6 +56,20 @@ def test_console_has_named_gripper_editor_and_live_telemetry():
     assert "document.hidden)stopGripperMonitor()" in html
 
 
+def test_console_has_gripper_lifecycle_cards_and_settings():
+    html = TEMPLATE.read_text(encoding="utf-8")
+
+    for element_id in (
+        "gripperSystem", "startAllGrippers", "stopAllGrippers",
+        "leftGripperSystem", "rightGripperSystem",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "function loadGripperSystem" in html
+    assert "function controlGripperSystem" in html
+    assert "function saveGripperHardware" in html
+    assert "/api/gripper/system/" in html
+
+
 def test_routine_editor_uses_named_gripper_actions_and_keeps_legacy_fields():
     html = TEMPLATE.read_text(encoding="utf-8")
 
