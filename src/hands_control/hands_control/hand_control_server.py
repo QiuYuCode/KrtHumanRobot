@@ -3,9 +3,9 @@ import time
 import threading
 import rclpy
 from rclpy.action import ActionServer, CancelResponse
-from rclpy.node import Node
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rcl_interfaces.msg import SetParametersResult
 from std_srvs.srv import Trigger
 
@@ -28,16 +28,12 @@ from hands_control_interfaces.srv import (
 )
 
 
-class HandControlServer(Node):
+class HandControlServer(LifecycleNode):
     """灵巧手控制服务器，单手实例."""
 
     def __init__(self):
         """初始化节点和灵巧手连接."""
         super().__init__('hand_control_server')
-
-        if not DEXHAND_AVAILABLE:
-            self.get_logger().error('dexhand 模块未安装，请先安装 dexhand_sdk_python')
-            return
 
         # 参数声明
         self.declare_parameter('adapter_type', 'ZLG_MINI')
@@ -48,103 +44,164 @@ class HandControlServer(Node):
         self.declare_parameter('realtime_response_enabled', False)
         self.declare_parameter('has_pressure_sensor', False)
 
-        adapter_type_str = self.get_parameter('adapter_type').value
-        self.adapter_index = int(self.get_parameter('adapter_index').value)
-        self.device_id = int(self.get_parameter('device_id').value)
-        self.hand_name = self.get_parameter('hand_name').value
+        self.comm_lock = threading.Lock()
+        self._callback_group = ReentrantCallbackGroup()
+        self._parameter_callback = self.add_on_set_parameters_callback(
+            self._handle_parameter_update
+        )
+        self._stopping = False
+        self._interfaces_active = False
+        self._services = []
         self.listen_enabled = bool(self.get_parameter('listen_enabled').value)
         self.realtime_response_enabled = bool(
             self.get_parameter('realtime_response_enabled').value
         )
-        self.has_pressure_sensor = bool(
-            self.get_parameter('has_pressure_sensor').value
-        )
 
-        # 转换 adapter_type
-        self.adapter_type = self._parse_adapter_type(adapter_type_str)
-
-        # 初始化单手
-        self.comm_lock = threading.Lock()
-
+    def on_configure(self, _state: State) -> TransitionCallbackReturn:
+        """Allocate the SDK object while entering the inactive state."""
+        if not DEXHAND_AVAILABLE:
+            self.get_logger().error('dexhand 模块未安装，请先安装 dexhand_sdk_python')
+            return TransitionCallbackReturn.FAILURE
         try:
-            self.hand = DexHand021S(
-                adapter_type=self.adapter_type,
-                adapter_index=self.adapter_index
-            )
+            adapter_type = str(self.get_parameter('adapter_type').value)
+            self.adapter_type = self._parse_adapter_type(adapter_type)
+            self.adapter_index = int(self.get_parameter('adapter_index').value)
+            self.device_id = int(self.get_parameter('device_id').value)
+            self.hand_name = str(self.get_parameter('hand_name').value)
             if not self.hand_name:
                 self.hand_name = '左手' if self.adapter_index == 0 else '右手'
-            self._parameter_callback = self.add_on_set_parameters_callback(
-                self._handle_parameter_update
+            self.has_pressure_sensor = bool(
+                self.get_parameter('has_pressure_sensor').value
             )
+            self.listen_enabled = bool(self.get_parameter('listen_enabled').value)
+            self.realtime_response_enabled = bool(
+                self.get_parameter('realtime_response_enabled').value
+            )
+            self.hand = DexHand021S(
+                adapter_type=self.adapter_type,
+                adapter_index=self.adapter_index,
+            )
+            self.get_logger().info(
+                f'{self.hand_name}配置完成 '
+                f'(adapter_index={self.adapter_index}, device_id={self.device_id})'
+            )
+            return TransitionCallbackReturn.SUCCESS
+        except Exception as exc:
+            if hasattr(self, 'hand'):
+                del self.hand
+            self.get_logger().error(f'灵巧手配置失败: {exc}')
+            return TransitionCallbackReturn.FAILURE
+
+    def on_activate(self, _state: State) -> TransitionCallbackReturn:
+        """Expose control interfaces and enable configured runtime streams."""
+        try:
+            self._stopping = False
+            self._create_control_interfaces()
             self._apply_runtime_state(
                 listen_enabled=self.listen_enabled,
                 realtime_response_enabled=self.realtime_response_enabled,
                 force=True,
             )
-            self.get_logger().info(
-                f'{self.hand_name}初始化成功 '
-                f'(adapter_index={self.adapter_index}, device_id={self.device_id})'
-            )
+            self.get_logger().info('手部控制已激活')
+            return TransitionCallbackReturn.SUCCESS
+        except Exception as exc:
+            self._destroy_control_interfaces()
+            self.get_logger().error(f'灵巧手激活失败: {exc}')
+            return TransitionCallbackReturn.FAILURE
 
-        except Exception as e:
-            self.get_logger().error(f'灵巧手初始化失败: {str(e)}')
+    def on_deactivate(self, _state: State) -> TransitionCallbackReturn:
+        """Stop accepting commands and wait briefly for SDK access to finish."""
+        self._stopping = True
+        if not self.comm_lock.acquire(timeout=3.0):
+            self._stopping = False
+            self.get_logger().error('夹爪动作未在 3 秒内退出，拒绝停用')
+            return TransitionCallbackReturn.FAILURE
+        self.comm_lock.release()
+        self._destroy_control_interfaces()
+        try:
+            self._apply_runtime_state(False, False, force=True)
+        except Exception as exc:
+            self.get_logger().error(f'关闭夹爪监听失败: {exc}')
+            self._stopping = False
+            return TransitionCallbackReturn.FAILURE
+        self.get_logger().info('手部控制已停用')
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_cleanup(self, _state: State) -> TransitionCallbackReturn:
+        """Release the SDK object and return to unconfigured."""
+        self._destroy_control_interfaces()
+        if hasattr(self, 'hand'):
+            del self.hand
+        self._stopping = False
+        self.get_logger().info('手部硬件资源已释放')
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_shutdown(self, state: State) -> TransitionCallbackReturn:
+        """Best-effort safe shutdown from any lifecycle state."""
+        if hasattr(self, 'hand'):
+            try:
+                self._apply_runtime_state(False, False, force=True)
+            except Exception:
+                pass
+        return self.on_cleanup(state)
+
+    def on_error(self, state: State) -> TransitionCallbackReturn:
+        """Release partial resources so configure can be retried."""
+        return self.on_cleanup(state)
+
+    def _create_control_interfaces(self):
+        if self._interfaces_active:
             return
-
-        # 创建 action servers
-        callback_group = ReentrantCallbackGroup()
-
         self._hand_control_server = ActionServer(
             self,
             HandControl,
             'hand_control',
             self._execute_hand_control,
             cancel_callback=self._cancel_callback,
-            callback_group=callback_group
+            callback_group=self._callback_group,
         )
-
         self._reset_hand_server = ActionServer(
             self,
             ResetHand,
             'reset_hand',
             self._execute_reset_hand,
-            callback_group=callback_group
+            callback_group=self._callback_group,
         )
-
-        self._get_device_id_service = self.create_service(
-            GetDeviceId,
-            'get_device_id',
-            self._handle_get_device_id,
-        )
-        self._get_firmware_version_service = self.create_service(
-            GetDeviceString,
-            'get_firmware_version',
-            self._handle_get_firmware_version,
-        )
-        self._clear_error_service = self.create_service(
-            Trigger,
-            'clear_error',
-            self._handle_clear_error,
-        )
+        self._services = [
+            self.create_service(GetDeviceId, 'get_device_id', self._handle_get_device_id),
+            self.create_service(
+                GetDeviceString, 'get_firmware_version', self._handle_get_firmware_version
+            ),
+            self.create_service(Trigger, 'clear_error', self._handle_clear_error),
+        ]
         self._register_finger_services()
-
+        self._services.extend(self._finger_get_services)
+        self._services.extend(self._finger_set_services)
         if self.has_pressure_sensor:
-            self._normal_pressure_service = self.create_service(
-                GetNormalPressure,
-                'get_normal_pressure',
-                self._handle_normal_pressure,
-            )
-            self._tangent_pressure_service = self.create_service(
-                GetTangentPressure,
-                'get_tangent_pressure',
-                self._handle_tangent_pressure,
-            )
-            self._approaching_value_service = self.create_service(
-                GetApproachingValue,
-                'get_approaching_value',
-                self._handle_approaching_value,
-            )
+            self._services.extend([
+                self.create_service(
+                    GetNormalPressure, 'get_normal_pressure', self._handle_normal_pressure
+                ),
+                self.create_service(
+                    GetTangentPressure, 'get_tangent_pressure', self._handle_tangent_pressure
+                ),
+                self.create_service(
+                    GetApproachingValue,
+                    'get_approaching_value',
+                    self._handle_approaching_value,
+                ),
+            ])
+        self._interfaces_active = True
 
-        self.get_logger().info('手部控制 Action Server 已启动')
+    def _destroy_control_interfaces(self):
+        if not self._interfaces_active:
+            return
+        self._hand_control_server.destroy()
+        self._reset_hand_server.destroy()
+        for service in self._services:
+            self.destroy_service(service)
+        self._services = []
+        self._interfaces_active = False
 
     def _parse_adapter_type(self, adapter_type_str):
         """解析适配器类型字符串."""
@@ -430,12 +487,29 @@ class HandControlServer(Node):
         requested_listen = self.listen_enabled
         requested_realtime = self.realtime_response_enabled
 
+        state_label = self.get_current_state().label
         for param in params:
             if param.name in static_names:
-                return SetParametersResult(
-                    successful=False,
-                    reason=f'{param.name} 只允许在启动时设置'
-                )
+                if state_label != 'unconfigured':
+                    return SetParametersResult(
+                        successful=False,
+                        reason=f'{param.name} 只允许在未配置状态设置'
+                    )
+                if param.name == 'adapter_type' and str(param.value) not in {
+                    'ZLG_MINI', 'ZLG_200U'
+                }:
+                    return SetParametersResult(
+                        successful=False, reason='adapter_type 不受支持'
+                    )
+                if param.name == 'adapter_index' and not 0 <= int(param.value) <= 15:
+                    return SetParametersResult(
+                        successful=False, reason='adapter_index 必须在 0 到 15 之间'
+                    )
+                if param.name == 'device_id' and not 1 <= int(param.value) <= 255:
+                    return SetParametersResult(
+                        successful=False, reason='device_id 必须在 1 到 255 之间'
+                    )
+                continue
 
             if param.name not in allowed_names:
                 return SetParametersResult(
@@ -450,6 +524,11 @@ class HandControlServer(Node):
 
         old_listen = self.listen_enabled
         old_realtime = self.realtime_response_enabled
+
+        if state_label != 'active':
+            self.listen_enabled = requested_listen
+            self.realtime_response_enabled = requested_realtime
+            return SetParametersResult(successful=True)
 
         try:
             self._apply_runtime_state(
@@ -521,6 +600,11 @@ class HandControlServer(Node):
 
         try:
             with self.comm_lock:
+                if self._stopping:
+                    result.success = False
+                    result.message = f'{hand_name} 正在停用'
+                    goal_handle.abort()
+                    return result
                 # 清除错误并移动手指
                 hand.clear_error(device_id)
 
@@ -529,7 +613,7 @@ class HandControlServer(Node):
                     f'速度={speed}, 力度={force:#x}'
                 )
                 for fid in target_fingers:
-                    if goal_handle.is_cancel_requested:
+                    if goal_handle.is_cancel_requested or self._stopping:
                         result.success = False
                         result.message = f'{hand_name} 控制已取消'
                         result.final_positions = self._read_all_positions(
@@ -551,7 +635,7 @@ class HandControlServer(Node):
                 steps = 10
                 for i in range(steps):
                     # ponytail: SDK 无停止指令；取消只能阻止后续命令并结束反馈等待。
-                    if goal_handle.is_cancel_requested:
+                    if goal_handle.is_cancel_requested or self._stopping:
                         result.success = False
                         result.message = f'{hand_name} 控制已取消'
                         result.final_positions = self._read_all_positions(
@@ -622,6 +706,11 @@ class HandControlServer(Node):
 
         try:
             with self.comm_lock:
+                if self._stopping:
+                    result.success = False
+                    result.message = f'{hand_name} 正在停用'
+                    goal_handle.abort()
+                    return result
                 # 清除所有手指的错误
                 feedback_msg.status = f'清除 {hand_name} 错误'
                 goal_handle.publish_feedback(feedback_msg)
@@ -654,12 +743,6 @@ def main(args=None):
     """主函数."""
     rclpy.init(args=args)
     node = HandControlServer()
-
-    if not DEXHAND_AVAILABLE:
-        node.get_logger().error('无法启动节点，dexhand 模块缺失')
-        node.destroy_node()
-        rclpy.shutdown()
-        return
 
     executor = MultiThreadedExecutor(num_threads=2)
     executor.add_node(node)

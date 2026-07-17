@@ -8,6 +8,7 @@ from rclpy.action import ActionClient, ActionServer
 from rclpy.action import CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
+from rclpy.lifecycle import LifecycleNode
 from rclpy.node import Node
 
 from hands_control.hand_control_server import HandControlServer
@@ -15,6 +16,15 @@ from hands_control_interfaces.action import HandControl
 
 
 class FakeHand:
+    def __init__(self, *_args, **_kwargs):
+        self.listen_states = []
+        self.realtime_states = []
+
+    def __getattr__(self, name):
+        if name.startswith("get_"):
+            return lambda *_args: 0
+        return lambda *_args, **_kwargs: None
+
     def clear_error(self, _device_id):
         pass
 
@@ -23,6 +33,13 @@ class FakeHand:
 
     def get_joint_degree(self, *_args):
         return 100
+
+    def listen(self, *, enable):
+        self.listen_states.append(enable)
+
+    def enable_realtime_response(self, *, device_id, enable):
+        del device_id
+        self.realtime_states.append(enable)
 
 
 class FakeGoalHandle:
@@ -50,6 +67,40 @@ class FakeGoalHandle:
 
 def test_hand_control_accepts_cancel_requests():
     assert HandControlServer._cancel_callback(None) == CancelResponse.ACCEPT
+
+
+def test_hand_control_lifecycle_allocates_and_releases_hardware(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
+    monkeypatch.setattr("hands_control.hand_control_server.DexHand021S", FakeHand)
+    monkeypatch.setattr("hands_control.hand_control_server.DEXHAND_AVAILABLE", True)
+    owned_context = not rclpy.ok()
+    if owned_context:
+        rclpy.init()
+    node = HandControlServer()
+    try:
+        assert isinstance(node, LifecycleNode)
+        assert not hasattr(node, "hand")
+        assert node.trigger_configure().name == "SUCCESS"
+        assert hasattr(node, "hand")
+        assert node.trigger_activate().name == "SUCCESS"
+        assert node.trigger_deactivate().name == "SUCCESS"
+        assert node.trigger_cleanup().name == "SUCCESS"
+        assert not hasattr(node, "hand")
+    finally:
+        node.destroy_node()
+        if owned_context:
+            rclpy.shutdown()
+
+
+def test_hand_launch_supports_single_side_and_autostart():
+    source = (
+        Path(__file__).parents[1] / "launch" / "hand_control_launch.py"
+    ).read_text(encoding="utf-8")
+
+    assert "enable_left" in source
+    assert "enable_right" in source
+    assert "autostart" in source
+    assert "LifecycleNode" in source
 
 
 def test_hand_control_executor_can_process_cancel_during_execution():
@@ -85,6 +136,7 @@ def test_inflight_hand_control_goal_is_canceled_by_executor(monkeypatch, tmp_pat
         hand_name="测试手",
         hand=FakeHand(),
         comm_lock=threading.Lock(),
+        _stopping=False,
         get_logger=server_node.get_logger,
     )
     fake_server._read_all_positions = lambda hand, device_id: (
@@ -130,7 +182,7 @@ def test_hand_control_stops_feedback_loop_when_canceled(monkeypatch):
     monkeypatch.setattr("hands_control.hand_control_server.time.sleep", lambda _delay: None)
     server = SimpleNamespace(
         adapter_index=0, device_id=1, hand_name="左手", hand=FakeHand(),
-        comm_lock=threading.Lock(),
+        comm_lock=threading.Lock(), _stopping=False,
         get_logger=lambda: SimpleNamespace(info=lambda *_args: None,
                                            error=lambda *_args: None),
         _read_all_positions=lambda _hand, _device_id: [1, 2, 3],

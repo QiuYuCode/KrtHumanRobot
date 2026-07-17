@@ -129,6 +129,7 @@ def _launch_setup(context, *args, **kwargs):
                 )
             ),
             launch_arguments={
+                "autostart": LaunchConfiguration("hands_autostart"),
                 "left_hand_listen": "false",
                 "right_hand_listen": "false",
                 "left_hand_realtime_response": "false",
@@ -223,6 +224,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("voice_config_file", default_value=default_voice_config),
         DeclareLaunchArgument("enable_voice_stack", default_value="true"),
         DeclareLaunchArgument("enable_hands_control_stack", default_value="true"),
+        DeclareLaunchArgument("hands_autostart", default_value="true"),
         DeclareLaunchArgument("enable_camera_stack", default_value="true"),
         DeclareLaunchArgument("enable_task_runner", default_value="true"),
         DeclareLaunchArgument("enable_action_group_stack", default_value="true"),

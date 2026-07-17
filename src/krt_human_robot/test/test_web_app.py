@@ -413,3 +413,5 @@ def test_web_console_launch_passes_robot_config():
     assert '"config_file", default_value=' in web_launch
     assert '"KRT_HUMAN_ROBOT_CONFIG": LaunchConfiguration("config_file")' in web_launch
     assert '"config_file": config_file' in robot_launch
+    assert 'DeclareLaunchArgument("hands_autostart", default_value="true")' in robot_launch
+    assert '"autostart": LaunchConfiguration("hands_autostart")' in robot_launch
