@@ -157,6 +157,81 @@ class FakeGripperBridge:
         return {"hands": {"left": {"fingers": [{"id": 1, "position": 123.0}]}}}
 
 
+class FakeGripperSystem:
+    def __init__(self):
+        self.controls = []
+        self.settings = []
+        self.runtime = []
+
+    def status(self):
+        return {"hands": {
+            side: {"lifecycle_state": "active", "action_ready": True}
+            for side in ("left", "right")
+        }}
+
+    def control(self, target, enabled):
+        self.controls.append((target, enabled))
+        return {"success": True, "hands": {target: {"success": True}}}
+
+    def update_settings(self, side, changes):
+        self.settings.append((side, changes))
+        return {"side": side, **changes}
+
+    def update_runtime(self, side, changes):
+        self.runtime.append((side, changes))
+        return {"side": side, **changes}
+
+
+def test_gripper_system_status_control_and_settings_api(tmp_path):
+    app, client, headers = authenticated_app(tmp_path)
+    system = FakeGripperSystem()
+    app.extensions["gripper_system"] = system
+
+    assert client.get("/api/gripper/system").get_json()["hands"]["left"][
+        "lifecycle_state"
+    ] == "active"
+    control = client.post("/api/gripper/system/control", headers=headers, json={
+        "target": "both", "enabled": True,
+    })
+    assert control.status_code == 200
+    assert system.controls == [("both", True)]
+    settings = client.put("/api/gripper/system/left/settings", headers=headers, json={
+        "adapter_type": "ZLG_MINI", "adapter_index": 3, "device_id": 4,
+    })
+    assert settings.status_code == 200
+    runtime = client.put("/api/gripper/system/right/runtime", headers=headers, json={
+        "listen_enabled": True, "realtime_response_enabled": False,
+    })
+    assert runtime.status_code == 200
+    assert system.runtime[-1][0] == "right"
+
+
+def test_operator_cannot_change_gripper_hardware_settings(tmp_path):
+    app = create_app({
+        "TESTING": True, "SECRET_KEY": "test", "SESSION_COOKIE_SECURE": False,
+        "ROS_ENABLED": False, "ROBOT_DB": str(tmp_path / "robot.db"),
+        "WEB_DB": str(tmp_path / "web.db"), "MEDIA_DIR": str(tmp_path / "media"),
+    })
+    app.extensions["gripper_system"] = FakeGripperSystem()
+    app.extensions["auth_db"].create_user(
+        "operator", "long-test-password", "operator"
+    )
+    client = app.test_client()
+    login = client.post("/api/login", json={
+        "username": "operator", "password": "long-test-password",
+    })
+    headers = {"X-CSRF-Token": login.get_json()["csrf_token"]}
+
+    denied = client.put("/api/gripper/system/left/settings", headers=headers, json={
+        "adapter_index": 2,
+    })
+    assert denied.status_code == 403
+    allowed = client.post("/api/gripper/system/control", headers=headers, json={
+        "target": "left", "enabled": True,
+    })
+    assert allowed.status_code == 200
+
+
 def test_gripper_direct_run_is_tracked_and_mutually_exclusive(tmp_path):
     app, client, headers = authenticated_app(tmp_path)
     bridge = FakeGripperBridge()

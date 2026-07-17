@@ -34,6 +34,7 @@ from werkzeug.utils import secure_filename
 
 from krt_human_robot.adapters.navigation import RangerNavAdapter
 from krt_human_robot.config import load_config
+from krt_human_robot.gripper_system import GripperSystemController
 from krt_human_robot.web_auth import AuthDatabase
 
 
@@ -506,10 +507,30 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     media_dir = Path(app.config["MEDIA_DIR"]).expanduser().resolve()
     media_dir.mkdir(parents=True, exist_ok=True)
     robot_config = load_config(os.environ.get("KRT_HUMAN_ROBOT_CONFIG"))
+    adapter_type = str(robot_config.gripper_adapter_type).upper()
+    database.ensure_gripper_settings({
+        side: {
+            "adapter_type": adapter_type,
+            "adapter_index": int(getattr(robot_config, f"{side}_gripper")["adapter_index"]),
+            "device_id": int(getattr(robot_config, f"{side}_gripper")["device_id"]),
+            "listen_enabled": False,
+            "realtime_response_enabled": False,
+        }
+        for side in ("left", "right")
+    })
     adapter = RangerNavAdapter(robot_config)
     bridge = RosBridge(robot_config=robot_config) if app.config["ROS_ENABLED"] else None
+    gripper_system = GripperSystemController(
+        bridge.node,
+        database,
+        hand_clients=bridge.hand_clients,
+        future_result=bridge._future_result,
+    ) if bridge is not None else None
     runtime = WebRuntime(adapter, bridge)
-    app.extensions.update(robot_db=database, auth_db=auth, runtime=runtime)
+    app.extensions.update(
+        robot_db=database, auth_db=auth, runtime=runtime,
+        gripper_system=gripper_system,
+    )
     # ponytail: one-worker in-memory limiter; move to shared storage for multi-worker use.
     failures: dict[str, list[float]] = {}
 
@@ -645,10 +666,62 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             },
         )
 
+    def require_gripper_system():
+        system = app.extensions.get("gripper_system")
+        if system is None:
+            raise RuntimeError("ROS bridge 未启用")
+        return system
+
+    @app.get("/api/gripper/system")
+    @protected(auth, csrf=False)
+    def gripper_system_status():
+        return jsonify(require_gripper_system().status())
+
+    @app.post("/api/gripper/system/control")
+    @protected(auth)
+    def control_gripper_system():
+        payload = request.get_json() or {}
+        target = str(payload.get("target", ""))
+        enabled = bool(payload.get("enabled", False))
+        if not enabled and runtime.active():
+            runtime.cancel()
+        result = require_gripper_system().control(target, enabled)
+        user = current_user(auth)
+        auth.audit(
+            user["username"], request.remote_addr or "-", "control_gripper_system",
+            target, bool(result["success"]), str(enabled),
+        )
+        return jsonify(result)
+
+    @app.put("/api/gripper/system/<side>/settings")
+    @protected(auth, role="admin")
+    def update_gripper_system_settings(side: str):
+        result = require_gripper_system().update_settings(side, request.get_json() or {})
+        return audited(
+            auth, "update_gripper_system_settings", side, True, data={"settings": result}
+        )
+
+    @app.put("/api/gripper/system/<side>/runtime")
+    @protected(auth)
+    def update_gripper_system_runtime(side: str):
+        result = require_gripper_system().update_runtime(side, request.get_json() or {})
+        return audited(
+            auth, "update_gripper_system_runtime", side, True, data={"settings": result}
+        )
+
     @app.post("/api/gripper/run")
     @protected(auth)
     def run_gripper():
         targets = validate_gripper_targets((request.get_json() or {}).get("targets", []))
+        system = app.extensions.get("gripper_system")
+        if system is not None:
+            hands = system.status()["hands"]
+            inactive = [
+                str(target["side"]) for target in targets
+                if hands[str(target["side"])]["lifecycle_state"] != "active"
+            ]
+            if inactive:
+                raise RuntimeError(f"请先开启夹爪: {', '.join(inactive)}")
         runtime.run_gripper(targets)
         sides = ",".join(str(target["side"]) for target in targets)
         return audited(auth, "run_gripper", sides, True)
