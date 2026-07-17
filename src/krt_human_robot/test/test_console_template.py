@@ -56,6 +56,17 @@ def test_console_has_named_gripper_editor_and_live_telemetry():
     assert "document.hidden)stopGripperMonitor()" in html
 
 
+def test_right_hand_sensor_charts_show_finger_color_legends():
+    html = TEMPLATE.read_text(encoding="utf-8")
+
+    assert html.count('class="telemetry-legend"') == 3
+    for finger_id, color in (
+        (1, "#002fa7"), (2, "#e4002b"), (3, "#5f6368")
+    ):
+        assert html.count(f'data-finger="{finger_id}"') == 3
+        assert f'--finger-color:{color}' in html
+
+
 def test_console_has_gripper_lifecycle_cards_and_settings():
     html = TEMPLATE.read_text(encoding="utf-8")
 
