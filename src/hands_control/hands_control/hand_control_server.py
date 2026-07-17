@@ -2,7 +2,7 @@
 import time
 import threading
 import rclpy
-from rclpy.action import ActionServer
+from rclpy.action import ActionServer, CancelResponse
 from rclpy.node import Node
 from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
 from rcl_interfaces.msg import SetParametersResult
@@ -97,6 +97,7 @@ class HandControlServer(Node):
             HandControl,
             'hand_control',
             self._execute_hand_control,
+            cancel_callback=self._cancel_callback,
             callback_group=callback_group
         )
 
@@ -527,6 +528,14 @@ class HandControlServer(Node):
                     f'速度={speed}, 力度={force:#x}'
                 )
                 for fid in target_fingers:
+                    if goal_handle.is_cancel_requested:
+                        result.success = False
+                        result.message = f'{hand_name} 控制已取消'
+                        result.final_positions = self._read_all_positions(
+                            hand, device_id
+                        )
+                        goal_handle.canceled()
+                        return result
                     hand.move_finger(
                         device_id,
                         fid,
@@ -540,6 +549,15 @@ class HandControlServer(Node):
                 total_time = wait_time * 0.1  # wait_time 单位是 100ms
                 steps = 10
                 for i in range(steps):
+                    # ponytail: SDK 无停止指令；取消只能阻止后续命令并结束反馈等待。
+                    if goal_handle.is_cancel_requested:
+                        result.success = False
+                        result.message = f'{hand_name} 控制已取消'
+                        result.final_positions = self._read_all_positions(
+                            hand, device_id
+                        )
+                        goal_handle.canceled()
+                        return result
                     time.sleep(total_time / steps)
 
                     # 获取当前位置
@@ -571,6 +589,11 @@ class HandControlServer(Node):
 
         goal_handle.succeed()
         return result
+
+    @staticmethod
+    def _cancel_callback(_goal_handle):
+        """接受客户端取消；执行循环负责尽快结束当前目标."""
+        return CancelResponse.ACCEPT
 
     def _execute_reset_hand(self, goal_handle):
         """执行手部重置 action."""
