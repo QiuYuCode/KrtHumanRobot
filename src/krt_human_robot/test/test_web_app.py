@@ -5,6 +5,10 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
+import rclpy
+from rclpy.executors import MultiThreadedExecutor
+from rclpy.node import Node
+
 from krt_human_robot.web_app import RosBridge, create_app
 
 
@@ -364,6 +368,41 @@ def test_ros_bridge_monitor_keeps_restore_state_after_failure():
 
     assert bridge.monitor_active is True
     assert bridge.monitor_previous is not None
+
+
+def test_monitor_watchdog_restores_parameters_through_executor(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
+    owned_context = not rclpy.ok()
+    if owned_context:
+        rclpy.init()
+    parameter_node = Node("hand_control_server", namespace="/right")
+    parameter_node.declare_parameter("listen_enabled", False)
+    parameter_node.declare_parameter("realtime_response_enabled", False)
+    parameter_executor = MultiThreadedExecutor(num_threads=2)
+    parameter_executor.add_node(parameter_node)
+    parameter_thread = threading.Thread(target=parameter_executor.spin, daemon=True)
+    parameter_thread.start()
+    bridge = RosBridge()
+    try:
+        bridge.set_monitor(True)
+        assert parameter_node.get_parameter("listen_enabled").value is True
+        assert parameter_node.get_parameter("realtime_response_enabled").value is True
+
+        bridge.monitor_deadline = time.monotonic() - 1.0
+        deadline = time.monotonic() + 3.0
+        while bridge.monitor_active and time.monotonic() < deadline:
+            time.sleep(0.02)
+
+        assert bridge.monitor_active is False
+        assert parameter_node.get_parameter("listen_enabled").value is False
+        assert parameter_node.get_parameter("realtime_response_enabled").value is False
+    finally:
+        bridge.executor.shutdown(timeout_sec=2.0)
+        bridge.node.destroy_node()
+        parameter_executor.shutdown(timeout_sec=2.0)
+        parameter_node.destroy_node()
+        if owned_context:
+            rclpy.shutdown()
 
 
 def test_web_console_launch_passes_robot_config():
