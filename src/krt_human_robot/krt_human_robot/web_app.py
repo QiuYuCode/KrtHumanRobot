@@ -99,7 +99,10 @@ class RosBridge:
                 raise RuntimeError("已有任务正在执行")
             if not self.client.wait_for_server(timeout_sec=2.0):
                 raise RuntimeError("routine action 不可用")
-            self.state = {"mode": "routine", "status": "running", "current_step": "", "message": ""}
+            self.state = {
+                "mode": "routine", "status": "running",
+                "current_step": "", "message": "",
+            }
             self.cancel_requested = False
         goal = RunRoutine.Goal()
         goal.routine_name = routine_name

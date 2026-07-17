@@ -305,8 +305,10 @@ def test_ros_bridge_monitor_lease_restores_previous_parameters():
     bridge.monitor_previous = None
     bridge.monitor_deadline = 0.0
     states = []
-    bridge._get_monitor_parameters = lambda: {"listen_enabled": False,
-                                               "realtime_response_enabled": False}
+    bridge._get_monitor_parameters = lambda: {
+        "listen_enabled": False,
+        "realtime_response_enabled": False,
+    }
     bridge._set_monitor_parameters = lambda values: states.append(values)
 
     assert bridge.set_monitor(True)["enabled"] is True

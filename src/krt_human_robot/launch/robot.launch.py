@@ -234,7 +234,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("arm_auto_enable", default_value="true"),
         DeclareLaunchArgument("arm_speed_percent", default_value="30"),
         DeclareLaunchArgument("robot_db", default_value="~/maps/krt_robot.db"),
-        DeclareLaunchArgument("legacy_action_groups_file", default_value="~/maps/action_groups.yaml"),
+        DeclareLaunchArgument(
+            "legacy_action_groups_file", default_value="~/maps/action_groups.yaml"
+        ),
         DeclareLaunchArgument("media_dir", default_value="~/music"),
         DeclareLaunchArgument("enable_web_console", default_value="false"),
         DeclareLaunchArgument("web_host", default_value="0.0.0.0"),

@@ -210,7 +210,11 @@ class RobotDatabase:
                 if _rename_gripper_action_refs(spec, name, new_name):
                     connection.execute(
                         "UPDATE routines SET spec_json=?, updated_at=? WHERE id=?",
-                        (json.dumps(spec, ensure_ascii=False, separators=(",", ":")), now, row["id"]),
+                        (
+                            json.dumps(spec, ensure_ascii=False, separators=(",", ":")),
+                            now,
+                            row["id"],
+                        ),
                     )
             connection.commit()
 
@@ -262,7 +266,11 @@ class RobotDatabase:
         if not samples:
             raise ValueError("动作组至少需要一个关节采样")
         for sample in samples:
-            if not isinstance(sample, dict) or not sample.get("name") or not sample.get("position"):
+            if (
+                not isinstance(sample, dict)
+                or not sample.get("name")
+                or not sample.get("position")
+            ):
                 raise ValueError("动作组关节采样无效")
         if repeat_count <= 0:
             raise ValueError("动作组 repeat_count 必须大于 0")
@@ -304,7 +312,11 @@ class RobotDatabase:
                 if _rename_action_group_refs(spec, name, new_name):
                     connection.execute(
                         "UPDATE routines SET spec_json=?, updated_at=? WHERE id=?",
-                        (json.dumps(spec, ensure_ascii=False, separators=(",", ":")), now, row["id"]),
+                        (
+                            json.dumps(spec, ensure_ascii=False, separators=(",", ":")),
+                            now,
+                            row["id"],
+                        ),
                     )
             connection.commit()
 
