@@ -222,7 +222,15 @@ class GripperSystemController:
         }
         hands = {}
         for side in SIDES:
-            state = self._state(side)
+            try:
+                state = self._state(side)
+                current_parameters = self._get_parameters(side) \
+                    if state != "missing" else {}
+                error = self.last_errors[side]
+            except Exception as exc:
+                state = "unknown"
+                current_parameters = {}
+                error = str(exc)
             hands[side] = {
                 "present": state != "missing",
                 "lifecycle_state": state,
@@ -230,9 +238,8 @@ class GripperSystemController:
                     side
                 ].wait_for_server(timeout_sec=0.0),
                 "settings": settings.get(side, {}),
-                "current_parameters": self._get_parameters(side)
-                if state != "missing" else {},
-                "error": self.last_errors[side],
+                "current_parameters": current_parameters,
+                "error": error,
             }
         return {"hands": hands}
 

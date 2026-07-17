@@ -92,6 +92,32 @@ def test_hand_control_lifecycle_allocates_and_releases_hardware(monkeypatch, tmp
             rclpy.shutdown()
 
 
+def test_failed_deactivate_keeps_control_interfaces(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
+    monkeypatch.setattr("hands_control.hand_control_server.DexHand021S", FakeHand)
+    monkeypatch.setattr("hands_control.hand_control_server.DEXHAND_AVAILABLE", True)
+    owned_context = not rclpy.ok()
+    if owned_context:
+        rclpy.init()
+    node = HandControlServer()
+    try:
+        assert node.trigger_configure().name == "SUCCESS"
+        assert node.trigger_activate().name == "SUCCESS"
+        original_listen = node.hand.listen
+        node.hand.listen = lambda *, enable: (
+            (_ for _ in ()).throw(RuntimeError("disable failed"))
+            if not enable else original_listen(enable=enable)
+        )
+
+        assert node.trigger_deactivate().name == "FAILURE"
+        assert node._interfaces_active is True
+        assert node._stopping is False
+    finally:
+        node.destroy_node()
+        if owned_context:
+            rclpy.shutdown()
+
+
 def test_hand_launch_supports_single_side_and_autostart():
     source = (
         Path(__file__).parents[1] / "launch" / "hand_control_launch.py"

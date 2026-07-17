@@ -181,3 +181,18 @@ def test_stop_active_hand_deactivates_and_cleans_up():
         Transition.TRANSITION_CLEANUP,
     ]
     assert result["hands"]["left"]["state"] == "unconfigured"
+
+
+def test_status_keeps_other_hand_when_one_state_query_fails():
+    controller, _node = make_controller({"left": "active", "right": "active"})
+    original_state = controller._state
+    controller._state = lambda side: (
+        (_ for _ in ()).throw(RuntimeError("left timeout"))
+        if side == "left" else original_state(side)
+    )
+
+    status = controller.status()
+
+    assert status["hands"]["left"]["lifecycle_state"] == "unknown"
+    assert status["hands"]["left"]["error"] == "left timeout"
+    assert status["hands"]["right"]["lifecycle_state"] == "active"

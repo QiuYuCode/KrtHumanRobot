@@ -117,13 +117,13 @@ class HandControlServer(LifecycleNode):
             self.get_logger().error('夹爪动作未在 3 秒内退出，拒绝停用')
             return TransitionCallbackReturn.FAILURE
         self.comm_lock.release()
-        self._destroy_control_interfaces()
         try:
             self._apply_runtime_state(False, False, force=True)
         except Exception as exc:
             self.get_logger().error(f'关闭夹爪监听失败: {exc}')
             self._stopping = False
             return TransitionCallbackReturn.FAILURE
+        self._destroy_control_interfaces()
         self.get_logger().info('手部控制已停用')
         return TransitionCallbackReturn.SUCCESS
 
