@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 import os
 import secrets
 import threading
@@ -25,6 +26,7 @@ from krt_task_interfaces.action import RunRoutine
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import GetParameters, SetParameters
 from rclpy.action import ActionClient
+from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from werkzeug.exceptions import RequestEntityTooLarge
@@ -72,26 +74,33 @@ class RosBridge:
                 ),
             },
         }
+        self.monitor_callback_group = ReentrantCallbackGroup()
         self.monitor_get_client = self.node.create_client(
-            GetParameters, "/right/hand_control_server/get_parameters"
+            GetParameters,
+            "/right/hand_control_server/get_parameters",
+            callback_group=self.monitor_callback_group,
         )
         self.monitor_set_client = self.node.create_client(
-            SetParameters, "/right/hand_control_server/set_parameters"
+            SetParameters,
+            "/right/hand_control_server/set_parameters",
+            callback_group=self.monitor_callback_group,
         )
-        self.thread = threading.Thread(target=self.executor.spin, daemon=True)
-        self.thread.start()
         self.lock = threading.Lock()
         self.telemetry_lock = threading.Lock()
         self.monitor_lock = threading.Lock()
         self.monitor_active = False
         self.monitor_previous = None
         self.monitor_deadline = 0.0
-        self.monitor_timer = self.node.create_timer(1.0, self._monitor_watchdog)
+        self.monitor_timer = self.node.create_timer(
+            1.0, self._monitor_watchdog, callback_group=self.monitor_callback_group
+        )
         self.goal_handle = None
         self.gripper_goal_handles = {}
         self._gripper_remaining: set[str] = set()
         self.cancel_requested = False
         self.state = {"mode": "idle", "status": "idle", "current_step": "", "message": ""}
+        self.thread = threading.Thread(target=self.executor.spin, daemon=True)
+        self.thread.start()
 
     def run(self, routine_name: str) -> None:
         with self.lock:
@@ -140,15 +149,18 @@ class RosBridge:
             goal.speed = int(target["speed"])
             goal.force = int(target["force"])
             goal.wait_time = int(target["wait_time"])
-            future = self.hand_clients[side].send_goal_async(
-                goal,
-                feedback_callback=lambda message, hand=side: self._gripper_feedback(
-                    hand, message
-                ),
-            )
-            future.add_done_callback(
-                lambda response, hand=side: self._gripper_goal_response(hand, response)
-            )
+            try:
+                future = self.hand_clients[side].send_goal_async(
+                    goal,
+                    feedback_callback=lambda message, hand=side: self._gripper_feedback(
+                        hand, message
+                    ),
+                )
+                future.add_done_callback(
+                    lambda response, hand=side: self._gripper_goal_response(hand, response)
+                )
+            except Exception as exc:
+                self._finish_gripper_hand(side, False, str(exc), [])
 
     def _gripper_feedback(self, side: str, message) -> None:
         feedback = message.feedback
@@ -260,7 +272,7 @@ class RosBridge:
 
     def status(self) -> dict[str, Any]:
         with self.lock:
-            return dict(self.state)
+            return copy.deepcopy(self.state)
 
     @staticmethod
     def _future_result(future, timeout: float):
@@ -327,30 +339,30 @@ class RosBridge:
             self.telemetry_lock.release()
 
     def set_monitor(self, enabled: bool) -> dict[str, bool]:
-        if enabled:
-            with self.monitor_lock:
+        with self.monitor_lock:
+            if enabled:
                 if self.monitor_active:
                     self.monitor_deadline = time.monotonic() + 3.0
                     return {"enabled": True}
-            previous = self._get_monitor_parameters()
-            self._set_monitor_parameters({
-                "listen_enabled": True, "realtime_response_enabled": True,
-            })
-            with self.monitor_lock:
+                previous = self._get_monitor_parameters()
+                self._set_monitor_parameters({
+                    "listen_enabled": True, "realtime_response_enabled": True,
+                })
                 self.monitor_previous = previous
                 self.monitor_active = True
                 self.monitor_deadline = time.monotonic() + 3.0
-            return {"enabled": True}
+                return {"enabled": True}
 
-        with self.monitor_lock:
             previous = self.monitor_previous
             was_active = self.monitor_active
+            if was_active and previous is not None:
+                # Keep the lease state intact when restoration fails so the
+                # watchdog can retry instead of leaving device listening on.
+                self._set_monitor_parameters(previous)
             self.monitor_active = False
             self.monitor_previous = None
             self.monitor_deadline = 0.0
-        if was_active and previous is not None:
-            self._set_monitor_parameters(previous)
-        return {"enabled": False}
+            return {"enabled": False}
 
     def _monitor_watchdog(self) -> None:
         with self.monitor_lock:

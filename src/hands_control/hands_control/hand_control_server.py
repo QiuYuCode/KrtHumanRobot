@@ -4,7 +4,8 @@ import threading
 import rclpy
 from rclpy.action import ActionServer, CancelResponse
 from rclpy.node import Node
-from rclpy.callback_groups import MutuallyExclusiveCallbackGroup
+from rclpy.callback_groups import ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rcl_interfaces.msg import SetParametersResult
 from std_srvs.srv import Trigger
 
@@ -90,7 +91,7 @@ class HandControlServer(Node):
             return
 
         # 创建 action servers
-        callback_group = MutuallyExclusiveCallbackGroup()
+        callback_group = ReentrantCallbackGroup()
 
         self._hand_control_server = ActionServer(
             self,
@@ -660,8 +661,10 @@ def main(args=None):
         rclpy.shutdown()
         return
 
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(node)
     try:
-        rclpy.spin(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
@@ -674,6 +677,7 @@ def main(args=None):
                 )
             except Exception:
                 pass
+        executor.shutdown()
         node.destroy_node()
         rclpy.shutdown()
 

@@ -1,4 +1,5 @@
 import threading
+from pathlib import Path
 from types import SimpleNamespace
 
 from rclpy.action import CancelResponse
@@ -39,6 +40,15 @@ class FakeGoalHandle:
 
 def test_hand_control_accepts_cancel_requests():
     assert HandControlServer._cancel_callback(None) == CancelResponse.ACCEPT
+
+
+def test_hand_control_executor_can_process_cancel_during_execution():
+    source = (
+        Path(__file__).parents[1] / "hands_control" / "hand_control_server.py"
+    ).read_text(encoding="utf-8")
+
+    assert "ReentrantCallbackGroup()" in source
+    assert "MultiThreadedExecutor(num_threads=2)" in source
 
 
 def test_hand_control_stops_feedback_loop_when_canceled(monkeypatch):

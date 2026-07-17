@@ -3,6 +3,7 @@ import threading
 import time
 import wave
 from pathlib import Path
+from types import SimpleNamespace
 
 from krt_human_robot.web_app import RosBridge, create_app
 
@@ -232,6 +233,11 @@ class ImmediateActionClient:
         return ImmediateFuture(ImmediateGoalHandle(self.side))
 
 
+class FailingActionClient(ImmediateActionClient):
+    def send_goal_async(self, goal, feedback_callback):
+        raise RuntimeError("send failed")
+
+
 def test_ros_bridge_runs_both_hands_and_aggregates_feedback():
     bridge = RosBridge.__new__(RosBridge)
     bridge.lock = __import__("threading").Lock()
@@ -250,6 +256,24 @@ def test_ros_bridge_runs_both_hands_and_aggregates_feedback():
     assert bridge.status()["hands"]["left"]["current_positions"] == [100, 200, 300]
     assert bridge.hand_clients["left"].goals[0].adapter_index == 4
     assert bridge.hand_clients["right"].goals[0].adapter_index == 7
+
+
+def test_ros_bridge_finishes_when_sending_one_hand_goal_fails():
+    bridge = RosBridge.__new__(RosBridge)
+    bridge.lock = threading.Lock()
+    bridge.state = {"mode": "idle", "status": "idle", "current_step": "", "message": ""}
+    bridge.cancel_requested = False
+    bridge.hand_clients = {
+        "left": ImmediateActionClient("left"),
+        "right": FailingActionClient("right"),
+    }
+    bridge.hand_adapter_indices = {"left": 0, "right": 1}
+    bridge.gripper_goal_handles = {}
+
+    bridge.run_gripper([gripper_target("left"), gripper_target("right")])
+
+    assert bridge.status()["status"] == "failed"
+    assert bridge.status()["hands"]["right"]["message"] == "send failed"
 
 
 class ImmediateServiceClient:
@@ -318,6 +342,28 @@ def test_ros_bridge_monitor_lease_restores_previous_parameters():
 
     assert bridge.monitor_active is False
     assert states[-1] == {"listen_enabled": False, "realtime_response_enabled": False}
+
+
+def test_ros_bridge_monitor_keeps_restore_state_after_failure():
+    bridge = RosBridge.__new__(RosBridge)
+    bridge.monitor_lock = threading.Lock()
+    bridge.monitor_active = True
+    bridge.monitor_previous = {
+        "listen_enabled": False,
+        "realtime_response_enabled": False,
+    }
+    bridge.monitor_deadline = time.monotonic() - 1.0
+    bridge.node = SimpleNamespace(
+        get_logger=lambda: SimpleNamespace(warning=lambda *_args: None)
+    )
+    bridge._set_monitor_parameters = lambda _values: (_ for _ in ()).throw(
+        RuntimeError("restore failed")
+    )
+
+    bridge._monitor_watchdog()
+
+    assert bridge.monitor_active is True
+    assert bridge.monitor_previous is not None
 
 
 def test_web_console_launch_passes_robot_config():

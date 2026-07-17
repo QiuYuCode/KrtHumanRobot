@@ -50,6 +50,10 @@ def test_console_has_named_gripper_editor_and_live_telemetry():
     assert "const TELEMETRY_WINDOW_MS=30000" in html
     assert "function drawTelemetry" in html
     assert "setInterval(pollGripperTelemetry,500)" in html
+    assert "if(telemetryPolling||!gripperMonitoring" in html
+    assert "finally{telemetryPolling=false}" in html
+    assert "visibilitychange" in html
+    assert "document.hidden)stopGripperMonitor()" in html
 
 
 def test_routine_editor_uses_named_gripper_actions_and_keeps_legacy_fields():

@@ -193,6 +193,7 @@ class RobotDatabase:
             return
         now = utc_now()
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
             if connection.execute(
                 "SELECT 1 FROM gripper_actions WHERE name = ?", (name,)
             ).fetchone() is None:
@@ -219,10 +220,14 @@ class RobotDatabase:
             connection.commit()
 
     def delete_gripper_action(self, name: str) -> None:
-        for routine in self.list_routines():
-            if _uses_gripper_action(routine["spec"], name):
-                raise ValueError(f"夹爪动作正在被 routine 使用: {routine['name']}")
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            rows = connection.execute(
+                "SELECT name, spec_json FROM routines"
+            ).fetchall()
+            for row in rows:
+                if _uses_gripper_action(json.loads(row["spec_json"]), name):
+                    raise ValueError(f"夹爪动作正在被 routine 使用: {row['name']}")
             cursor = connection.execute("DELETE FROM gripper_actions WHERE name = ?", (name,))
             if cursor.rowcount == 0:
                 raise KeyError(f"夹爪动作不存在: {name}")
@@ -389,10 +394,11 @@ class RobotDatabase:
     def save_routine(self, name: str, spec: dict[str, Any]) -> None:
         name = validate_name(name, "routine")
         validate_routine(spec)
-        self._validate_gripper_action_refs(spec)
         encoded = json.dumps(spec, ensure_ascii=False, separators=(",", ":"))
         now = utc_now()
         with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._validate_gripper_action_refs(spec, connection)
             connection.execute(
                 """INSERT INTO routines(name, spec_json, created_at, updated_at)
                    VALUES(?, ?, ?, ?)
@@ -402,13 +408,21 @@ class RobotDatabase:
             )
             connection.commit()
 
-    def _validate_gripper_action_refs(self, spec: Any) -> None:
+    def _validate_gripper_action_refs(
+        self, spec: Any, connection: sqlite3.Connection | None = None
+    ) -> None:
         if not isinstance(spec, dict):
             return
         if spec.get("type") == "gripper" and str(spec.get("action_name", "")).strip():
-            self.get_gripper_action(str(spec["action_name"]).strip())
+            action_name = str(spec["action_name"]).strip()
+            if connection is None:
+                self.get_gripper_action(action_name)
+            elif connection.execute(
+                "SELECT 1 FROM gripper_actions WHERE name = ?", (action_name,)
+            ).fetchone() is None:
+                raise KeyError(f"夹爪动作不存在: {action_name}")
         for step in spec.get("steps", []):
-            self._validate_gripper_action_refs(step)
+            self._validate_gripper_action_refs(step, connection)
 
     def delete_routine(self, name: str) -> None:
         with self.connect() as connection:
