@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import atexit
 import copy
 import os
 import secrets
@@ -14,6 +15,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from flask import Flask, jsonify, render_template, request, session
+from agx_action_group_interfaces.action import RunActionGroup
 from hands_control_interfaces.action import HandControl
 from hands_control_interfaces.srv import (
     GetApproachingValue,
@@ -35,6 +37,10 @@ from werkzeug.utils import secure_filename
 from krt_human_robot.adapters.navigation import RangerNavAdapter
 from krt_human_robot.config import load_config
 from krt_human_robot.gripper_system import GripperSystemController
+from krt_human_robot.robot_system import (
+    RobotSystemController,
+    collect_routine_requirements,
+)
 from krt_human_robot.web_auth import AuthDatabase
 
 
@@ -50,6 +56,9 @@ class RosBridge:
         self.executor = MultiThreadedExecutor(num_threads=2)
         self.executor.add_node(self.node)
         self.client = ActionClient(self.node, RunRoutine, action_name)
+        self.arm_group_client = ActionClient(
+            self.node, RunActionGroup, "/agx_action_group/run_action_group"
+        )
         self.hand_clients = {
             side: ActionClient(self.node, HandControl, f"/{side}/hand_control")
             for side in ("left", "right")
@@ -162,6 +171,34 @@ class RosBridge:
                 )
             except Exception as exc:
                 self._finish_gripper_hand(side, False, str(exc), [])
+
+    def run_arm_group(self, arm_target: str, group_name: str,
+                      repeat_count: int = 1) -> None:
+        if not self.arm_group_client.wait_for_server(timeout_sec=2.0):
+            raise RuntimeError("动作组 action 不可用")
+        with self.lock:
+            if self.state["status"] == "running":
+                raise RuntimeError("已有任务正在执行")
+            self.state = {
+                "mode": "arm_group", "status": "running",
+                "current_step": "", "message": "",
+            }
+            self.cancel_requested = False
+        goal = RunActionGroup.Goal()
+        goal.arm_target = arm_target
+        goal.group_name = group_name
+        goal.repeat_count = repeat_count
+        future = self.arm_group_client.send_goal_async(
+            goal, feedback_callback=self._arm_group_feedback
+        )
+        future.add_done_callback(self._goal_response)
+
+    def _arm_group_feedback(self, message) -> None:
+        feedback = message.feedback
+        with self.lock:
+            self.state["current_step"] = (
+                f"{feedback.current_step}/{feedback.total_steps} {feedback.step_name}"
+            )
 
     def _gripper_feedback(self, side: str, message) -> None:
         feedback = message.feedback
@@ -438,10 +475,20 @@ class WebRuntime:
             self.bridge.run_gripper(targets)
             self.mode = "gripper"
 
+    def run_arm_group(self, arm_target: str, group_name: str,
+                      repeat_count: int) -> None:
+        if self.bridge is None:
+            raise RuntimeError("ROS bridge 未启用")
+        with self.lock:
+            if self.active():
+                raise RuntimeError("已有任务正在执行")
+            self.bridge.run_arm_group(arm_target, group_name, repeat_count)
+            self.mode = "arm_group"
+
     def active(self) -> bool:
         if self.mode == "routine" and self.bridge:
             return self.bridge.status()["status"] == "running"
-        if self.mode == "gripper" and self.bridge:
+        if self.mode in {"gripper", "arm_group"} and self.bridge:
             return self.bridge.status()["status"] == "running"
         if self.mode == "waypoint":
             return self.adapter._running(self.adapter._cruise_process)
@@ -450,7 +497,7 @@ class WebRuntime:
     def status(self) -> dict[str, Any]:
         if self.mode == "routine" and self.bridge:
             return self.bridge.status()
-        if self.mode == "gripper" and self.bridge:
+        if self.mode in {"gripper", "arm_group"} and self.bridge:
             return self.bridge.status()
         if self.mode == "waypoint":
             process = self.adapter._cruise_process
@@ -467,7 +514,7 @@ class WebRuntime:
     def cancel(self) -> None:
         if self.mode == "routine" and self.bridge:
             self.bridge.cancel()
-        elif self.mode == "gripper" and self.bridge:
+        elif self.mode in {"gripper", "arm_group"} and self.bridge:
             self.bridge.cancel()
         elif self.mode == "waypoint":
             result = self.adapter.stop_cruise()
@@ -526,10 +573,20 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         hand_clients=bridge.hand_clients,
         future_result=bridge._future_result,
     ) if bridge is not None else None
+    robot_system = RobotSystemController(
+        bridge.node,
+        robot_config,
+        future_result=bridge._future_result,
+        robot_db=app.config["ROBOT_DB"],
+        media_dir=app.config["MEDIA_DIR"],
+        config_file=os.environ.get("KRT_HUMAN_ROBOT_CONFIG", ""),
+    ) if bridge is not None else None
+    if robot_system is not None:
+        atexit.register(robot_system.shutdown_owned_providers)
     runtime = WebRuntime(adapter, bridge)
     app.extensions.update(
         robot_db=database, auth_db=auth, runtime=runtime,
-        gripper_system=gripper_system,
+        gripper_system=gripper_system, robot_system=robot_system,
     )
     # ponytail: one-worker in-memory limiter; move to shared storage for multi-worker use.
     failures: dict[str, list[float]] = {}
@@ -677,6 +734,49 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     def gripper_system_status():
         return jsonify(require_gripper_system().status())
 
+    def require_robot_system():
+        system = app.extensions.get("robot_system")
+        if system is None:
+            raise RuntimeError("ROS bridge 未启用")
+        return system
+
+    @app.get("/api/robot-systems")
+    @protected(auth, csrf=False)
+    def robot_system_status():
+        return jsonify(require_robot_system().status())
+
+    @app.post("/api/robot-systems/<component>/control")
+    @protected(auth)
+    def control_robot_system(component: str):
+        enabled = bool((request.get_json() or {}).get("enabled", False))
+        if not enabled and runtime.active():
+            runtime.cancel()
+        result = require_robot_system().control(component, enabled)
+        return audited(
+            auth, "control_robot_system", component, result["success"],
+            data={"components": result["components"]},
+        )
+
+    @app.post("/api/arm/teach/start")
+    @protected(auth)
+    def start_arm_teach():
+        payload = request.get_json() or {}
+        result = require_robot_system().start_teach(
+            str(payload.get("arm_target", "")),
+            str(payload.get("group_name", "")),
+        )
+        return audited(auth, "start_arm_teach", result["arm_target"], True,
+                       data=result)
+
+    @app.post("/api/arm/teach/stop")
+    @protected(auth)
+    def stop_arm_teach():
+        result = require_robot_system().stop_teach(
+            str((request.get_json() or {}).get("group_name", ""))
+        )
+        return audited(auth, "stop_arm_teach", result["group_name"], True,
+                       data=result)
+
     @app.post("/api/gripper/system/control")
     @protected(auth)
     def control_gripper_system():
@@ -750,6 +850,48 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         database.rename_action_group(name, new_name)
         return audited(auth, "rename_action_group", name, True, new_name)
 
+    def ensure_motion_requirements(requirements: set[str]) -> None:
+        system = app.extensions.get("robot_system")
+        if system is not None:
+            for component in (
+                "left_arm", "right_arm", "action_group_stack", "routine"
+            ):
+                if component not in requirements:
+                    continue
+                result = system.control(component, True)
+                if not result["success"]:
+                    messages = [
+                        item["message"] for item in result["components"].values()
+                        if not item["success"]
+                    ]
+                    raise RuntimeError("；".join(messages))
+            system.ensure_providers(requirements)
+        if "grippers" in requirements:
+            result = require_gripper_system().control("both", True)
+            if not result["success"]:
+                raise RuntimeError("夹爪系统启动失败")
+
+    @app.post("/api/action-groups/<name>/run")
+    @protected(auth)
+    def run_action_group(name: str):
+        payload = request.get_json() or {}
+        group = database.get_action_group(name)
+        arm_target = str(payload.get("arm_target", group["arm_target"]))
+        repeat_count = int(payload.get("repeat_count", 1))
+        if arm_target not in {"left", "right", "both"}:
+            raise ValueError("请选择回放机械臂")
+        if repeat_count < 1 or repeat_count > 100:
+            raise ValueError("repeat_count 必须在 1 到 100 之间")
+        requirements = {"action_group_stack"}
+        if arm_target in {"left", "both"}:
+            requirements.add("left_arm")
+        if arm_target in {"right", "both"}:
+            requirements.add("right_arm")
+        ensure_motion_requirements(requirements)
+        runtime.run_arm_group(arm_target, name, repeat_count)
+        return audited(auth, "run_action_group", name, True,
+                       data={"arm_target": arm_target})
+
     @app.put("/api/routines/<name>")
     @protected(auth)
     def save_routine(name: str):
@@ -803,15 +945,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @protected(auth)
     def run_routine(name: str):
         spec = database.get_routine(name)
-        system = app.extensions.get("gripper_system")
-        if system is not None:
-            hands = system.status()["hands"]
-            inactive = [
-                side for side in sorted(gripper_sides(spec, database))
-                if hands[side]["lifecycle_state"] != "active"
-            ]
-            if inactive:
-                raise RuntimeError(f"请先开启夹爪: {', '.join(inactive)}")
+        ensure_motion_requirements(collect_routine_requirements(spec))
         runtime.run_routine(name)
         return audited(auth, "run_routine", name, True)
 

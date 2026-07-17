@@ -143,6 +143,19 @@ class FakeGripperBridge:
             "message": "", "hands": {"left": {"progress": 0.5}},
         }
 
+    def run(self, name):
+        self.state = {
+            "mode": "routine", "status": "running", "current_step": name,
+            "message": "",
+        }
+
+    def run_arm_group(self, arm_target, group_name, repeat_count):
+        self.state = {
+            "mode": "arm_group", "status": "running",
+            "current_step": group_name,
+            "message": f"{arm_target}:{repeat_count}",
+        }
+
     def status(self):
         return self.state
 
@@ -207,6 +220,74 @@ def test_gripper_system_status_control_and_settings_api(tmp_path):
     assert system.runtime[-1][0] == "right"
 
 
+class FakeRobotSystem:
+    def __init__(self):
+        self.controls = []
+        self.teach_calls = []
+
+    def status(self):
+        return {"components": {"left_arm": {"active": False}},
+                "teaching": {"active": False}}
+
+    def control(self, component, enabled):
+        self.controls.append((component, enabled))
+        return {"success": True, "components": {}}
+
+    def start_teach(self, arm_target, group_name):
+        self.teach_calls.append(("start", arm_target, group_name))
+        return {"active": True, "arm_target": arm_target, "group_name": group_name}
+
+    def stop_teach(self, group_name=""):
+        self.teach_calls.append(("stop", group_name))
+        return {"active": False, "group_name": group_name, "sample_count": 3}
+
+    def ensure_providers(self, requirements):
+        self.requirements = requirements
+
+
+def test_robot_system_and_teach_api(tmp_path):
+    app, client, headers = authenticated_app(tmp_path)
+    system = FakeRobotSystem()
+    app.extensions["robot_system"] = system
+
+    assert client.get("/api/robot-systems").status_code == 200
+    control = client.post(
+        "/api/robot-systems/arms/control", headers=headers,
+        json={"enabled": True},
+    )
+    assert control.status_code == 200
+    assert system.controls == [("arms", True)]
+    started = client.post(
+        "/api/arm/teach/start", headers=headers,
+        json={"arm_target": "left", "group_name": "挥手"},
+    )
+    assert started.status_code == 200
+    stopped = client.post(
+        "/api/arm/teach/stop", headers=headers, json={"group_name": "挥手"},
+    )
+    assert stopped.get_json()["sample_count"] == 3
+
+
+def test_action_group_run_starts_dependencies_and_tracks_execution(tmp_path):
+    app, client, headers = authenticated_app(tmp_path)
+    system = FakeRobotSystem()
+    bridge = FakeGripperBridge()
+    app.extensions["robot_system"] = system
+    app.extensions["runtime"].bridge = bridge
+    app.extensions["robot_db"].save_action_group("挥手", "left", [{
+        "name": ["joint_1"], "position": [0.1], "velocity": [], "effort": [],
+    }])
+
+    response = client.post(
+        "/api/action-groups/%E6%8C%A5%E6%89%8B/run",
+        headers=headers, json={"repeat_count": 2},
+    )
+
+    assert response.status_code == 200
+    assert system.controls == [("left_arm", True), ("action_group_stack", True)]
+    assert bridge.state["mode"] == "arm_group"
+
+
 def test_operator_cannot_change_gripper_hardware_settings(tmp_path):
     app = create_app({
         "TESTING": True, "SECRET_KEY": "test", "SESSION_COOKIE_SECURE": False,
@@ -233,11 +314,12 @@ def test_operator_cannot_change_gripper_hardware_settings(tmp_path):
     assert allowed.status_code == 200
 
 
-def test_routine_with_inactive_gripper_is_rejected_before_execution(tmp_path):
+def test_routine_automatically_starts_inactive_gripper(tmp_path):
     app, client, headers = authenticated_app(tmp_path)
     system = FakeGripperSystem()
     system.hand_states["left"] = "unconfigured"
     app.extensions["gripper_system"] = system
+    app.extensions["runtime"].bridge = FakeGripperBridge()
     client.put("/api/gripper-actions/open-left", headers=headers, json={
         "targets": [gripper_target("left")],
     })
@@ -248,8 +330,8 @@ def test_routine_with_inactive_gripper_is_rejected_before_execution(tmp_path):
 
     response = client.post("/api/routines/grip/run", headers=headers)
 
-    assert response.status_code == 400
-    assert "请先开启夹爪: left" in response.get_json()["error"]
+    assert response.status_code == 200
+    assert system.controls == [("both", True)]
 
 
 def test_gripper_direct_run_is_tracked_and_mutually_exclusive(tmp_path):

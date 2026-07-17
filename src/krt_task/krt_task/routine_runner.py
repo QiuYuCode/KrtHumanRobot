@@ -13,7 +13,7 @@ from krt_task.robot_db import RobotDatabase
 from krt_task_interfaces.action import RunRoutine
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rclpy.task import Future
 from sensor_msgs.msg import Image
 
@@ -47,7 +47,7 @@ class ParallelJob:
     success: bool | None = None
 
 
-class RoutineRunnerNode(Node):
+class RoutineRunnerNode(LifecycleNode):
     """Runs named robot routines through ROS interfaces."""
 
     def __init__(self) -> None:
@@ -65,10 +65,16 @@ class RoutineRunnerNode(Node):
         self.declare_parameter("image_topic", DEFAULT_IMAGE_TOPIC)
         self.declare_parameter("image_dir", DEFAULT_IMAGE_DIR)
         self.declare_parameter("default_wait_ms", 200)
-        self.database = RobotDatabase(str(self.get_parameter("robot_db").value))
-
+        self.declare_parameter("autostart", True)
+        self.database = None
         self._running = False
+        self._active = False
+        self._stop_requested = False
         self._lock = Lock()
+        self._server = None
+
+    def on_configure(self, _state: State) -> TransitionCallbackReturn:
+        self.database = RobotDatabase(str(self.get_parameter("robot_db").value))
         self._server = ActionServer(
             self,
             RunRoutine,
@@ -78,9 +84,32 @@ class RoutineRunnerNode(Node):
             cancel_callback=self._cancel_callback,
         )
         self.get_logger().info("routine_runner ready: action=/krt_task/run_routine")
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, _state: State) -> TransitionCallbackReturn:
+        self._stop_requested = False
+        self._active = True
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_deactivate(self, _state: State) -> TransitionCallbackReturn:
+        self._active = False
+        self._stop_requested = True
+        deadline = time.monotonic() + 5.0
+        while self._running and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if self._running:
+            return TransitionCallbackReturn.FAILURE
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_cleanup(self, _state: State) -> TransitionCallbackReturn:
+        if self._server is not None:
+            self._server.destroy()
+        self._server = None
+        self.database = None
+        return TransitionCallbackReturn.SUCCESS
 
     def _goal_callback(self, goal: RunRoutine.Goal) -> GoalResponse:
-        if not goal.routine_name.strip():
+        if not self._active or not goal.routine_name.strip():
             return GoalResponse.REJECT
         with self._lock:
             if self._running:
@@ -503,9 +532,8 @@ class RoutineRunnerNode(Node):
         msg.current_step = current_step
         goal_handle.publish_feedback(msg)
 
-    @staticmethod
-    def check_cancel(goal_handle) -> None:
-        if goal_handle.is_cancel_requested:
+    def check_cancel(self, goal_handle) -> None:
+        if goal_handle.is_cancel_requested or self._stop_requested:
             raise RoutineCanceled()
 
 
@@ -527,6 +555,11 @@ def optional_deadline(args: dict[str, Any]) -> float | None:
 def main(args: list[str] | None = None) -> None:
     rclpy.init(args=args)
     node = RoutineRunnerNode()
+    if bool(node.get_parameter("autostart").value):
+        if node.trigger_configure() != TransitionCallbackReturn.SUCCESS:
+            raise RuntimeError("routine_runner configure failed")
+        if node.trigger_activate() != TransitionCallbackReturn.SUCCESS:
+            raise RuntimeError("routine_runner activate failed")
     executor = MultiThreadedExecutor(num_threads=4)
     executor.add_node(node)
     try:
