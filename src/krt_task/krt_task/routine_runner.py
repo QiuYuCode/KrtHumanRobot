@@ -60,6 +60,8 @@ class RoutineRunnerNode(Node):
         self.declare_parameter("play_audio_action", DEFAULT_PLAY_AUDIO_ACTION)
         self.declare_parameter("arm_action", DEFAULT_ARM_ACTION)
         self.declare_parameter("hand_action_template", DEFAULT_HAND_ACTION_TEMPLATE)
+        self.declare_parameter("left_hand_adapter_index", 0)
+        self.declare_parameter("right_hand_adapter_index", 1)
         self.declare_parameter("image_topic", DEFAULT_IMAGE_TOPIC)
         self.declare_parameter("image_dir", DEFAULT_IMAGE_DIR)
         self.declare_parameter("default_wait_ms", 200)
@@ -145,7 +147,7 @@ class RoutineRunnerNode(Node):
         if task == "arm_group":
             return self.wait_action_job(goal_handle, self.start_arm_group(args))
         if task == "gripper":
-            return self.wait_action_job(goal_handle, self.start_gripper(args))
+            return self.wait_jobs(goal_handle, self.start_gripper_jobs(args))
         raise ValueError(f"未知 routine task: {task}")
 
     def run_sequence(self, goal_handle, args: dict[str, Any]) -> bool:
@@ -177,7 +179,7 @@ class RoutineRunnerNode(Node):
                         f"parallel 第 {index} 步不支持 {task!r}; "
                         f"可选: {', '.join(sorted(PARALLEL_TASKS))}"
                     )
-                jobs.append(self.start_parallel_job(task, step_args, index))
+                jobs.extend(self.start_parallel_jobs(task, step_args, index))
 
             while rclpy.ok():
                 self.check_cancel(goal_handle)
@@ -293,30 +295,33 @@ class RoutineRunnerNode(Node):
         self.get_logger().info(f"已保存照片: {filename}")
         return True
 
-    def start_parallel_job(
+    def start_parallel_jobs(
         self,
         task: str,
         args: dict[str, Any],
         index: int,
-    ) -> ParallelJob:
+    ) -> list[ParallelJob]:
         name = str(args.get("name", f"{task}_{index}"))
         if task == "wait":
             wait_ms = int(args.get("wait_ms", int(self.get_parameter("default_wait_ms").value)))
-            return ParallelJob(
+            return [ParallelJob(
                 name=name,
                 kind="wait",
                 deadline=time.monotonic() + max(0.0, wait_ms / 1000.0),
-            )
+            )]
         if task == "play_audio":
             job = self.start_play_audio(args)
         elif task == "arm_group":
             job = self.start_arm_group(args)
         elif task == "gripper":
-            job = self.start_gripper(args)
+            jobs = self.start_gripper_jobs(args)
+            for job in jobs:
+                job.name = f"{name}:{job.name}"
+            return jobs
         else:
             raise ValueError(f"parallel 不支持任务: {task}")
         job.name = name
-        return job
+        return [job]
 
     def start_play_audio(self, args: dict[str, Any]) -> ParallelJob:
         from voice_interfaces.action import PlayAudio
@@ -367,7 +372,10 @@ class RoutineRunnerNode(Node):
         if "position" not in args:
             raise ValueError("gripper 缺少 position")
         goal = HandControl.Goal()
-        goal.adapter_index = int(args.get("adapter_index", 0 if side == "left" else 1))
+        adapter_parameter = f"{side}_hand_adapter_index"
+        goal.adapter_index = int(
+            args.get("adapter_index", self.get_parameter(adapter_parameter).value)
+        )
         goal.finger_id = int(args.get("finger_id", 0))
         goal.position = int(args["position"])
         goal.speed = int(args.get("speed", 500))
@@ -387,6 +395,14 @@ class RoutineRunnerNode(Node):
             float(args.get("server_timeout_s", 2.0)),
             optional_deadline(args),
         )
+
+    def start_gripper_jobs(self, args: dict[str, Any]) -> list[ParallelJob]:
+        action_name = str(args.get("action_name", "")).strip()
+        targets = (
+            self.database.get_gripper_action(action_name)["targets"]
+            if action_name else [args]
+        )
+        return [self.start_gripper(target) for target in targets]
 
     def start_action_job(
         self,
@@ -409,17 +425,22 @@ class RoutineRunnerNode(Node):
         )
 
     def wait_action_job(self, goal_handle, job: ParallelJob) -> bool:
+        return self.wait_jobs(goal_handle, [job])
+
+    def wait_jobs(self, goal_handle, jobs: list[ParallelJob]) -> bool:
         try:
             while rclpy.ok():
                 self.check_cancel(goal_handle)
-                self.poll_job(job)
-                if job.success is not None:
-                    if job.success is False:
-                        self.cancel_jobs([job])
-                    return job.success
+                for job in jobs:
+                    self.poll_job(job)
+                if any(job.success is False for job in jobs):
+                    self.cancel_jobs(jobs)
+                    return False
+                if all(job.success is True for job in jobs):
+                    return True
                 time.sleep(0.05)
         except RoutineCanceled:
-            self.cancel_jobs([job])
+            self.cancel_jobs(jobs)
             raise
         return False
 
