@@ -10,6 +10,8 @@ from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.lifecycle import LifecycleNode
 from rclpy.node import Node
+from rclpy.parameter import Parameter
+from lifecycle_msgs.srv import GetState
 
 from hands_control.hand_control_server import HandControlServer
 from hands_control_interfaces.action import HandControl
@@ -144,6 +146,50 @@ def _wait_future(future, timeout=3.0):
         time.sleep(0.01)
     assert future.done(), "ROS future timed out"
     return future.result()
+
+
+def test_hand_control_lifecycle_state_service_responds(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
+    owned_context = not rclpy.ok()
+    if owned_context:
+        rclpy.init()
+    server_node = HandControlServer()
+    client_node = Node("hand_lifecycle_state_test_client")
+    executor = MultiThreadedExecutor(num_threads=2)
+    executor.add_node(server_node)
+    executor.add_node(client_node)
+    client = client_node.create_client(
+        GetState, "/hand_control_server/get_state"
+    )
+    spin_thread = threading.Thread(target=executor.spin, daemon=True)
+    spin_thread.start()
+    try:
+        assert client.wait_for_service(timeout_sec=2.0)
+        response = _wait_future(client.call_async(GetState.Request()))
+        assert response.current_state.label == "unconfigured"
+    finally:
+        executor.shutdown(timeout_sec=2.0)
+        server_node.destroy_node()
+        client_node.destroy_node()
+        if owned_context:
+            rclpy.shutdown()
+
+
+def test_static_parameter_update_reads_humble_lifecycle_state(tmp_path, monkeypatch):
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
+    owned_context = not rclpy.ok()
+    if owned_context:
+        rclpy.init()
+    node = HandControlServer()
+    try:
+        result = node._handle_parameter_update([
+            Parameter("device_id", value=2)
+        ])
+        assert result.successful is True
+    finally:
+        node.destroy_node()
+        if owned_context:
+            rclpy.shutdown()
 
 
 def test_inflight_hand_control_goal_is_canceled_by_executor(monkeypatch, tmp_path):

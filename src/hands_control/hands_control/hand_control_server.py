@@ -51,7 +51,7 @@ class HandControlServer(LifecycleNode):
         )
         self._stopping = False
         self._interfaces_active = False
-        self._services = []
+        self._control_services = []
         self.listen_enabled = bool(self.get_parameter('listen_enabled').value)
         self.realtime_response_enabled = bool(
             self.get_parameter('realtime_response_enabled').value
@@ -167,7 +167,7 @@ class HandControlServer(LifecycleNode):
             self._execute_reset_hand,
             callback_group=self._callback_group,
         )
-        self._services = [
+        self._control_services = [
             self.create_service(GetDeviceId, 'get_device_id', self._handle_get_device_id),
             self.create_service(
                 GetDeviceString, 'get_firmware_version', self._handle_get_firmware_version
@@ -175,10 +175,10 @@ class HandControlServer(LifecycleNode):
             self.create_service(Trigger, 'clear_error', self._handle_clear_error),
         ]
         self._register_finger_services()
-        self._services.extend(self._finger_get_services)
-        self._services.extend(self._finger_set_services)
+        self._control_services.extend(self._finger_get_services)
+        self._control_services.extend(self._finger_set_services)
         if self.has_pressure_sensor:
-            self._services.extend([
+            self._control_services.extend([
                 self.create_service(
                     GetNormalPressure, 'get_normal_pressure', self._handle_normal_pressure
                 ),
@@ -198,9 +198,9 @@ class HandControlServer(LifecycleNode):
             return
         self._hand_control_server.destroy()
         self._reset_hand_server.destroy()
-        for service in self._services:
+        for service in self._control_services:
             self.destroy_service(service)
-        self._services = []
+        self._control_services = []
         self._interfaces_active = False
 
     def _parse_adapter_type(self, adapter_type_str):
@@ -487,7 +487,7 @@ class HandControlServer(LifecycleNode):
         requested_listen = self.listen_enabled
         requested_realtime = self.realtime_response_enabled
 
-        state_label = self.get_current_state().label
+        state_label = self._state_machine.current_state[1]
         for param in params:
             if param.name in static_names:
                 if state_label != 'unconfigured':
