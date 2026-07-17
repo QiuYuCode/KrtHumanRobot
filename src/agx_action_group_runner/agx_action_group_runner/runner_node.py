@@ -7,7 +7,7 @@ from agx_arm_msgs.msg import AgxArmStatus
 from geometry_msgs.msg import PoseArray, PoseStamped
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from sensor_msgs.msg import JointState
 from krt_task.robot_db import RobotDatabase
 
@@ -17,7 +17,8 @@ SUPPORTED_ARM_TARGETS = {"left", "right", "both"}
 
 
 class ArmIo:
-    def __init__(self, namespace: str, node: Node):
+    def __init__(self, namespace: str, node: LifecycleNode):
+        self.node = node
         self.namespace = self._normalize_ns(namespace)
         self.latest_status: Optional[AgxArmStatus] = None
         self.pub_move_j = node.create_publisher(
@@ -36,6 +37,14 @@ class ArmIo:
         self.sub_status = node.create_subscription(
             AgxArmStatus, self._topic("feedback/arm_status"), self._status_cb, 10
         )
+
+    def destroy(self):
+        self.node.destroy_publisher(self.pub_move_j)
+        self.node.destroy_publisher(self.pub_move_p)
+        self.node.destroy_publisher(self.pub_move_l)
+        self.node.destroy_publisher(self.pub_move_c)
+        self.node.destroy_publisher(self.pub_joint_states)
+        self.node.destroy_subscription(self.sub_status)
 
     def _status_cb(self, msg: AgxArmStatus):
         self.latest_status = msg
@@ -69,7 +78,7 @@ class ArmIo:
             raise ValueError(f"Unsupported step type: {step_type}")
 
 
-class ActionGroupRunnerNode(Node):
+class ActionGroupRunnerNode(LifecycleNode):
     def __init__(self):
         super().__init__("agx_action_group_runner")
 
@@ -80,7 +89,16 @@ class ActionGroupRunnerNode(Node):
         self.declare_parameter("stream_step_interval_sec", 0.02)
         self.declare_parameter("left_namespace", "/left_arm")
         self.declare_parameter("right_namespace", "/right_arm")
+        self.declare_parameter("autostart", True)
+        self.database = None
+        self.left_arm = None
+        self.right_arm = None
+        self._action_server = None
+        self._active = False
+        self._stop_requested = False
+        self._running_goal = False
 
+    def on_configure(self, _state: State) -> TransitionCallbackReturn:
         self.database = RobotDatabase(str(self.get_parameter("robot_db").value))
         legacy_groups_file = str(self.get_parameter("legacy_groups_file").value)
         if legacy_groups_file:
@@ -100,8 +118,6 @@ class ActionGroupRunnerNode(Node):
 
         self.left_arm = ArmIo(left_namespace, self)
         self.right_arm = ArmIo(right_namespace, self)
-        self._running_goal = False
-
         self._action_server = ActionServer(
             self,
             RunActionGroup,
@@ -115,9 +131,38 @@ class ActionGroupRunnerNode(Node):
             "Action group runner started. "
             f"left_ns={self.left_arm.namespace or '/'}, right_ns={self.right_arm.namespace or '/'}"
         )
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, _state: State) -> TransitionCallbackReturn:
+        self._stop_requested = False
+        self._active = True
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_deactivate(self, _state: State) -> TransitionCallbackReturn:
+        self._active = False
+        self._stop_requested = True
+        deadline = time.monotonic() + 5.0
+        while self._running_goal and time.monotonic() < deadline:
+            time.sleep(0.02)
+        if self._running_goal:
+            return TransitionCallbackReturn.FAILURE
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_cleanup(self, _state: State) -> TransitionCallbackReturn:
+        if self._action_server is not None:
+            self._action_server.destroy()
+        if self.left_arm is not None:
+            self.left_arm.destroy()
+        if self.right_arm is not None:
+            self.right_arm.destroy()
+        self._action_server = None
+        self.left_arm = None
+        self.right_arm = None
+        self.database = None
+        return TransitionCallbackReturn.SUCCESS
 
     def _goal_callback(self, goal_request: RunActionGroup.Goal):
-        if self._running_goal:
+        if not self._active or self._running_goal:
             self.get_logger().warn("Reject new goal because another goal is running.")
             return GoalResponse.REJECT
         if goal_request.arm_target not in SUPPORTED_ARM_TARGETS:
@@ -274,7 +319,7 @@ class ActionGroupRunnerNode(Node):
 
             for cycle in range(1, repeat_count + 1):
                 for step_index, step in enumerate(steps):
-                    if goal_handle.is_cancel_requested:
+                    if goal_handle.is_cancel_requested or self._stop_requested:
                         goal_handle.canceled()
                         result = RunActionGroup.Result()
                         result.success = False
@@ -316,6 +361,11 @@ class ActionGroupRunnerNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = ActionGroupRunnerNode()
+    if bool(node.get_parameter("autostart").value):
+        if node.trigger_configure() != TransitionCallbackReturn.SUCCESS:
+            raise RuntimeError("action_group_runner configure failed")
+        if node.trigger_activate() != TransitionCallbackReturn.SUCCESS:
+            raise RuntimeError("action_group_runner activate failed")
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:
@@ -323,4 +373,5 @@ def main(args=None):
     finally:
         executor.shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

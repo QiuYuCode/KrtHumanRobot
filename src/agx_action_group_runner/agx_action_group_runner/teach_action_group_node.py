@@ -7,7 +7,7 @@ from agx_action_group_interfaces.srv import StartTeach, StopTeach
 from krt_task.robot_db import RobotDatabase
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
-from rclpy.node import Node
+from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
 
@@ -15,7 +15,7 @@ from std_srvs.srv import SetBool
 class ArmRecorder:
     def __init__(
         self,
-        node: Node,
+        node: LifecycleNode,
         namespace: str,
         min_joint_delta_rad: float,
         callback_group: ReentrantCallbackGroup,
@@ -79,7 +79,7 @@ class ArmRecorder:
             return list(self.samples)
 
 
-class TeachActionGroupNode(Node):
+class TeachActionGroupNode(LifecycleNode):
     def __init__(self):
         super().__init__("teach_action_group")
         self.cb_group = ReentrantCallbackGroup()
@@ -91,7 +91,17 @@ class TeachActionGroupNode(Node):
         self.declare_parameter("service_timeout_sec", 5.0)
         self.declare_parameter("min_joint_delta_rad", 0.01)
         self.declare_parameter("playback_step_interval_sec", 0.02)
+        self.declare_parameter("autostart", True)
+        self.database = None
+        self.recorders = {}
+        self.active_arm = None
+        self.active_group = None
+        self.lock = threading.Lock()
+        self._active = False
+        self._start_service = None
+        self._stop_service = None
 
+    def on_configure(self, _state: State) -> TransitionCallbackReturn:
         self.database = RobotDatabase(str(self.get_parameter("robot_db").value))
         legacy_groups_file = str(self.get_parameter("legacy_groups_file").value)
         if legacy_groups_file:
@@ -116,23 +126,47 @@ class TeachActionGroupNode(Node):
                 self.cb_group,
             ),
         }
-        self.active_arm: str | None = None
-        self.active_group: str | None = None
-        self.lock = threading.Lock()
-
-        self.create_service(
+        self._start_service = self.create_service(
             StartTeach,
             "start_teach",
             self._start_cb,
             callback_group=self.cb_group,
         )
-        self.create_service(
+        self._stop_service = self.create_service(
             StopTeach,
             "stop_teach",
             self._stop_cb,
             callback_group=self.cb_group,
         )
         self.get_logger().info("Teach action group node started.")
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_activate(self, _state: State) -> TransitionCallbackReturn:
+        self._active = True
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_deactivate(self, _state: State) -> TransitionCallbackReturn:
+        if self.active_arm is not None:
+            response = self._stop_cb(StopTeach.Request(), StopTeach.Response())
+            if not response.success:
+                self.get_logger().error(response.message)
+                return TransitionCallbackReturn.FAILURE
+        self._active = False
+        return TransitionCallbackReturn.SUCCESS
+
+    def on_cleanup(self, _state: State) -> TransitionCallbackReturn:
+        for recorder in self.recorders.values():
+            self.destroy_subscription(recorder.sub)
+            self.destroy_client(recorder.client)
+        if self._start_service is not None:
+            self.destroy_service(self._start_service)
+        if self._stop_service is not None:
+            self.destroy_service(self._stop_service)
+        self.recorders = {}
+        self._start_service = None
+        self._stop_service = None
+        self.database = None
+        return TransitionCallbackReturn.SUCCESS
 
     def _call_teach_mode(self, recorder: ArmRecorder, enabled: bool) -> tuple[bool, str]:
         if not recorder.client.wait_for_service(timeout_sec=self.service_timeout_sec):
@@ -150,6 +184,10 @@ class TeachActionGroupNode(Node):
         return bool(result.success), str(result.message)
 
     def _start_cb(self, request, response):
+        if not getattr(self, "_active", True):
+            response.success = False
+            response.message = "teach service is inactive"
+            return response
         arm = str(request.arm_target).strip().lower()
         if arm not in self.recorders:
             response.success = False
@@ -173,6 +211,10 @@ class TeachActionGroupNode(Node):
         return response
 
     def _stop_cb(self, request, response):
+        if not getattr(self, "_active", True) and self.active_arm is None:
+            response.success = False
+            response.message = "teach service is inactive"
+            return response
         with self.lock:
             arm = str(request.arm_target).strip().lower() or self.active_arm
             if arm not in self.recorders or arm != self.active_arm:
@@ -220,6 +262,11 @@ class TeachActionGroupNode(Node):
 def main(args=None):
     rclpy.init(args=args)
     node = TeachActionGroupNode()
+    if bool(node.get_parameter("autostart").value):
+        if node.trigger_configure() != TransitionCallbackReturn.SUCCESS:
+            raise RuntimeError("teach_action_group configure failed")
+        if node.trigger_activate() != TransitionCallbackReturn.SUCCESS:
+            raise RuntimeError("teach_action_group activate failed")
     executor = MultiThreadedExecutor()
     executor.add_node(node)
     try:
@@ -227,4 +274,5 @@ def main(args=None):
     finally:
         executor.shutdown()
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()

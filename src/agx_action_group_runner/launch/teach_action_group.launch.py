@@ -2,6 +2,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
+from launch_ros.parameter_descriptions import ParameterValue
 
 
 def generate_launch_description():
@@ -16,6 +17,7 @@ def generate_launch_description():
     stream_step_interval_arg = DeclareLaunchArgument(
         "stream_step_interval_sec", default_value="0.02", description="Streaming replay interval"
     )
+    autostart_arg = DeclareLaunchArgument("autostart", default_value="true")
 
     runner = Node(
         package="agx_action_group_runner",
@@ -29,6 +31,7 @@ def generate_launch_description():
             "left_namespace": LaunchConfiguration("left_namespace"),
             "right_namespace": LaunchConfiguration("right_namespace"),
             "stream_step_interval_sec": LaunchConfiguration("stream_step_interval_sec"),
+            "autostart": ParameterValue(LaunchConfiguration("autostart"), value_type=bool),
         }],
     )
 
@@ -44,6 +47,7 @@ def generate_launch_description():
             "left_namespace": LaunchConfiguration("left_namespace"),
             "right_namespace": LaunchConfiguration("right_namespace"),
             "playback_step_interval_sec": LaunchConfiguration("stream_step_interval_sec"),
+            "autostart": ParameterValue(LaunchConfiguration("autostart"), value_type=bool),
         }],
     )
 
@@ -53,6 +57,7 @@ def generate_launch_description():
         left_namespace_arg,
         right_namespace_arg,
         stream_step_interval_arg,
+        autostart_arg,
         runner,
         teach,
     ])

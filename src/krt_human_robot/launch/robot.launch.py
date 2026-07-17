@@ -129,6 +129,7 @@ def _launch_setup(context, *args, **kwargs):
                 )
             ),
             launch_arguments={
+                "autostart": LaunchConfiguration("hands_autostart"),
                 "left_hand_listen": "false",
                 "right_hand_listen": "false",
                 "left_hand_realtime_response": "false",
@@ -188,6 +189,7 @@ def _launch_setup(context, *args, **kwargs):
                 "port": LaunchConfiguration("web_port").perform(context),
                 "certfile": LaunchConfiguration("web_certfile").perform(context),
                 "keyfile": LaunchConfiguration("web_keyfile").perform(context),
+                "config_file": config_file,
                 "robot_db": robot_db,
                 "web_db": LaunchConfiguration("web_db").perform(context),
                 "media_dir": media_dir,
@@ -222,6 +224,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("voice_config_file", default_value=default_voice_config),
         DeclareLaunchArgument("enable_voice_stack", default_value="true"),
         DeclareLaunchArgument("enable_hands_control_stack", default_value="true"),
+        DeclareLaunchArgument("hands_autostart", default_value="true"),
         DeclareLaunchArgument("enable_camera_stack", default_value="true"),
         DeclareLaunchArgument("enable_task_runner", default_value="true"),
         DeclareLaunchArgument("enable_action_group_stack", default_value="true"),
@@ -233,7 +236,9 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("arm_auto_enable", default_value="true"),
         DeclareLaunchArgument("arm_speed_percent", default_value="30"),
         DeclareLaunchArgument("robot_db", default_value="~/maps/krt_robot.db"),
-        DeclareLaunchArgument("legacy_action_groups_file", default_value="~/maps/action_groups.yaml"),
+        DeclareLaunchArgument(
+            "legacy_action_groups_file", default_value="~/maps/action_groups.yaml"
+        ),
         DeclareLaunchArgument("media_dir", default_value="~/music"),
         DeclareLaunchArgument("enable_web_console", default_value="false"),
         DeclareLaunchArgument("web_host", default_value="0.0.0.0"),
