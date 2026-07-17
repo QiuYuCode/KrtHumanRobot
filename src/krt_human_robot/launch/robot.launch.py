@@ -188,6 +188,7 @@ def _launch_setup(context, *args, **kwargs):
                 "port": LaunchConfiguration("web_port").perform(context),
                 "certfile": LaunchConfiguration("web_certfile").perform(context),
                 "keyfile": LaunchConfiguration("web_keyfile").perform(context),
+                "config_file": config_file,
                 "robot_db": robot_db,
                 "web_db": LaunchConfiguration("web_db").perform(context),
                 "media_dir": media_dir,

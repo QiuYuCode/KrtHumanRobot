@@ -9,8 +9,9 @@ from launch.substitutions import LaunchConfiguration
 
 
 def generate_launch_description() -> LaunchDescription:
+    package_share = get_package_share_directory("krt_human_robot")
     run_script = os.path.join(
-        get_package_share_directory("krt_human_robot"),
+        package_share,
         "scripts", "run_krt_web_console.sh",
     )
     return LaunchDescription([
@@ -18,6 +19,11 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("port", default_value="8443"),
         DeclareLaunchArgument("certfile"),
         DeclareLaunchArgument("keyfile"),
+        DeclareLaunchArgument(
+            "config_file", default_value=os.path.join(
+                package_share, "config", "krt_human_robot.yaml"
+            )
+        ),
         DeclareLaunchArgument("robot_db", default_value="~/maps/krt_robot.db"),
         DeclareLaunchArgument("web_db", default_value="~/.local/share/krt_human_robot/web.db"),
         DeclareLaunchArgument("media_dir", default_value="~/music"),
@@ -34,6 +40,7 @@ def generate_launch_description() -> LaunchDescription:
                 "KRT_ROBOT_DB": LaunchConfiguration("robot_db"),
                 "KRT_WEB_DB": LaunchConfiguration("web_db"),
                 "KRT_MEDIA_DIR": LaunchConfiguration("media_dir"),
+                "KRT_HUMAN_ROBOT_CONFIG": LaunchConfiguration("config_file"),
             },
             output="screen",
         ),
