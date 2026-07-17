@@ -68,6 +68,11 @@ def test_login_csrf_media_and_routine(tmp_path):
                            json={"name": "新挥手"})
     assert renamed.status_code == 200
     assert client.get("/api/action-groups").get_json()[0]["name"] == "新挥手"
+    deleted = client.delete(
+        "/api/action-groups/%E6%96%B0%E6%8C%A5%E6%89%8B", headers=headers
+    )
+    assert deleted.status_code == 200
+    assert client.get("/api/action-groups").get_json() == []
 
 
 def test_operator_cannot_manage_users(tmp_path):

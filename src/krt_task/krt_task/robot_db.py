@@ -445,6 +445,21 @@ class RobotDatabase:
                     )
             connection.commit()
 
+    def delete_action_group(self, name: str) -> None:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            for row in connection.execute(
+                "SELECT name, spec_json FROM routines"
+            ).fetchall():
+                if _uses_action_group(json.loads(row["spec_json"]), name):
+                    raise ValueError(f"机械臂动作正在被 routine 使用: {row['name']}")
+            cursor = connection.execute(
+                "DELETE FROM action_groups WHERE name = ?", (name,)
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"动作组不存在: {name}")
+            connection.commit()
+
     def migrate_action_groups(self, groups_file: str) -> int:
         """Import legacy YAML action groups once without overwriting database groups."""
         path = Path(groups_file).expanduser()
@@ -663,6 +678,14 @@ def _rename_action_group_refs(spec: Any, name: str, new_name: str) -> bool:
         if isinstance(step, dict):
             changed = _rename_action_group_refs(step, name, new_name) or changed
     return changed
+
+
+def _uses_action_group(spec: Any, name: str) -> bool:
+    if not isinstance(spec, dict):
+        return False
+    if spec.get("type") == "arm_group" and spec.get("group_name") == name:
+        return True
+    return any(_uses_action_group(step, name) for step in spec.get("steps", []))
 
 
 def _rename_gripper_action_refs(spec: Any, name: str, new_name: str) -> bool:

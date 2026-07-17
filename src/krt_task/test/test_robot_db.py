@@ -68,6 +68,26 @@ def test_rename_action_group_updates_routines(tmp_path):
     assert database.get_routine("表演")["steps"][0]["steps"][0]["group_name"] == "挥手"
 
 
+def test_delete_action_group_rejects_routine_reference(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    sample = [{
+        "name": ["joint_1"], "position": [0.1], "velocity": [], "effort": [],
+    }]
+    database.save_action_group("挥手", "left", sample)
+    database.save_routine("表演", {
+        "type": "sequence",
+        "steps": [{"type": "arm_group", "arm_target": "left", "group_name": "挥手"}],
+    })
+
+    with pytest.raises(ValueError, match="正在被 routine 使用"):
+        database.delete_action_group("挥手")
+
+    database.save_action_group("点头", "left", sample)
+    database.delete_action_group("点头")
+    with pytest.raises(KeyError):
+        database.get_action_group("点头")
+
+
 def test_gripper_action_storage_and_schema_migration(tmp_path):
     path = tmp_path / "robot.db"
     database = RobotDatabase(str(path))

@@ -850,6 +850,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         database.rename_action_group(name, new_name)
         return audited(auth, "rename_action_group", name, True, new_name)
 
+    @app.delete("/api/action-groups/<name>")
+    @protected(auth)
+    def delete_action_group(name: str):
+        database.delete_action_group(name)
+        return audited(auth, "delete_action_group", name, True)
+
     def ensure_motion_requirements(requirements: set[str]) -> None:
         system = app.extensions.get("robot_system")
         if system is not None:
