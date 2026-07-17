@@ -802,7 +802,16 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.post("/api/routines/<name>/run")
     @protected(auth)
     def run_routine(name: str):
-        database.get_routine(name)
+        spec = database.get_routine(name)
+        system = app.extensions.get("gripper_system")
+        if system is not None:
+            hands = system.status()["hands"]
+            inactive = [
+                side for side in sorted(gripper_sides(spec, database))
+                if hands[side]["lifecycle_state"] != "active"
+            ]
+            if inactive:
+                raise RuntimeError(f"请先开启夹爪: {', '.join(inactive)}")
         runtime.run_routine(name)
         return audited(auth, "run_routine", name, True)
 
@@ -910,6 +919,25 @@ def validate_media_refs(spec: Any, database: RobotDatabase) -> None:
             database.get_media(str(spec.get("media_key", "")))
         for value in spec.values():
             validate_media_refs(value, database)
+
+
+def gripper_sides(spec: Any, database: RobotDatabase) -> set[str]:
+    """Return every hand required by named or legacy inline gripper steps."""
+    if not isinstance(spec, dict):
+        return set()
+    sides = set()
+    if spec.get("type") == "gripper":
+        action_name = str(spec.get("action_name", "")).strip()
+        if action_name:
+            sides.update(
+                str(target["side"])
+                for target in database.get_gripper_action(action_name)["targets"]
+            )
+        elif spec.get("side") in {"left", "right"}:
+            sides.add(str(spec["side"]))
+    for step in spec.get("steps", []):
+        sides.update(gripper_sides(step, database))
+    return sides
 
 
 def load_secret(path_value: str) -> str:

@@ -162,10 +162,11 @@ class FakeGripperSystem:
         self.controls = []
         self.settings = []
         self.runtime = []
+        self.hand_states = {"left": "active", "right": "active"}
 
     def status(self):
         return {"hands": {
-            side: {"lifecycle_state": "active", "action_ready": True}
+            side: {"lifecycle_state": self.hand_states[side], "action_ready": True}
             for side in ("left", "right")
         }}
 
@@ -230,6 +231,25 @@ def test_operator_cannot_change_gripper_hardware_settings(tmp_path):
         "target": "left", "enabled": True,
     })
     assert allowed.status_code == 200
+
+
+def test_routine_with_inactive_gripper_is_rejected_before_execution(tmp_path):
+    app, client, headers = authenticated_app(tmp_path)
+    system = FakeGripperSystem()
+    system.hand_states["left"] = "unconfigured"
+    app.extensions["gripper_system"] = system
+    client.put("/api/gripper-actions/open-left", headers=headers, json={
+        "targets": [gripper_target("left")],
+    })
+    client.put("/api/routines/grip", headers=headers, json={
+        "type": "sequence",
+        "steps": [{"type": "gripper", "action_name": "open-left"}],
+    })
+
+    response = client.post("/api/routines/grip/run", headers=headers)
+
+    assert response.status_code == 400
+    assert "请先开启夹爪: left" in response.get_json()["error"]
 
 
 def test_gripper_direct_run_is_tracked_and_mutually_exclusive(tmp_path):
