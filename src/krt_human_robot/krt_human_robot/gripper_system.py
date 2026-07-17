@@ -207,7 +207,7 @@ class GripperSystemController:
                 except Exception as exc:
                     self.last_errors[side] = str(exc)
                     result = {
-                        "success": False, "state": self._state(side),
+                        "success": False, "state": "unknown",
                         "message": str(exc),
                     }
                 results[side] = result

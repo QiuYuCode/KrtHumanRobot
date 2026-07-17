@@ -196,3 +196,28 @@ def test_status_keeps_other_hand_when_one_state_query_fails():
     assert status["hands"]["left"]["lifecycle_state"] == "unknown"
     assert status["hands"]["left"]["error"] == "left timeout"
     assert status["hands"]["right"]["lifecycle_state"] == "active"
+
+
+def test_control_keeps_transition_error_when_followup_state_query_times_out():
+    controller, _node = make_controller({"left": "unconfigured"})
+    state_results = iter(["unconfigured", TimeoutError("state timeout")])
+
+    def state(_side):
+        result = next(state_results)
+        if isinstance(result, Exception):
+            raise result
+        return result
+
+    controller._state = state
+    controller._start_side = lambda _side: (
+        (_ for _ in ()).throw(TimeoutError("configure timeout"))
+    )
+
+    result = controller.control("left", True)
+
+    assert result["success"] is False
+    assert result["hands"]["left"] == {
+        "success": False,
+        "state": "unknown",
+        "message": "configure timeout",
+    }

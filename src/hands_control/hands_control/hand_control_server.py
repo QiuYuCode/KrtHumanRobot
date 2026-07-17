@@ -77,10 +77,11 @@ class HandControlServer(LifecycleNode):
             self.realtime_response_enabled = bool(
                 self.get_parameter('realtime_response_enabled').value
             )
-            self.hand = DexHand021S(
-                adapter_type=self.adapter_type,
-                adapter_index=self.adapter_index,
-            )
+            if not hasattr(self, 'hand'):
+                self.hand = DexHand021S(
+                    adapter_type=self.adapter_type,
+                    adapter_index=self.adapter_index,
+                )
             self.get_logger().info(
                 f'{self.hand_name}配置完成 '
                 f'(adapter_index={self.adapter_index}, device_id={self.device_id})'
@@ -128,12 +129,11 @@ class HandControlServer(LifecycleNode):
         return TransitionCallbackReturn.SUCCESS
 
     def on_cleanup(self, _state: State) -> TransitionCallbackReturn:
-        """Release the SDK object and return to unconfigured."""
+        """Clear control interfaces and return to unconfigured."""
         self._destroy_control_interfaces()
-        if hasattr(self, 'hand'):
-            del self.hand
+        # ponytail: SDK has no destroy API; reuse the handle until process exit.
         self._stopping = False
-        self.get_logger().info('手部硬件资源已释放')
+        self.get_logger().info('手部控制接口已清理，硬件连接保留')
         return TransitionCallbackReturn.SUCCESS
 
     def on_shutdown(self, state: State) -> TransitionCallbackReturn:
@@ -495,6 +495,19 @@ class HandControlServer(LifecycleNode):
                         successful=False,
                         reason=f'{param.name} 只允许在未配置状态设置'
                     )
+                if hasattr(self, 'hand'):
+                    current_value = {
+                        'adapter_type': self.adapter_type.name,
+                        'adapter_index': self.adapter_index,
+                        'device_id': self.device_id,
+                        'hand_name': self.hand_name,
+                        'has_pressure_sensor': self.has_pressure_sensor,
+                    }[param.name]
+                    if param.value != current_value:
+                        return SetParametersResult(
+                            successful=False,
+                            reason=f'{param.name} 需要重启节点后修改'
+                        )
                 if param.name == 'adapter_type' and str(param.value) not in {
                     'ZLG_MINI', 'ZLG_200U'
                 }:

@@ -71,7 +71,7 @@ def test_hand_control_accepts_cancel_requests():
     assert HandControlServer._cancel_callback(None) == CancelResponse.ACCEPT
 
 
-def test_hand_control_lifecycle_allocates_and_releases_hardware(monkeypatch, tmp_path):
+def test_hand_control_lifecycle_allocates_and_deactivates_hardware(monkeypatch, tmp_path):
     monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
     monkeypatch.setattr("hands_control.hand_control_server.DexHand021S", FakeHand)
     monkeypatch.setattr("hands_control.hand_control_server.DEXHAND_AVAILABLE", True)
@@ -84,10 +84,66 @@ def test_hand_control_lifecycle_allocates_and_releases_hardware(monkeypatch, tmp
         assert not hasattr(node, "hand")
         assert node.trigger_configure().name == "SUCCESS"
         assert hasattr(node, "hand")
+        hand = node.hand
         assert node.trigger_activate().name == "SUCCESS"
         assert node.trigger_deactivate().name == "SUCCESS"
         assert node.trigger_cleanup().name == "SUCCESS"
-        assert not hasattr(node, "hand")
+        assert node.hand is hand
+        assert node._interfaces_active is False
+    finally:
+        node.destroy_node()
+        if owned_context:
+            rclpy.shutdown()
+
+
+def test_hand_control_reconfigure_reuses_sdk_handle(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
+    instances = []
+
+    def create_hand(*args, **kwargs):
+        hand = FakeHand(*args, **kwargs)
+        instances.append(hand)
+        return hand
+
+    monkeypatch.setattr(
+        "hands_control.hand_control_server.DexHand021S", create_hand
+    )
+    monkeypatch.setattr("hands_control.hand_control_server.DEXHAND_AVAILABLE", True)
+    owned_context = not rclpy.ok()
+    if owned_context:
+        rclpy.init()
+    node = HandControlServer()
+    try:
+        assert node.trigger_configure().name == "SUCCESS"
+        assert node.trigger_activate().name == "SUCCESS"
+        assert node.trigger_deactivate().name == "SUCCESS"
+        assert node.trigger_cleanup().name == "SUCCESS"
+        assert node.trigger_configure().name == "SUCCESS"
+        assert len(instances) == 1
+    finally:
+        node.destroy_node()
+        if owned_context:
+            rclpy.shutdown()
+
+
+def test_connected_sdk_rejects_adapter_change(monkeypatch, tmp_path):
+    monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path / "ros-logs"))
+    monkeypatch.setattr("hands_control.hand_control_server.DexHand021S", FakeHand)
+    monkeypatch.setattr("hands_control.hand_control_server.DEXHAND_AVAILABLE", True)
+    owned_context = not rclpy.ok()
+    if owned_context:
+        rclpy.init()
+    node = HandControlServer()
+    try:
+        assert node.trigger_configure().name == "SUCCESS"
+        assert node.trigger_cleanup().name == "SUCCESS"
+
+        result = node._handle_parameter_update([
+            Parameter("adapter_index", value=1)
+        ])
+
+        assert result.successful is False
+        assert result.reason == "adapter_index 需要重启节点后修改"
     finally:
         node.destroy_node()
         if owned_context:
