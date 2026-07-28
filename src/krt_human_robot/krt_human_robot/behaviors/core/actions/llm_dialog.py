@@ -63,6 +63,7 @@ def _create_chat_model(
             return ChatOllama(
                 model=model,
                 base_url=base_url,
+                reasoning=False,
                 client_kwargs={"trust_env": False},
                 sync_client_kwargs={"trust_env": False},
                 async_client_kwargs={"trust_env": False},

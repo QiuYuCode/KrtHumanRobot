@@ -102,7 +102,7 @@ def execute_describe_scene(
         ):
             raise
         logger.warning(
-            "云端 VLM 调用失败，尝试本地回退: provider={}, model={}, error={}",
+            "云端 VLM 调用失败，尝试本地回退: provider={}, model={}, error={!r}",
             config.vlm_provider, config.vlm_model, primary_err,
         )
         try:
@@ -123,7 +123,7 @@ def execute_describe_scene(
         except Exception as fallback_err:
             logger.error(
                 "本地 VLM 回退失败，模型可能不可用或不支持图片输入: "
-                "provider={}, model={}, error={}",
+                "provider={}, model={}, error={!r}",
                 config.local_vlm_provider,
                 config.local_vlm_model,
                 fallback_err,
