@@ -1,0 +1,2 @@
+# For a specific device (replace with your VID:PID)
+SUBSYSTEM=="usb", ATTR{idVendor}=="3068", ATTR{idProduct}=="0009", MODE="0777"

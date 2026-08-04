@@ -1,0 +1,9 @@
+# ZLG USBCANFD-100U-mini 设备权限规则
+# Vendor ID: 0x3068, Product ID: 0x0009
+
+# 方式1: 为所有ZLG USBCANFD设备设置权限（推荐）
+SUBSYSTEM=="usb", ATTR{idVendor}=="3068", ATTR{idProduct}=="0009", MODE="0666"
+
+# 方式2: 根据序列号分别设置（可选，如果需要针对特定设备）
+# SUBSYSTEM=="usb", ATTR{idVendor}=="3068", ATTR{idProduct}=="0009", ATTR{serial}=="3CC1013EB0600DE4C880", MODE="0666", SYMLINK+="zlg_can0"
+# SUBSYSTEM=="usb", ATTR{idVendor}=="3068", ATTR{idProduct}=="0009", ATTR{serial}=="61F231BF609B0274C4A0", MODE="0666", SYMLINK+="zlg_can1"
