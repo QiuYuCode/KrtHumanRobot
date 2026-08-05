@@ -1,0 +1,17 @@
+[Unit]
+Description=KrtHumanRobot Jetson camera stack
+Wants=network-online.target time-sync.target
+After=network-online.target time-sync.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/krt/jetson.env
+WorkingDirectory=%h/WorkSpace/KrtHumanRobot
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source "$KRT_WORKSPACE/install/setup.bash" && exec ros2 launch hand_camera_driver jetson_cameras.launch.py'
+Restart=on-failure
+RestartSec=5
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

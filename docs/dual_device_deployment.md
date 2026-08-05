@@ -169,3 +169,52 @@ curl --fail http://10.168.1.101:11434/api/chat \
 请求期间在 Jetson 运行 `ollama ps` 和 `tegrastats`，确认模型已加载并使用
 GPU。云端请求失败时应回退到 Jetson；停止 Ollama 后，x86 控制、导航、语音
 和 Web 仍须继续运行。
+
+## 8. systemd 用户服务
+
+在对应设备安装 unit 和环境文件：
+
+```bash
+mkdir -p ~/.config/systemd/user ~/.config/krt
+
+# x86
+install -m 0644 deploy/systemd/krt-x86.service ~/.config/systemd/user/
+test -f ~/.config/krt/x86.env || \
+  install -m 0600 deploy/env/x86.env.example ~/.config/krt/x86.env
+
+# Jetson 使用以下两条代替上面的 x86 安装
+install -m 0644 deploy/systemd/krt-jetson.service ~/.config/systemd/user/
+test -f ~/.config/krt/jetson.env || \
+  install -m 0600 deploy/env/jetson.env.example ~/.config/krt/jetson.env
+
+systemctl --user daemon-reload
+```
+
+检查私有环境文件中的路径和密钥后启用：
+
+```bash
+# x86
+systemctl --user enable --now krt-x86.service
+
+# Jetson
+systemctl --user enable --now krt-jetson.service
+```
+
+允许用户退出登录后继续运行需要管理员执行一次：
+
+```bash
+sudo loginctl enable-linger create
+```
+
+状态与日志：
+
+```bash
+systemctl --user status krt-x86.service
+systemctl --user status krt-jetson.service
+journalctl --user -u krt-x86.service -f
+journalctl --user -u krt-jetson.service -f
+sudo systemctl status ollama.service
+```
+
+两个 ROS unit 使用 `Restart=on-failure`、五秒重启间隔、SIGINT 停止和二十秒
+停止超时。Ollama 是独立 system service；相机服务不等待模型加载。
