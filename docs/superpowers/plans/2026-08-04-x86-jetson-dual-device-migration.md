@@ -17,7 +17,7 @@
 
 ## Global Constraints
 
-- 目标 x86：`10.168.1.101`；目标 Jetson AGX Orin：`10.168.1.103`；MID360：`10.168.1.102`；网关：`10.168.1.1`。
+- 目标 x86：`10.168.1.100`；目标 Jetson AGX Orin：`10.168.1.101`；MID360：`10.168.1.102`；网关：`10.168.1.1`。
 - 两端统一使用 Ubuntu 22.04、ROS 2 Humble、`ROS_DOMAIN_ID=42`、`ROS_LOCALHOST_ONLY=0` 和 `rmw_cyclonedds_cpp`。
 - Jetson 使用 JetPack 6 / L4T R36.4.x；RealSense ROS 固定 `r/4.56.4`，librealsense 固定 2.56.4。
 - x86 承担双臂、双手、底盘、雷达、导航、语音、任务、动作组、核心行为树和 Web 控制台；Jetson 只承担相机和 Ollama。
@@ -93,7 +93,7 @@
 - [ ] 运行聚焦测试并确认因 launch 文件缺失而失败。
 - [ ] x86 入口复用现有 `robot.launch.py`，传入 `enable_camera_stack=false`、`enable_arm_control_stack=true`、`enable_web_console=true`，并包含选定导航 launch，默认 `rviz=false`。
 - [ ] Jetson 入口包含 RealSense `rs_launch.py` 和 `hand_cameras.launch.py`；D435 彩色设置为 640×480@15 FPS，深度仅本地发布。
-- [ ] 把 `MID360_config.json` 的四个 `host_net_info` 地址从 `10.168.1.100` 改为 `10.168.1.101`，雷达地址保持 `10.168.1.102`。
+- [ ] 把 `MID360_config.json` 的四个 `host_net_info` 地址从 `10.168.1.100` 改为 `10.168.1.100`，雷达地址保持 `10.168.1.102`。
 - [ ] 运行 launch 测试以及两个入口的 `--show-args`，确认参数和默认值正确。
 - [ ] 提交：`feat(bringup): 新增 x86 与 Jetson 双机启动入口`。
 
@@ -107,8 +107,8 @@
 - Create: `docs/dual_device_deployment.md`
 
 **Interfaces:**
-- x86 binds `10.168.1.101` and peers with `10.168.1.103`。
-- Jetson binds `10.168.1.103` and peers with `10.168.1.101`。
+- x86 binds `10.168.1.100` and peers with `10.168.1.101`。
+- Jetson binds `10.168.1.101` and peers with `10.168.1.100`。
 - Both export `ROS_DOMAIN_ID=42`、`ROS_LOCALHOST_ONLY=0`、`RMW_IMPLEMENTATION=rmw_cyclonedds_cpp` and device-specific `CYCLONEDDS_URI`。
 
 - [ ] 编写两份最小 Cyclone DDS 配置，使用固定接口地址和单一对端，不引入 Discovery Server 或 DDS Router。
@@ -126,8 +126,8 @@
 - Test: `src/krt_human_robot/test/test_llm_model_config.py`
 
 **Interfaces:**
-- Serve: `http://10.168.1.103:11434` with `OLLAMA_HOST=0.0.0.0:11434`。
-- Configure: `local_llm_base_url=http://10.168.1.103:11434` and `local_vlm_base_url=http://10.168.1.103:11434`。
+- Serve: `http://10.168.1.101:11434` with `OLLAMA_HOST=0.0.0.0:11434`。
+- Configure: `local_llm_base_url=http://10.168.1.101:11434` and `local_vlm_base_url=http://10.168.1.101:11434`。
 - Models: `qwen2.5:0.5b` for text and `qwen3.5:0.8b` for text+image。
 
 - [ ] 增加配置测试，确认云端 provider 保持主用、两个 fallback 开关为 true，且本地 URL 指向 Jetson 而非 localhost。
@@ -162,7 +162,7 @@
 
 - [ ] 两端确认 Ubuntu 22.04、ROS 2 Humble、相同 Git commit、相同自定义 interface 定义和正确架构构建产物。
 - [ ] 验证 `/livox/lidar`、`/livox/imu`、`/scan`、TF、Nav2、双臂、双手、底盘、语音、任务和动作组。
-- [ ] 从 LAN 打开 `http://10.168.1.101:8443`，验证 Web 控制台默认可访问及控制接口正常。
+- [ ] 从 LAN 打开 `http://10.168.1.100:8443`，验证 Web 控制台默认可访问及控制接口正常。
 - [ ] 逐一选择头部、左掌、右掌相机，确认压缩话题至少 12 FPS、首帧不超过 3 秒，未选中两路不产生跨机图像流量。
 - [ ] 使用 `ros2 topic bw` 和网卡统计确认相机与 VLM 请求并发时总链路占用低于 60 Mbps，控制和 Web 操作无明显延迟。
 - [ ] 拔掉 Jetson 网络，确认 x86 控制、导航、语音和 Web 继续运行；恢复网络后无需重启 x86 即可重新获取图像和调用离线模型。
