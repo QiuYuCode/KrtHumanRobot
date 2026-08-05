@@ -93,7 +93,7 @@
 - [ ] 运行聚焦测试并确认因 launch 文件缺失而失败。
 - [ ] x86 入口复用现有 `robot.launch.py`，传入 `enable_camera_stack=false`、`enable_arm_control_stack=true`、`enable_web_console=true`，并包含选定导航 launch，默认 `rviz=false`。
 - [ ] Jetson 入口包含 RealSense `rs_launch.py` 和 `hand_cameras.launch.py`；D435 彩色设置为 640×480@15 FPS，深度仅本地发布。
-- [ ] 把 `MID360_config.json` 的四个 `host_net_info` 地址从 `10.168.1.100` 改为 `10.168.1.100`，雷达地址保持 `10.168.1.102`。
+- [ ] 确认 `MID360_config.json` 的四个 `host_net_info` 地址保持 `10.168.1.100`，雷达地址保持 `10.168.1.102`。
 - [ ] 运行 launch 测试以及两个入口的 `--show-args`，确认参数和默认值正确。
 - [ ] 提交：`feat(bringup): 新增 x86 与 Jetson 双机启动入口`。
 
