@@ -21,7 +21,7 @@ llm_max_retries: 1
 cloud_llm_fallback_to_local: true
 local_llm_provider: ollama
 local_llm_model: qwen2.5:0.5b
-local_llm_base_url: http://localhost:11434
+local_llm_base_url: http://10.168.1.101:11434
 llm_system_prompt: |
   你是一个机器人语音助手。回答要求：
   1. 用简短自然的口语化中文回答，像人在说话一样。
@@ -37,6 +37,16 @@ planner_system_prompt: |
   2. 如果用户只是闲聊或提问，直接用简短中文回复，不要调用任何工具。
   3. 夹爪控制必须显式指定 hand=left 或 hand=right，不允许省略。
   4. 不要输出 emoji 表情和其他任何表情符号。
+
+vlm_provider: openai
+vlm_model: mimo-v2.5
+vlm_base_url: https://token-plan-cn.xiaomimimo.com/v1
+vlm_request_timeout: 30.0
+vlm_max_retries: 1
+cloud_vlm_fallback_to_local: true
+local_vlm_provider: ollama
+local_vlm_model: qwen3.5:0.8b
+local_vlm_base_url: http://10.168.1.101:11434
 
 intent_patterns:
   describe_left_palm: [左手摄像头, 用你的左手摄像头, 左爪, 左夹爪, 左掌心, 左手拿, 看看左]

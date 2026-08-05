@@ -128,3 +128,44 @@ ros2 topic hz /right_gripper/image_raw/compressed
 - 两端必须安装 `ros-humble-rmw-cyclonedds-cpp`。
 - 完整构建后运行两个 launch 的 `--show-args`。
 - systemd、Ollama 回退和断网恢复按后续任务部署并验收。
+
+## 7. Jetson Ollama 回退
+
+Jetson 使用 Ollama 0.21.0，目标模型为 `qwen2.5:0.5b` 和
+`qwen3.5:0.8b`。安装版本化 drop-in 后重载服务：
+
+```bash
+sudo install -d -m 0755 /etc/systemd/system/ollama.service.d
+sudo install -o root -g root -m 0644 deploy/systemd/ollama-krt.conf \
+  /etc/systemd/system/ollama.service.d/krt.conf
+sudo systemctl daemon-reload
+sudo systemctl restart ollama
+```
+
+模型仅在部署阶段下载：
+
+```bash
+ollama pull qwen2.5:0.5b
+ollama pull qwen3.5:0.8b
+curl --fail http://127.0.0.1:11434/api/tags
+```
+
+x86 验证文本请求：
+
+```bash
+curl --fail http://10.168.1.101:11434/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen2.5:0.5b","stream":false,"messages":[{"role":"user","content":"你好"}]}'
+```
+
+验证图片请求时，把 JPEG 转成 base64 后放入 `images` 数组：
+
+```bash
+curl --fail http://10.168.1.101:11434/api/chat \
+  -H 'Content-Type: application/json' \
+  -d '{"model":"qwen3.5:0.8b","stream":false,"messages":[{"role":"user","content":"描述图片","images":["<BASE64_JPEG>"]}]}'
+```
+
+请求期间在 Jetson 运行 `ollama ps` 和 `tegrastats`，确认模型已加载并使用
+GPU。云端请求失败时应回退到 Jetson；停止 Ollama 后，x86 控制、导航、语音
+和 Web 仍须继续运行。

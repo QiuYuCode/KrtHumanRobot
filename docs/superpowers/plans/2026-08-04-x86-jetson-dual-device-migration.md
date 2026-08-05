@@ -6,7 +6,7 @@
 
 **Architecture:** x86 与 Jetson 组成一台机器人的同一 ROS 2 Domain，并使用 Cyclone DDS 固定对端发现。机器人硬件闭环全部留在 x86；Jetson 发布按需压缩图像并提供 Ollama HTTP 服务，云端 LLM/VLM 失败时由 x86 调用该服务回退。
 
-**Tech Stack:** Ubuntu 22.04、ROS 2 Humble、Cyclone DDS、Python 3.10、rclpy、RealSense ROS `r/4.56.4`、Ollama 0.18.2、systemd。
+**Tech Stack:** Ubuntu 22.04、ROS 2 Humble、Cyclone DDS、Python 3.10、rclpy、RealSense ROS `r/4.56.4`、Ollama 0.21.0、systemd。
 
 ## Current State
 
