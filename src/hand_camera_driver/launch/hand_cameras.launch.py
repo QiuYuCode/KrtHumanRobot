@@ -20,6 +20,8 @@ def _camera_node(side: str, device: str, topic: str, frame_id: str) -> Node:
             "height": LaunchConfiguration("height"),
             "fps": LaunchConfiguration("fps"),
             "topic": topic,
+            "compressed_topic": f"{topic}/compressed",
+            "jpeg_quality": LaunchConfiguration("jpeg_quality"),
             "frame_id": frame_id,
         }],
     )
@@ -37,7 +39,8 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("enable_right", default_value="true"),
         DeclareLaunchArgument("width", default_value="640"),
         DeclareLaunchArgument("height", default_value="480"),
-        DeclareLaunchArgument("fps", default_value="30.0"),
+        DeclareLaunchArgument("fps", default_value="15.0"),
+        DeclareLaunchArgument("jpeg_quality", default_value="70"),
         _camera_node(
             "left",
             "left_device",

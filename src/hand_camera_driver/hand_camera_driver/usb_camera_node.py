@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Publish a V4L2 USB camera as sensor_msgs/Image."""
+"""Publish a V4L2 USB camera as raw and on-demand compressed images."""
 
 from __future__ import annotations
 
@@ -11,7 +11,23 @@ from cv_bridge import CvBridge
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
+
+
+def encode_jpeg_message(frame, header, jpeg_quality: int) -> CompressedImage:
+    """Encode a BGR frame as a JPEG ROS message with the supplied header."""
+    ok, encoded = cv2.imencode(
+        ".jpg",
+        frame,
+        [cv2.IMWRITE_JPEG_QUALITY, int(jpeg_quality)],
+    )
+    if not ok:
+        raise RuntimeError("Failed to encode camera frame as JPEG")
+    msg = CompressedImage()
+    msg.header = header
+    msg.format = "jpeg"
+    msg.data = encoded.tobytes()
+    return msg
 
 
 class UsbCameraNode(Node):
@@ -25,6 +41,8 @@ class UsbCameraNode(Node):
         self.declare_parameter("fps", 30.0)
         self.declare_parameter("frame_id", "usb_camera_frame")
         self.declare_parameter("topic", "image_raw")
+        self.declare_parameter("compressed_topic", "")
+        self.declare_parameter("jpeg_quality", 70)
 
         self.device = self.get_parameter("device").value
         self.width = int(self.get_parameter("width").value)
@@ -32,10 +50,17 @@ class UsbCameraNode(Node):
         self.fps = float(self.get_parameter("fps").value)
         self.frame_id = self.get_parameter("frame_id").value
         topic = self.get_parameter("topic").value
+        compressed_topic = self.get_parameter("compressed_topic").value
+        if not compressed_topic:
+            compressed_topic = f"{topic}/compressed"
+        self.jpeg_quality = int(self.get_parameter("jpeg_quality").value)
 
         self.bridge = CvBridge()
         self.publisher = self.create_publisher(
             Image, topic, qos_profile_sensor_data
+        )
+        self.compressed_publisher = self.create_publisher(
+            CompressedImage, compressed_topic, qos_profile_sensor_data
         )
         self.cap = None
         self._warned_closed = False
@@ -92,10 +117,23 @@ class UsbCameraNode(Node):
             self._open()
             return
 
+        self._publish_frame(frame)
+
+    def _publish_frame(self, frame) -> None:
+        """Publish raw output and encode compressed output only when requested."""
         msg = self.bridge.cv2_to_imgmsg(frame, encoding="bgr8")
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.frame_id
         self.publisher.publish(msg)
+
+        if self.compressed_publisher.get_subscription_count() == 0:
+            return
+        compressed_msg = encode_jpeg_message(
+            frame,
+            msg.header,
+            self.jpeg_quality,
+        )
+        self.compressed_publisher.publish(compressed_msg)
 
     def destroy_node(self) -> None:
         if self.cap is not None:

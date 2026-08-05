@@ -20,10 +20,11 @@ CAN 绑定：
 - `0039001E4759530920353131` → `can_right`，1000000 bit/s
 - `004400494759530920353131` → `can_left`，1000000 bit/s
 
-普通 USB 相机绑定：
+目标 Jetson `10.168.1.101` 相机绑定：
 
-- `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:1.3:1.0` → `/dev/camera_left`
-- `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:1.4.1:1.0` → `/dev/camera_right`
+- D435 `8086:0b07`，物理路径 `platform-3610000.usb-usb-0:3.3` → `/dev/camera_head_*`
+- `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:4.1:1.0` → `/dev/camera_left`
+- `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:4.4:1.0` → `/dev/camera_right`
 
 这些物理路径来自当前 Jetson。迁移到 x86 或新 Jetson 后，先用 `udevadm info` 获取新端口的 `ID_PATH`，再修改规则。
 
