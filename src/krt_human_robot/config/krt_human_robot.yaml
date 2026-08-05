@@ -75,6 +75,7 @@ interrupt_wakeup_responses: [怎么了, 我在，有什么问题吗, 我在呢]
 
 camera_backend: ros
 default_camera: head
+camera_ros_transport: compressed
 camera_ros_qos_depth: 5
 camera_ros_warmup_seconds: 2.0
 head_depth_topic: /camera/camera/depth/image_rect_raw
@@ -86,17 +87,17 @@ cameras:
     ros_topic: /camera/camera/color/image_raw
     width: 640
     height: 480
-    record_fps: 30.0
+    record_fps: 15.0
   left_palm:
     ros_topic: /left_gripper/image_raw
     width: 640
     height: 480
-    record_fps: 30.0
+    record_fps: 15.0
   right_palm:
     ros_topic: /right_gripper/image_raw
     width: 640
     height: 480
-    record_fps: 30.0
+    record_fps: 15.0
 
 gripper_enabled: true
 gripper_adapter_type: zlg_mini

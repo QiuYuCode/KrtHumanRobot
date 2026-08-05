@@ -8,14 +8,16 @@ from pathlib import Path
 from threading import Lock
 from typing import Any
 
+import numpy as np
 import rclpy
 from krt_task.robot_db import RobotDatabase
 from krt_task_interfaces.action import RunRoutine
 from rclpy.action import ActionClient, ActionServer, CancelResponse, GoalResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
+from rclpy.qos import qos_profile_sensor_data
 from rclpy.task import Future
-from sensor_msgs.msg import Image
+from sensor_msgs.msg import CompressedImage, Image
 
 
 DEFAULT_TTS_SERVICE = "/voice/tts/synthesize"
@@ -63,6 +65,7 @@ class RoutineRunnerNode(LifecycleNode):
         self.declare_parameter("left_hand_adapter_index", 0)
         self.declare_parameter("right_hand_adapter_index", 1)
         self.declare_parameter("image_topic", DEFAULT_IMAGE_TOPIC)
+        self.declare_parameter("image_transport", "compressed")
         self.declare_parameter("image_dir", DEFAULT_IMAGE_DIR)
         self.declare_parameter("default_wait_ms", 200)
         self.declare_parameter("autostart", True)
@@ -301,22 +304,52 @@ class RoutineRunnerNode(LifecycleNode):
         from cv_bridge import CvBridge
 
         image_topic = str(args.get("topic", self.get_parameter("image_topic").value))
+        image_transport = str(
+            args.get(
+                "image_transport",
+                self.get_parameter("image_transport").value,
+            )
+        ).strip().lower()
+        if image_transport not in {"raw", "compressed"}:
+            raise ValueError("image_transport 必须是 raw 或 compressed")
         timeout_s = float(args.get("timeout_s", 5.0))
         image_dir = Path(str(args.get("dir", self.get_parameter("image_dir").value))).expanduser()
         image_dir.mkdir(parents=True, exist_ok=True)
         bridge = CvBridge()
         future: Future = Future()
 
-        def callback(msg: Image) -> None:
+        def callback(msg) -> None:
             if not future.done():
                 future.set_result(msg)
 
-        sub = self.create_subscription(Image, image_topic, callback, 10)
-        msg = self.wait_future(goal_handle, future, timeout_s)
-        self.destroy_subscription(sub)
+        message_type = CompressedImage if image_transport == "compressed" else Image
+        subscription_topic = (
+            f"{image_topic}/compressed"
+            if image_transport == "compressed"
+            else image_topic
+        )
+        sub = self.create_subscription(
+            message_type,
+            subscription_topic,
+            callback,
+            qos_profile_sensor_data,
+        )
+        try:
+            msg = self.wait_future(goal_handle, future, timeout_s)
+        finally:
+            self.destroy_subscription(sub)
         if msg is None:
             return False
-        frame = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+        if image_transport == "compressed":
+            frame = cv2.imdecode(
+                np.frombuffer(msg.data, dtype=np.uint8),
+                cv2.IMREAD_COLOR,
+            )
+            if frame is None:
+                self.get_logger().error("压缩照片 JPEG 解码失败")
+                return False
+        else:
+            frame = bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
         filename = image_dir / f"routine_{time.strftime('%Y%m%d_%H%M%S')}.jpg"
         if not cv2.imwrite(str(filename), frame):
             self.get_logger().error(f"保存照片失败: {filename}")

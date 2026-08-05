@@ -11,6 +11,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("media_dir", default_value="~/music"),
         DeclareLaunchArgument("left_hand_adapter_index", default_value="0"),
         DeclareLaunchArgument("right_hand_adapter_index", default_value="1"),
+        DeclareLaunchArgument("image_transport", default_value="compressed"),
         DeclareLaunchArgument("autostart", default_value="true"),
         Node(
             package="krt_task",
@@ -26,6 +27,7 @@ def generate_launch_description() -> LaunchDescription:
                 "right_hand_adapter_index": ParameterValue(
                     LaunchConfiguration("right_hand_adapter_index"), value_type=int
                 ),
+                "image_transport": LaunchConfiguration("image_transport"),
                 "autostart": ParameterValue(
                     LaunchConfiguration("autostart"), value_type=bool
                 ),

@@ -24,6 +24,7 @@ try:
 except ImportError:
     logger = logging.getLogger(__name__)
 
+
 def _read_env(*keys: str) -> str:
     """按顺序读取环境变量，并做去空白/去包裹引号清洗。"""
     if load_dotenv is not None:
@@ -61,6 +62,7 @@ def _default_config_yaml() -> Path:
         pass
     src_yaml = Path(__file__).resolve().parent.parent / "config" / "krt_human_robot.yaml"
     return src_yaml
+
 
 # ============================================================================
 # 模型路径 (根据实际下载位置修改)
@@ -202,6 +204,7 @@ class RobotConfig:
 
     # ROS 后端 (rclpy + cv_bridge)
     camera_ros_node_name: str = "smart_voice_robot_camera_sub"
+    camera_ros_transport: str = "raw"
     camera_ros_qos_depth: int = 5
     camera_ros_warmup_seconds: float = 2.0  # 启动时等待首帧的超时
     head_depth_topic: str = "/camera/camera/depth/image_rect_raw"

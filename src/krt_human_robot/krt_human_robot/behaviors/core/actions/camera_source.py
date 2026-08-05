@@ -385,7 +385,7 @@ def _ensure_ros_context(config) -> "Any":
 
 class RosCameraSource(CameraSource):
     """
-    订阅 sensor_msgs/msg/Image，内部缓存最新帧，grab_frame 返回 cache。
+    订阅原始或压缩 ROS 图像，内部缓存最新帧，grab_frame 返回 cache。
     record_video 周期性拉 cache 写 mp4 (FPS 取 spec.record_fps)。
     """
 
@@ -398,7 +398,7 @@ class RosCameraSource(CameraSource):
             )
 
         try:
-            from sensor_msgs.msg import Image as RosImage
+            from sensor_msgs.msg import CompressedImage, Image as RosImage
             from cv_bridge import CvBridge
             from rclpy.qos import (
                 QoSDurabilityPolicy,
@@ -418,14 +418,28 @@ class RosCameraSource(CameraSource):
         self._latest: np.ndarray | None = None
         self._latest_lock = threading.Lock()
         self._warmup_timeout = float(config.camera_ros_warmup_seconds)
+        self._transport = str(config.camera_ros_transport).strip().lower()
+        if self._transport not in {"raw", "compressed"}:
+            raise ValueError(
+                "camera_ros_transport 必须是 raw 或 compressed，"
+                f"当前为 {self._transport!r}。"
+            )
 
         node = _ensure_ros_context(config)
 
         def _cb(msg):
             try:
-                frame = self._bridge.imgmsg_to_cv2(msg, desired_encoding="bgr8")
+                if self._transport == "compressed":
+                    data = np.frombuffer(msg.data, dtype=np.uint8)
+                    frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
+                    if frame is None:
+                        raise ValueError("JPEG 数据无法解码")
+                else:
+                    frame = self._bridge.imgmsg_to_cv2(
+                        msg, desired_encoding="bgr8"
+                    )
             except Exception as e:  # pragma: no cover
-                logger.warning(f"[ros] {camera_id} cv_bridge 解码失败: {e}")
+                logger.warning(f"[ros] {camera_id} 图像解码失败: {e}")
                 return
             with self._latest_lock:
                 self._latest = frame
@@ -436,9 +450,13 @@ class RosCameraSource(CameraSource):
             reliability=QoSReliabilityPolicy.BEST_EFFORT,
             durability=QoSDurabilityPolicy.VOLATILE,
         )
-        self._sub = node.create_subscription(
-            RosImage, spec.ros_topic, _cb, qos
+        message_type = CompressedImage if self._transport == "compressed" else RosImage
+        topic = (
+            f"{spec.ros_topic}/compressed"
+            if self._transport == "compressed"
+            else spec.ros_topic
         )
+        self._sub = node.create_subscription(message_type, topic, _cb, qos)
         self._node = node
 
     def _wait_first_frame(self):

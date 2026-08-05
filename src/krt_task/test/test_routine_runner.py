@@ -1,6 +1,9 @@
 from types import SimpleNamespace
 
+import cv2
+import numpy as np
 import pytest
+from sensor_msgs.msg import CompressedImage
 
 from krt_task.routine_runner import ParallelJob, RoutineCanceled, RoutineRunnerNode
 
@@ -126,3 +129,65 @@ def test_wait_jobs_cancels_all_on_routine_cancel(monkeypatch):
     with pytest.raises(RoutineCanceled):
         RoutineRunnerNode.wait_jobs(runner, object(), jobs)
     assert runner.canceled == jobs
+
+
+class FakePhotoRunner:
+    """Minimal routine runner surface for a compressed photo task."""
+
+    def __init__(self, message):
+        self.message = message
+        self.subscription = object()
+        self.subscription_args = None
+        self.destroyed = []
+        self.logged = []
+
+    def get_parameter(self, name):
+        return SimpleNamespace(value={
+            "image_topic": "/camera/camera/color/image_raw",
+            "image_transport": "compressed",
+            "image_dir": "/unused",
+        }[name])
+
+    def create_subscription(self, message_type, topic, callback, _qos):
+        self.subscription_args = (message_type, topic)
+        callback(self.message)
+        return self.subscription
+
+    def wait_future(self, _goal_handle, future, _timeout):
+        return future.result()
+
+    def destroy_subscription(self, subscription):
+        self.destroyed.append(subscription)
+
+    def get_logger(self):
+        return SimpleNamespace(
+            info=self.logged.append,
+            error=self.logged.append,
+        )
+
+
+def test_take_photo_saves_compressed_message(tmp_path, monkeypatch):
+    """Routine photos subscribe to the compressed suffix and save decoded JPEG."""
+    frame = np.zeros((8, 12, 3), dtype=np.uint8)
+    frame[:, :, 1] = 160
+    ok, encoded = cv2.imencode(".jpg", frame)
+    assert ok
+    msg = CompressedImage()
+    msg.format = "jpeg"
+    msg.data = encoded.tobytes()
+    runner = FakePhotoRunner(msg)
+    saved = []
+    monkeypatch.setattr(cv2, "imwrite", lambda path, image: saved.append(
+        (path, image.copy())
+    ) or True)
+
+    assert RoutineRunnerNode.take_photo(
+        runner, object(), {"dir": str(tmp_path)}
+    )
+
+    assert runner.subscription_args == (
+        CompressedImage,
+        "/camera/camera/color/image_raw/compressed",
+    )
+    assert runner.destroyed == [runner.subscription]
+    assert saved[0][1].shape == frame.shape
