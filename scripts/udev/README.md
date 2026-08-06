@@ -133,7 +133,7 @@ pactl list short sinks
 项目当前不使用自定义音频别名，而是在 `src/voice_assistant/config/voice_assistant.yaml` 中按名称匹配：
 
 - 麦克风：`XFM-DP`
-- 扬声器：`C-Media`
+- 扬声器：`HDA Intel PCH`（PulseAudio 活动端口为 `Headphones`）
 
 ## 回滚
 
