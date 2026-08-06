@@ -5,11 +5,96 @@ import wave
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from krt_human_robot.web_app import RosBridge, create_app
+
+
+def web_test_app(tmp_path):
+    return create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test",
+        "SESSION_COOKIE_SECURE": False,
+        "ROS_ENABLED": False,
+        "ROBOT_DB": str(tmp_path / "robot.db"),
+        "WEB_DB": str(tmp_path / "web.db"),
+        "MEDIA_DIR": str(tmp_path / "media"),
+    })
+
+
+def test_first_admin_setup_creates_session_and_then_closes(tmp_path):
+    app = web_test_app(tmp_path)
+    client = app.test_client()
+
+    assert client.get("/api/session").get_json()["needs_setup"] is True
+    setup = client.post("/api/setup", json={
+        "username": "admin", "password": "123456",
+        "password_confirmation": "123456",
+    })
+    assert setup.status_code == 200
+    assert setup.get_json()["user"] == {
+        "id": 1, "username": "admin", "role": "admin",
+    }
+    assert setup.get_json()["csrf_token"]
+    assert client.get("/api/session").get_json()["needs_setup"] is False
+    assert client.post("/api/setup", json={
+        "username": "second", "password": "123456",
+        "password_confirmation": "123456",
+    }).status_code == 409
+
+
+def test_setup_validates_confirmation_and_six_character_password(tmp_path):
+    client = web_test_app(tmp_path).test_client()
+    assert client.post("/api/setup", json={
+        "username": "admin", "password": "12345",
+        "password_confirmation": "12345",
+    }).status_code == 400
+    assert client.post("/api/setup", json={
+        "username": "admin", "password": "123456",
+        "password_confirmation": "654321",
+    }).status_code == 400
+
+
+def test_all_user_password_paths_use_six_character_minimum(tmp_path):
+    auth = web_test_app(tmp_path).extensions["auth_db"]
+    auth.create_user("admin", "123456", "admin")
+    user_id = auth.list_users()[0]["id"]
+    auth.update_user(user_id, password="654321")
+    assert auth.authenticate("admin", "654321") is not None
+    with pytest.raises(ValueError, match="至少 6"):
+        auth.create_user("short", "12345", "operator")
+
+
+def test_concurrent_setup_creates_only_one_admin(tmp_path):
+    app = web_test_app(tmp_path)
+    barrier = threading.Barrier(2)
+    statuses = []
+
+    def submit(username):
+        with app.test_client() as client:
+            barrier.wait()
+            response = client.post("/api/setup", json={
+                "username": username, "password": "123456",
+                "password_confirmation": "123456",
+            })
+            statuses.append(response.status_code)
+
+    threads = [
+        threading.Thread(target=submit, args=(username,))
+        for username in ("first", "second")
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert sorted(statuses) == [200, 409]
+    users = app.extensions["auth_db"].list_users()
+    assert len(users) == 1
+    assert users[0]["role"] == "admin"
 
 
 def wav_bytes() -> bytes:

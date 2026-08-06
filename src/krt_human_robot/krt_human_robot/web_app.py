@@ -615,7 +615,28 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     def session_info():
         user = current_user(auth)
         token = session.setdefault("csrf_token", secrets.token_urlsafe(24))
-        return jsonify(user=public_user(user), csrf_token=token)
+        return jsonify(
+            user=public_user(user), csrf_token=token,
+            needs_setup=auth.needs_setup(),
+        )
+
+    @app.post("/api/setup")
+    def setup():
+        payload = request.get_json(silent=True) or {}
+        password = str(payload.get("password", ""))
+        if password != str(payload.get("password_confirmation", "")):
+            return jsonify(error="两次密码不一致"), 400
+        user = auth.create_initial_admin(str(payload.get("username", "")), password)
+        if user is None:
+            return jsonify(error="控制台初始化已完成"), 409
+        session.clear()
+        session["user_id"] = user["id"]
+        session["csrf_token"] = secrets.token_urlsafe(24)
+        auth.audit(
+            user["username"], request.remote_addr or "-", "setup",
+            user["username"], True,
+        )
+        return jsonify(user=public_user(user), csrf_token=session["csrf_token"])
 
     @app.post("/api/login")
     def login():

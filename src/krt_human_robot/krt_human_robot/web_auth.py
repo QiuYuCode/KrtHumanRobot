@@ -53,14 +53,41 @@ class AuthDatabase:
         username = username.strip()
         if not username or len(username) > 64 or role not in {"admin", "operator"}:
             raise ValueError("用户名或角色无效")
-        if len(password) < 10:
-            raise ValueError("密码至少 10 个字符")
+        if len(password) < 6:
+            raise ValueError("密码至少 6 个字符")
         with self.connect() as connection:
             connection.execute(
                 "INSERT INTO users(username,password_hash,role,created_at) VALUES(?,?,?,?)",
                 (username, generate_password_hash(password), role, now()),
             )
             connection.commit()
+
+    def needs_setup(self) -> bool:
+        with self.connect() as connection:
+            return connection.execute("SELECT 1 FROM users LIMIT 1").fetchone() is None
+
+    def create_initial_admin(
+        self, username: str, password: str
+    ) -> dict[str, Any] | None:
+        username = username.strip()
+        if not username or len(username) > 64:
+            raise ValueError("用户名无效")
+        if len(password) < 6:
+            raise ValueError("密码至少 6 个字符")
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute("SELECT 1 FROM users LIMIT 1").fetchone():
+                return None
+            cursor = connection.execute(
+                "INSERT INTO users(username,password_hash,role,created_at) "
+                "VALUES(?,?,?,?)",
+                (username, generate_password_hash(password), "admin", now()),
+            )
+            row = connection.execute(
+                "SELECT * FROM users WHERE id=?", (cursor.lastrowid,)
+            ).fetchone()
+            connection.commit()
+        return dict(row)
 
     def authenticate(self, username: str, password: str) -> dict[str, Any] | None:
         with self.connect() as connection:
@@ -83,8 +110,8 @@ class AuthDatabase:
 
     def update_user(self, user_id: int, *, enabled: bool | None = None,
                     password: str | None = None) -> None:
-        if password is not None and len(password) < 10:
-            raise ValueError("密码至少 10 个字符")
+        if password is not None and len(password) < 6:
+            raise ValueError("密码至少 6 个字符")
         updates, values = [], []
         if enabled is not None:
             updates.append("enabled=?")
@@ -131,7 +158,7 @@ def create_admin() -> None:
         "KRT_WEB_DB", "~/.local/share/krt_human_robot/web.db"
     ))
     args = parser.parse_args()
-    password = getpass.getpass("密码（至少 10 位）: ")
+    password = getpass.getpass("密码（至少 6 位）: ")
     if password != getpass.getpass("确认密码: "):
         raise SystemExit("两次密码不一致")
     AuthDatabase(args.db).create_user(args.username, password, "admin")

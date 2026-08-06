@@ -37,6 +37,17 @@ def test_login_inputs_stay_inside_modal():
     assert ".modal input{width:100%;min-width:0}" in html
 
 
+def test_console_supports_first_admin_setup_in_login_modal():
+    html = TEMPLATE.read_text(encoding="utf-8")
+
+    for element_id in ("loginTitle", "loginConfirmation", "loginSubmit"):
+        assert f'id="{element_id}"' in html
+    assert "s.needs_setup" in html
+    assert "needsSetup?'/api/setup':'/api/login'" in html
+    assert "password_confirmation" in html
+    assert 'minlength="6"' in html
+
+
 def test_console_has_named_gripper_editor_and_live_telemetry():
     html = TEMPLATE.read_text(encoding="utf-8")
 
