@@ -176,6 +176,7 @@ def _launch_setup(context, *args, **kwargs):
             "voice_kws",
             {
                 **common_voice_params,
+                "num_threads": int(cfg.get("kws_num_threads", 1)),
                 "kws_model_dir": cfg.get("kws_model_dir", ""),
                 "kws_keywords_file": cfg.get("kws_keywords_file", ""),
                 "kws_keywords_score": float(cfg.get("kws_keywords_score", 1.0)),

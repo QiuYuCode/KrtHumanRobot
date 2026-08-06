@@ -14,3 +14,14 @@ def test_x86_audio_hints_match_deployed_devices():
 
     assert config["input_device_hint"] == "XFM-DP"
     assert config["output_device_hint"] == "HDA Intel PCH"
+
+
+def test_kws_uses_one_inference_thread():
+    """KWS must not create enough ONNX workers to saturate the x86 CPU."""
+    config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
+    launch_source = (
+        CONFIG.parents[1] / "launch" / "voice_stack.launch.py"
+    ).read_text(encoding="utf-8")
+
+    assert config["kws_num_threads"] == 1
+    assert '"num_threads": int(cfg.get("kws_num_threads", 1))' in launch_source
