@@ -109,6 +109,12 @@ ls -l /dev/v4l/by-id/ /dev/v4l/by-path/
 rs-enumerate-devices
 ```
 
+JetPack 6 从源码安装 librealsense 时，应使用同版本源码自带的
+`config/99-realsense-libusb.rules`（在本仓库快照中对应
+`60-librealsense2-udev-rules.rules`），并确认 `rs-enumerate-devices -s`
+无需 root 即可识别设备。项目相机别名规则只负责稳定命名，不能替代
+RealSense 的 USB 权限规则。
+
 若别名没有生成，查看设备属性并更新 `99-camera-alias.rules` 中的 `ID_PATH`：
 
 ```bash

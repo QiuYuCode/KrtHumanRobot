@@ -51,3 +51,23 @@ def test_publish_frame_skips_jpeg_encoding_without_subscribers(monkeypatch):
     node.publisher.publish.assert_called_once_with(raw_msg)
     encode.assert_not_called()
     node.compressed_publisher.publish.assert_not_called()
+
+
+def test_main_does_not_shutdown_an_already_stopped_context(monkeypatch):
+    """SIGINT cleanup avoids calling shutdown twice on the ROS context."""
+    node = Mock()
+    monkeypatch.setattr(usb_camera_node, "UsbCameraNode", Mock(return_value=node))
+    monkeypatch.setattr(usb_camera_node.rclpy, "init", Mock())
+    monkeypatch.setattr(
+        usb_camera_node.rclpy,
+        "spin",
+        Mock(side_effect=KeyboardInterrupt),
+    )
+    monkeypatch.setattr(usb_camera_node.rclpy, "ok", Mock(return_value=False))
+    shutdown = Mock(side_effect=AssertionError("ROS context is already stopped"))
+    monkeypatch.setattr(usb_camera_node.rclpy, "shutdown", shutdown)
+
+    usb_camera_node.main()
+
+    node.destroy_node.assert_called_once_with()
+    shutdown.assert_not_called()

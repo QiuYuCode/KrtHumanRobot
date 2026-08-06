@@ -23,6 +23,7 @@ setup(
     license="Apache-2.0",
     entry_points={
         "console_scripts": [
+            "compressed_image_relay = hand_camera_driver.compressed_image_relay:main",
             "usb_camera_node = hand_camera_driver.usb_camera_node:main",
         ],
     },

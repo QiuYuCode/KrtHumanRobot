@@ -41,11 +41,13 @@ ls -l /dev/camera_left /dev/camera_right \
 
 ## 3. ROS 与依赖安装
 
-两端安装 Cyclone DDS：
+两端安装 Cyclone DDS；Jetson 构建 RealSense ROS 还需要诊断依赖：
 
 ```bash
 sudo apt update
 sudo apt install -y ros-humble-rmw-cyclonedds-cpp
+# 仅 Jetson
+sudo apt install -y ros-humble-diagnostic-updater
 ```
 
 初始化子模块并安装依赖：
@@ -58,12 +60,20 @@ rosdep install --from-paths src --ignore-src -r -y
 ```
 
 Jetson 的 `src/realsense-ros` 必须位于 `r/4.56.4`，librealsense 必须为
-2.56.4。安装后检查：
+2.56.4。JetPack 6 设备使用从官方 `v2.56.4` 源码构建、启用 RSUSB backend
+的 librealsense，并安装同版本源码中的 udev 规则。安装后检查：
 
 ```bash
 git -C src/realsense-ros branch --show-current
-rs-enumerate-devices
+rs-enumerate-devices --version
+rs-enumerate-devices -s
+ldconfig -p | grep realsense
 ```
+
+不要在该 Jetson 上安装 `ros-humble-compressed-image-transport`。ROS Humble
+二进制包链接系统 OpenCV 4.5，而当前 JetPack RealSense 进程链接 NVIDIA
+OpenCV 4.8；在同一进程加载两套 ABI 会导致异常内存分配。D435 彩色 JPEG
+由 `hand_camera_driver/compressed_image_relay` 独立进程按需生成。
 
 分机构建：
 
@@ -99,7 +109,8 @@ source /home/create/WorkSpace/KrtHumanRobot/install/setup.bash
 
 x86 运行 `ros2 run demo_nodes_cpp talker`，Jetson 运行
 `ros2 run demo_nodes_py listener`；再交换角色验证。`ros2 doctor --report` 的
-RMW 必须显示 Cyclone DDS。
+RMW 必须显示 Cyclone DDS。配置同时列出 `localhost` 和固定远端地址，使同机
+多个 ROS 进程在禁用 multicast 时仍能发现彼此。
 
 ## 5. 手动启动
 
@@ -114,7 +125,8 @@ ros2 launch krt_human_robot x86_bringup.launch.py \
 ros2 launch hand_camera_driver jetson_cameras.launch.py
 ```
 
-确认 Jetson 发布原始及压缩彩色话题；x86 不订阅 D435 深度话题。分别检查：
+确认 Jetson 发布原始及压缩彩色话题；x86 不订阅 D435 深度话题。压缩节点
+没有订阅者时跳过解码与 JPEG 编码。分别检查：
 
 ```bash
 ros2 topic hz /camera/camera/color/image_raw/compressed

@@ -29,6 +29,9 @@ def test_jetson_bringup_contains_only_realsense_and_hand_cameras():
     assert "realsense2_camera" in source
     assert "rs_launch.py" in source
     assert "hand_cameras.launch.py" in source
+    assert 'executable="compressed_image_relay"' in source
+    assert '"input_topic": "/camera/camera/color/image_raw"' in source
+    assert '"output_topic": "/camera/camera/color/image_raw/compressed"' in source
     assert '"rgb_camera.color_profile": "640x480x15"' in source
     assert '"fps": "15.0"' in source
     assert '"jpeg_quality": "70"' in source

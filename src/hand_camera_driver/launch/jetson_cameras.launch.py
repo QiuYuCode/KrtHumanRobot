@@ -6,6 +6,7 @@ from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import IncludeLaunchDescription
 from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch_ros.actions import Node
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -39,4 +40,19 @@ def generate_launch_description() -> LaunchDescription:
         }.items(),
     )
 
-    return LaunchDescription([realsense, hand_cameras])
+    head_color_compressor = Node(
+        package="hand_camera_driver",
+        executable="compressed_image_relay",
+        name="head_color_compressor",
+        parameters=[
+            {
+                "input_topic": "/camera/camera/color/image_raw",
+                "output_topic": "/camera/camera/color/image_raw/compressed",
+                "jpeg_quality": 70,
+            }
+        ],
+    )
+
+    return LaunchDescription(
+        [realsense, hand_cameras, head_color_compressor]
+    )
