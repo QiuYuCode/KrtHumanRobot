@@ -22,9 +22,12 @@ CAN 绑定：
 
 目标 Jetson `10.168.1.101` 相机绑定：
 
-- D435 `8086:0b07`，物理路径 `platform-3610000.usb-usb-0:3.3` → `/dev/camera_head_*`
+- D435 `8086:0b07`，物理路径 `platform-3610000.usb-usb-0:3.3` → `/dev/camera_head_rgb`、`/dev/camera_head_depth`、`/dev/camera_head_ir`
 - `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:4.1:1.0` → `/dev/camera_left`
 - `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:4.4:1.0` → `/dev/camera_right`
+
+`/dev/camera_head_color` 是 `/dev/camera_head_rgb` 的兼容别名，两者都指向
+D435 的彩色采集节点。项目文档和配置统一使用 `camera_head_rgb`。
 
 这些物理路径来自当前 Jetson。迁移到 x86 或新 Jetson 后，先用 `udevadm info` 获取新端口的 `ID_PATH`，再修改规则。
 
@@ -100,7 +103,8 @@ udevadm monitor --udev --subsystem-match=usb --property
 
 ```bash
 ls -l /dev/camera_left /dev/camera_right
-ls -l /dev/camera_head_rgb /dev/camera_head_depth /dev/camera_head_ir
+ls -l /dev/camera_head_rgb /dev/camera_head_color \
+  /dev/camera_head_depth /dev/camera_head_ir
 ls -l /dev/v4l/by-id/ /dev/v4l/by-path/
 rs-enumerate-devices
 ```
