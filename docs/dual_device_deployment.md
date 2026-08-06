@@ -50,6 +50,17 @@ sudo apt install -y ros-humble-rmw-cyclonedds-cpp
 sudo apt install -y ros-humble-diagnostic-updater
 ```
 
+x86 的 KISS-Matcher 与核心行为包还需要：
+
+```bash
+sudo apt install -y ros-humble-gtsam python3-loguru
+```
+
+Ubuntu 22.04 / ROS Humble 构建应优先使用系统 CMake 3.22。若用户环境中安装了
+较新的 CMake，先执行 `export PATH=/usr/bin:/bin:$PATH`；中文 locale 会使
+KISS-Matcher 内置旧版 TBB 无法解析汇编器版本，构建时设置
+`LC_ALL=C LANG=C`。
+
 初始化子模块并安装依赖：
 
 ```bash
