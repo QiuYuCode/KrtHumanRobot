@@ -348,8 +348,9 @@
 启动控制节点
 ^^^^^^^^^^^^
 
-默认启动左右手两个 Action Server，设备 ID 分别为 1 和 2。底层监听与自动反馈默认
-关闭，需要读取实时传感器时再开启。
+默认启动左右手两个 Action Server。当前机器的默认映射为左手
+``adapter_index=1, device_id=1``，右手 ``adapter_index=0, device_id=2``。
+底层监听与自动反馈默认关闭，需要读取实时传感器时再开启。
 
 .. code-block:: bash
 
@@ -359,6 +360,8 @@
    # 显式指定全部常用参数
    ros2 launch hands_control hand_control_launch.py \
      adapter_type:=ZLG_MINI \
+     left_hand_adapter_index:=1 \
+     right_hand_adapter_index:=0 \
      left_hand_device_id:=1 \
      right_hand_device_id:=2 \
      left_hand_listen:=false \
@@ -368,6 +371,14 @@
 
    # 可选：运行功能包自带的动作测试客户端
    ros2 run hands_control hand_control_client
+
+.. important::
+
+   ``adapter_index`` 是 DexHand SDK 按 USB 枚举顺序分配的启动参数，不是稳定的
+   硬件编号。更换 USB 口、调整插拔顺序或更换适配器后，索引可能变化。
+   ``99-zlg-usbcanfd.rules`` 只设置访问权限，不会绑定 SDK 索引。启动时应根据
+   SDK 日志中的适配器序列号核对左右手，并通过
+   ``left_hand_adapter_index``、``right_hand_adapter_index`` 覆盖默认值。
 
 ``HandControl`` Action 参数如下：
 
@@ -380,7 +391,7 @@
      - 说明
    * - ``adapter_index``
      - ``0`` 或 ``1``
-     - ``0`` 为左手，``1`` 为右手，必须与 Action 命名空间一致
+     - SDK 枚举索引；必须与目标 Action 节点启动时配置的索引一致
    * - ``finger_id``
      - ``0～3``
      - ``1～3`` 为单指，``0`` 表示三根手指同时执行
@@ -407,13 +418,13 @@
    # 左手第 1 指移动到位置 800
    ros2 action send_goal /left/hand_control \
      hands_control_interfaces/action/HandControl \
-     "{adapter_index: 0, finger_id: 1, position: 800, speed: 500, force: 85, wait_time: 10}" \
+     "{adapter_index: 1, finger_id: 1, position: 800, speed: 500, force: 85, wait_time: 10}" \
      --feedback
 
    # 右手第 1 指移动到位置 800
    ros2 action send_goal /right/hand_control \
      hands_control_interfaces/action/HandControl \
-     "{adapter_index: 1, finger_id: 1, position: 800, speed: 500, force: 85, wait_time: 10}" \
+     "{adapter_index: 0, finger_id: 1, position: 800, speed: 500, force: 85, wait_time: 10}" \
      --feedback
 
 三指同时运动时使用 ``finger_id: 0``：
@@ -423,19 +434,19 @@
    # 左手全部闭合
    ros2 action send_goal /left/hand_control \
      hands_control_interfaces/action/HandControl \
-     "{adapter_index: 0, finger_id: 0, position: 1000, speed: 500, force: 85, wait_time: 10}" \
+     "{adapter_index: 1, finger_id: 0, position: 1000, speed: 500, force: 85, wait_time: 10}" \
      --feedback
 
    # 右手全部闭合
    ros2 action send_goal /right/hand_control \
      hands_control_interfaces/action/HandControl \
-     "{adapter_index: 1, finger_id: 0, position: 1000, speed: 500, force: 85, wait_time: 10}" \
+     "{adapter_index: 0, finger_id: 0, position: 1000, speed: 500, force: 85, wait_time: 10}" \
      --feedback
 
    # 右手全部张开
    ros2 action send_goal /right/hand_control \
      hands_control_interfaces/action/HandControl \
-     "{adapter_index: 1, finger_id: 0, position: 0, speed: 500, force: 85, wait_time: 10}" \
+     "{adapter_index: 0, finger_id: 0, position: 0, speed: 500, force: 85, wait_time: 10}" \
      --feedback
 
 复位关节：
@@ -443,9 +454,9 @@
 .. code-block:: bash
 
    ros2 action send_goal /left/reset_hand \
-     hands_control_interfaces/action/ResetHand "{adapter_index: 0}" --feedback
-   ros2 action send_goal /right/reset_hand \
      hands_control_interfaces/action/ResetHand "{adapter_index: 1}" --feedback
+   ros2 action send_goal /right/reset_hand \
+     hands_control_interfaces/action/ResetHand "{adapter_index: 0}" --feedback
 
 监听、状态与传感器
 ^^^^^^^^^^^^^^^^^^

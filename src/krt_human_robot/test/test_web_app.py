@@ -675,6 +675,8 @@ def test_monitor_watchdog_restores_parameters_through_executor(monkeypatch, tmp_
 def test_web_console_launch_passes_robot_config():
     package = Path(__file__).parents[1]
     web_launch = (package / "launch/web_console.launch.py").read_text(encoding="utf-8")
+    assert 'if certfile and keyfile:' in web_launch
+    assert 'cmd.extend(["--certfile", certfile, "--keyfile", keyfile])' in web_launch
     robot_launch = (package / "launch/robot.launch.py").read_text(encoding="utf-8")
 
     assert '"config_file", default_value=' in web_launch

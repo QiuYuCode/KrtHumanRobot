@@ -1315,7 +1315,7 @@ wheels = [
 
 [[package]]
 name = "sherpa-onnx"
-version = "1.13.2"
+version = "1.12.39"
 source = { directory = "../../../sherpa-onnx" }
 
 [[package]]

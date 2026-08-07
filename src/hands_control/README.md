@@ -65,6 +65,8 @@ ros2 launch hands_control hand_control_launch.py
 # 自定义参数启动
 ros2 launch hands_control hand_control_launch.py \
     adapter_type:=ZLG_MINI \
+    left_hand_adapter_index:=1 \
+    right_hand_adapter_index:=0 \
     left_hand_device_id:=1 \
     right_hand_device_id:=2 \
     left_hand_listen:=false \
@@ -75,12 +77,19 @@ ros2 launch hands_control hand_control_launch.py \
 
 **参数说明:**
 - `adapter_type`: ZLG 适配器类型 (默认: ZLG_MINI, 支持: ZLG_MINI, ZLG_200U)
+- `left_hand_adapter_index`: 左手 USB-CAN 的 SDK 枚举索引 (当前机器默认: 1)
+- `right_hand_adapter_index`: 右手 USB-CAN 的 SDK 枚举索引 (当前机器默认: 0)
 - `left_hand_device_id`: 左手设备 ID (默认: 1, 即 0x01)
 - `right_hand_device_id`: 右手设备 ID (默认: 2, 即 0x02)
 - `left_hand_listen`: 左手启动时是否开启监听 (默认: false)
 - `right_hand_listen`: 右手启动时是否开启监听 (默认: false)
 - `left_hand_realtime_response`: 左手启动时是否开启自动反馈 (默认: false)
 - `right_hand_realtime_response`: 右手启动时是否开启自动反馈 (默认: false)
+
+`adapter_index` 是启动参数，不是稳定的硬件编号。DexHand SDK 按 USB
+枚举顺序分配该索引；更换 USB 口、插拔顺序或设备后可能变化。udev 规则只设置
+设备权限，不会绑定 SDK 的 `adapter_index`。启动时应根据 SDK 日志中的适配器
+序列号核对左右手，并通过上述 launch 参数覆盖默认值。
 
 ### 2. 测试客户端
 

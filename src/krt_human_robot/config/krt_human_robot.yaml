@@ -127,8 +127,8 @@ gripper_post_reset_sleep: 0.45
 gripper_exec_delay_ms: 10
 gripper_set_safe_current: true
 gripper_safe_current: 250
-left_gripper: {adapter_index: 0, device_id: 1, has_pressure_sensor: false}
-right_gripper: {adapter_index: 1, device_id: 2, has_pressure_sensor: true}
+left_gripper: {adapter_index: 1, device_id: 1, has_pressure_sensor: false}
+right_gripper: {adapter_index: 0, device_id: 2, has_pressure_sensor: true}
 
 robot_arm_enabled: true
 robot_arm_robot: nero

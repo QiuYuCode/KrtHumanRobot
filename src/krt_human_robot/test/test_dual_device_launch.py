@@ -8,6 +8,9 @@ X86_LAUNCH = Path(__file__).parents[1] / "launch" / "x86_bringup.launch.py"
 JETSON_LAUNCH = (
     WORKSPACE_SRC / "hand_camera_driver" / "launch" / "jetson_cameras.launch.py"
 )
+NAV3D_LAUNCH = (
+    WORKSPACE_SRC / "ranger_nav" / "launch" / "navigation_3dloc.launch.py"
+)
 
 
 def test_x86_bringup_owns_robot_control_web_and_navigation_without_cameras():
@@ -37,3 +40,10 @@ def test_jetson_bringup_contains_only_realsense_and_hand_cameras():
     assert '"jpeg_quality": "70"' in source
     for forbidden in ("agx_arm_ctrl", "ranger_nav", "voice_assistant"):
         assert forbidden not in source
+
+
+def test_3d_navigation_clears_inherited_namespace():
+    """Arm launch namespaces must not become the Nav2 parameter root key."""
+    source = NAV3D_LAUNCH.read_text(encoding="utf-8")
+
+    assert "'namespace': ''" in source

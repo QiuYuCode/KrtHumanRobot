@@ -185,6 +185,10 @@ def test_hand_launch_supports_single_side_and_autostart():
     assert "enable_right" in source
     assert "autostart" in source
     assert "LifecycleNode" in source
+    assert 'DeclareLaunchArgument("left_hand_device_id", default_value="1")' in source
+    assert 'DeclareLaunchArgument("right_hand_device_id", default_value="2")' in source
+    assert 'DeclareLaunchArgument("left_hand_adapter_index", default_value="1")' in source
+    assert 'DeclareLaunchArgument("right_hand_adapter_index", default_value="0")' in source
 
 
 def test_hand_control_executor_can_process_cancel_during_execution():

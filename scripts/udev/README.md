@@ -58,6 +58,11 @@ sudo install -m 0755 scripts/udev/can-link-up.sh /usr/local/sbin/
 
 `99-zlg-usbcanfd.rules` 与 `99-dexrobot-libusb.rules` 当前匹配同一 VID/PID。按文件名顺序，最终权限由后处理的 ZLG 规则收敛为 `0666`；迁移完成后可合并为一条规则。
 
+这些规则只处理设备访问权限，不会固定 DexHand SDK 的 `adapter_index`。
+SDK 仍按 USB 枚举顺序编号；即使按序列号创建 udev 软链接，当前 SDK 也不会
+使用该软链接打开设备。左右手索引应根据 SDK 启动日志中的序列号核对，并通过
+`left_hand_adapter_index`、`right_hand_adapter_index` 启动参数配置。
+
 ### 2. 可选：安装通用规则快照
 
 ```bash

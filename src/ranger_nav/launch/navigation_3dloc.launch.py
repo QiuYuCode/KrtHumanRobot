@@ -134,6 +134,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(nav2_share, 'launch', 'navigation_launch.py')),
         launch_arguments={
+            'namespace': '',
             'params_file': os.path.join(
                 ranger_nav_share, 'config', 'nav2_params_3dloc.yaml'),
             'use_sim_time': use_sim_time,

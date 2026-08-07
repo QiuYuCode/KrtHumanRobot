@@ -266,12 +266,12 @@ class RobotConfig:
     gripper_safe_current: int = 250
 
     left_gripper: dict[str, Any] = field(default_factory=lambda: {
-        "adapter_index": 0,
+        "adapter_index": 1,
         "device_id": 0x01,
         "has_pressure_sensor": False,
     })
     right_gripper: dict[str, Any] = field(default_factory=lambda: {
-        "adapter_index": 1,
+        "adapter_index": 0,
         "device_id": 0x02,
         "has_pressure_sensor": True,
     })

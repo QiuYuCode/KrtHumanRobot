@@ -9,7 +9,12 @@ CONFIG_DIR = WORKSPACE / "deploy" / "cyclonedds"
 NAMESPACE = {"c": "https://cdds.io/config"}
 
 
-def _assert_config(name: str, local_address: str, remote_address: str) -> None:
+def _assert_config(
+    name: str,
+    local_address: str,
+    remote_address: str,
+    max_auto_participant_index: str,
+) -> None:
     root = ET.parse(CONFIG_DIR / name).getroot()
 
     interface = root.find(
@@ -33,14 +38,14 @@ def _assert_config(name: str, local_address: str, remote_address: str) -> None:
     ) == "auto"
     assert root.findtext(
         "c:Domain/c:Discovery/c:MaxAutoParticipantIndex", namespaces=NAMESPACE
-    ) == "20"
+    ) == max_auto_participant_index
 
 
 def test_x86_cyclonedds_config_supports_local_and_remote_discovery():
     """The x86 config discovers local processes and the fixed Jetson peer."""
-    _assert_config("x86.xml", "10.168.1.100", "10.168.1.101")
+    _assert_config("x86.xml", "10.168.1.100", "10.168.1.101", "64")
 
 
 def test_jetson_cyclonedds_config_supports_local_and_remote_discovery():
     """The Jetson config discovers local processes and the fixed x86 peer."""
-    _assert_config("jetson.xml", "10.168.1.101", "10.168.1.100")
+    _assert_config("jetson.xml", "10.168.1.101", "10.168.1.100", "64")

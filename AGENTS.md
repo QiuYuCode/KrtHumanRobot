@@ -1,211 +1,151 @@
 # AGENTS.md
 
-This file provides guidance to agentic coding agents working with code in this repository.
+本文件约束在本仓库中工作的编码代理。以仓库现状和就近文档为准；修改子包前，先阅读该子包的 `README.md`。
 
-## Project Overview
+## 项目概览
 
-**KrtHumanRobot** is a ROS 2 workspace for humanoid robot platform integration with multiple sensor systems. The project uses mixed C++ and Python with Colcon build system.
+KrtHumanRobot 是面向人形机器人平台的 ROS 2 Humble 工作区，使用 Python 3.10+、C++ 和 Colcon，覆盖传感器、底盘导航、机械臂、灵巧手、语音及双机部署。
 
-**Primary Language:** Mixed (C++ and Python)
-**Build System:** Colcon (ROS 2)
-**Python Version:** 3.10+
+- 工作区：`/home/create/WorkSpace/KrtHumanRobot`
+- ROS 发行版：Humble（Ubuntu 22.04）
+- Python 包：`ament_python`，使用 `rclpy`
+- C++ 包：`ament_cmake`，使用 C++14 和 `rclcpp`
+- Python 开发构建始终使用 `--symlink-install`
 
-## Build Commands
+## 开始工作
 
-### Full Workspace Build
 ```bash
-cd /home/create/DataDisk/WorkSpace/CrtWorkSpace/KrtHumanRobot
+cd /home/create/WorkSpace/KrtHumanRobot
+git submodule update --init --recursive
+source /opt/ros/humble/setup.bash
 colcon build --symlink-install
 source install/setup.bash
 ```
 
-### Build Specific Packages
+优先构建受影响的包及其依赖，避免无必要的全工作区构建：
+
 ```bash
-# Hand USB cameras (Python)
-colcon build --packages-select hand_camera_driver --symlink-install
-
-# LiDAR driver (C++)
-colcon build --packages-select livox_ros_driver2 --symlink-install
-
-# RealSense camera (C++ - multiple packages)
-colcon build --packages-select realsense2_camera realsense2_camera_msgs realsense2_description --symlink-install
+colcon build --packages-select <package_name> --symlink-install
+colcon build --packages-up-to <package_name> --symlink-install
 ```
 
-**Important:** Use `--symlink-install` for faster Python development iteration.
+常用示例：
 
-### Lint and Test Commands
-
-#### Python (hand_camera_driver package)
 ```bash
-# Run linting
-colcon test --packages-select hand_camera_driver --event-handlers console_direct+
+colcon build --packages-select hand_camera_driver --symlink-install
+colcon build --packages-select hands_control_interfaces hands_control --symlink-install
+colcon build --packages-select realsense2_camera_msgs realsense2_description realsense2_camera --symlink-install
+colcon build --packages-up-to ranger_nav pcl_localization_ros2 --symlink-install
+```
 
-# Run specific lint tests
-colcon test --packages-select hand_camera_driver --ctest-args -R test_flake8
-colcon test --packages-select hand_camera_driver --ctest-args -R test_pep257
-colcon test --packages-select hand_camera_driver --ctest-args -R test_copyright
+## 验证
 
-# View test results
+修改后运行覆盖改动的最小验证；合并前相关测试必须通过。
+
+```bash
+colcon test --packages-select <package_name> --event-handlers console_direct+
 colcon test-result --verbose
 ```
 
-#### C++ (realsense2_camera, livox_ros_driver2)
-```bash
-# Build with warnings (enabled in CMakeLists.txt)
-colcon build --packages-select realsense2_camera --symlink-install
+单个 Python 测试可直接运行：
 
-# Run any available tests
-colcon test --packages-select realsense2_camera
-colcon test --packages-select livox_ros_driver2
+```bash
+pytest -q src/<package_name>/test/test_<name>.py
 ```
 
-## Code Style Guidelines
+仅运行 ament lint：
 
-### Python (hand_camera_driver package)
-
-#### Imports and Formatting
-- Follow PEP 8 style (enforced by flake8)
-- Use standard ROS 2 imports: `rclpy`, `sensor_msgs`, `std_msgs`, `cv_bridge`
-- Import order: standard library, third-party, ROS 2, local modules
-- Maximum line length: 88 characters (flake8 default)
-
-#### Naming Conventions
-- Classes: `PascalCase` (e.g., `USBCameraTestNode`)
-- Functions/variables: `snake_case` (e.g., `device_id`, `init_camera()`)
-- Constants: `UPPER_SNAKE_CASE`
-- Private members: prefix with underscore (e.g., `_init_camera()`)
-
-#### ROS 2 Patterns
-- Inherit from `rclpy.node.Node` for all ROS nodes
-- Declare parameters in `__init__()` using `self.declare_parameter()`
-- Use `self.get_parameter().value` to retrieve parameter values
-- Create publishers with `self.create_publisher()` and QoS profile of 10
-- Use `CvBridge` for OpenCV-ROS image conversion
-- Include proper error handling for device initialization
-
-#### Documentation
-- Use docstrings for all classes and public methods
-- Chinese comments acceptable for device-specific descriptions
-- Include parameter descriptions in docstrings
-
-#### Error Handling
-- Use try-except blocks for device operations (camera, audio)
-- Log errors with `self.get_logger().error()`
-- Handle device disconnection gracefully
-- Check return values from OpenCV operations
-
-### C++ (realsense2_camera, livox_ros_driver2)
-
-#### Standards and Formatting
-- C++14 standard (configured in CMakeLists.txt)
-- Follow Google C++ style guide
-- Use clang-format if available
-- Compiler warnings: `-Wall -Wextra -Wpedantic`
-
-#### Naming Conventions
-- Classes: `PascalCase` (e.g., `BaseRealSenseNode`)
-- Functions/variables: `snake_case` (e.g., `init_camera()`)
-- Member variables: trailing underscore (e.g., `device_id_`)
-- Constants: `kPascalCase` or `UPPER_SNAKE_CASE`
-- Namespaces: `lowercase`
-
-#### ROS 2 Patterns
-- Use `rclcpp::Node` as base class for nodes
-- Smart pointers for ROS objects: `rclcpp::Publisher::SharedPtr`
-- Use `std::mutex` for thread safety
-- Prefer `RCLCPP_INFO`, `RCLCPP_ERROR` macros for logging
-- Include proper header guards
-
-#### Memory Management
-- Use RAII principles
-- Smart pointers over raw pointers
-- Proper cleanup in destructors
-- Avoid memory leaks in long-running processes
-
-## Testing Guidelines
-
-### Running Single Tests
 ```bash
-# Python specific test
-colcon test --packages-select hand_camera_driver --ctest-args -R test_flake8
-
-# C++ specific test (if available)
-colcon test --packages-select realsense2_camera --ctest-args -R specific_test_name
+colcon test --packages-select hand_camera_driver --ctest-args -R 'test_(flake8|pep257|copyright)'
 ```
 
-### Test Structure
-- Python tests use `pytest` framework
-- Test files named `test_*.py` in `test/` directory
-- C++ tests use gtest framework
-- All tests must pass before merge
+涉及 launch、DDS、设备或多节点交互时，除单元测试外还应运行对应 launch/CLI 冒烟验证。硬件不可用时明确说明未执行的验证，不要伪造结果。
 
-## Commit Message Guidelines
+## 代码规范
 
-- Use Conventional Commits: `<type>[optional scope]: <中文描述>`.
-- Commit messages must be written in Chinese.
-- Use `!` and a `BREAKING CHANGE:` footer when removing packages, public APIs, topics, launch files, or executables.
-- Examples:
-  - `feat(camera): 新增左右手摄像头驱动`
-  - `fix(nav): 修复代价地图参数`
-  - `feat(camera)!: 移除旧设备测试包`
+### 通用
 
-## Critical Development Notes
+- 先复用仓库已有模式，避免新增无必要的抽象、依赖或配置层。
+- 只修改任务相关文件；不要覆盖用户的未提交改动。
+- 不直接编辑 `build/`、`install/` 或 `log/` 中的生成文件。
+- 修改 ROS 接口、话题、参数、frame 或 launch 参数时，同步更新调用方、配置和文档。
+- 传感器流优先采用 `sensor_data` QoS；其他通信根据可靠性和时延需求显式选择，避免随意固定 depth。
+- 硬件访问必须检查返回值、记录可诊断错误并安全处理断连。
 
-### RealSense Version Constraint
-**CRITICAL:** The realsense-ros submodule MUST use branch 4.56.4, not latest.
-Reason: Jetson SDK includes librealsense2 version 2.56.4, incompatible with newer realsense-ros branches.
+### Python
 
-### Git Submodules
-Initialize before building:
+- 遵循 PEP 8；导入顺序为标准库、第三方、ROS 2、本地模块。
+- 类使用 `PascalCase`，函数和变量使用 `snake_case`，常量使用 `UPPER_SNAKE_CASE`。
+- ROS 节点继承 `rclpy.node.Node`；参数在构造阶段声明并校验。
+- 使用 `get_logger()` 记录日志，不使用 `print()` 代替节点日志。
+- 设备和外部服务操作保留必要的异常处理；节点退出时释放相机、音频、CAN 等资源。
+- 测试位于包内 `test/test_*.py`，使用 pytest/ament pytest。
+
+### C++
+
+- 使用 C++14、RAII 和智能指针，遵循现有包的格式。
+- 编译警告保持 `-Wall -Wextra -Wpedantic`。
+- 类使用 `PascalCase`，函数和变量使用 `snake_case`，成员变量使用尾下划线。
+- 使用 `RCLCPP_*` 日志宏；共享状态按 callback group/executor 模型正确加锁。
+- 头文件使用 include guard；避免裸 `new`/`delete` 和长期运行节点中的资源泄漏。
+
+### Launch 与配置
+
+- Launch 文件命名为 `*.launch.py`，参数应可从 YAML 或 launch argument 覆盖。
+- 不在代码中硬编码机器专属路径、设备号或网络地址；复用现有配置和环境变量。
+- 双机部署统一使用 `ROS_DOMAIN_ID=42`、`ROS_LOCALHOST_ONLY=0`、`rmw_cyclonedds_cpp`，并加载 `deploy/cyclonedds/` 中对应设备配置。
+
+## 主要包
+
+| 领域 | 主要包/目录 |
+|---|---|
+| 系统编排与 Web 控制 | `src/krt_human_robot/` |
+| 任务与动作组 | `src/krt_task/`、`src/agx_action_group_runner/` 及对应 interfaces |
+| 手部相机 | `src/hand_camera_driver/` |
+| 灵巧手控制 | `src/hands_control/`、`src/hands_control_interfaces/` |
+| 底盘与导航 | `src/ranger_ros2/`、`src/ranger_nav/` |
+| LiDAR/定位/建图 | `src/livox_ros_driver2/`、`src/FAST_LIO_ROS2/`、`src/spark-fast-lio/`、`src/lidar_localization_ros2/`、`src/ndt_omp_ros2/` |
+| RealSense | `src/realsense-ros/` |
+| 机械臂与 MoveIt | `src/agx_arm_ros/` |
+| 语音 | `src/voice_stack/`、`src/voice_assistant/`、`src/voice_test_tools/` |
+| 部署 | `deploy/`、`scripts/udev/`、`docs/dual_device_deployment.md` |
+
+## 关键约束
+
+### RealSense 版本
+
+`src/realsense-ros` 必须保持在 `r/4.56.4` 系列，不得升级到最新分支。Jetson 上的 librealsense2 为 2.56.4，新分支可能不兼容。先构建 `realsense2_camera_msgs`，再构建相机包。
+
+### Git 子模块
+
+多个驱动和算法目录是带项目定制分支的子模块。除非任务明确要求，不要改变子模块 URL、分支或提交。新增 3D 定位依赖时使用：
+
 ```bash
-git submodule update --init --recursive
+./scripts/import_3dloc_deps.sh
 ```
 
-### Device Permissions
-- User must be in `video` group for camera access
-- PulseAudio required for audio device testing
-- V4L2 device IDs may vary between systems
+### 硬件与设备
 
-### Build Order
-- `realsense2_camera_msgs` before `realsense2_camera`
-- Use `colcon build --symlink-install` for Python packages
+- 相机需要 `video` 组权限；设备 ID 会变化，优先使用 `/dev/camera_left`、`/dev/camera_right` 等 udev 稳定别名。
+- CAN 接口和 bitrate 由 `scripts/udev/` 中规则管理。
+- 音频功能依赖主机音频服务和实际设备。
+- 不在没有明确授权时修改 `/etc`、systemd、udev 或真实硬件状态。
 
-## Package-Specific Guidelines
-
-### hand_camera_driver (Python)
-- Location: `src/hand_camera_driver/`
-- Type: `ament_python`
-- Purpose: Left/right hand USB camera image publishers
-- Key files: `usb_camera_node.py`, `hand_cameras.launch.py`
-
-### realsense2_camera (C++)
-- Location: `src/realsense-ros/realsense2_camera/`
-- Type: `ament_cmake`
-- Purpose: Intel RealSense camera driver
-- Branch constraint: 4.56.4
-
-### livox_ros_driver2 (C++)
-- Location: `src/livox_ros_driver2/`
-- Type: `ament_cmake`
-- Purpose: Livox MID-360 LiDAR driver
-- Config: `MID360_config.json`
-
-## Common Debugging Commands
+## 常用诊断
 
 ```bash
-# Check device permissions
-ls -l /dev/video*
-ls -l /dev/camera_left /dev/camera_right
-groups $USER
-
-# Test individual nodes
+ros2 doctor --report
+ros2 node list
+ros2 topic list -t
+ros2 topic info -v <topic>
+ros2 topic hz <topic>
 ros2 launch hand_camera_driver hand_cameras.launch.py
-
-# Check topic data
-ros2 topic echo /left_gripper/image_raw --once --field header.frame_id
-ros2 topic hz /left_gripper/image_raw
-ros2 topic hz /right_gripper/image_raw
-
-# View node graph
-ros2 run rqt_graph rqt_graph
+ls -l /dev/video* /dev/camera_left /dev/camera_right
 ```
+
+## 提交规范
+
+- 使用 Conventional Commits：`<type>[optional scope]: <中文描述>`。
+- 提交信息必须使用中文，例如 `fix(nav): 修复定位参数加载`。
+- 删除包、公共 API、话题、launch 文件或可执行程序时使用 `!`，并添加 `BREAKING CHANGE:` footer。
+- 提交前检查 `git diff`，确保不包含生成产物、日志、密钥或无关改动。
