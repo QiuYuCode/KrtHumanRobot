@@ -128,6 +128,7 @@ RMW 必须显示 Cyclone DDS。配置同时列出 `localhost` 和固定远端地
 ```bash
 # x86
 ros2 launch krt_human_robot x86_bringup.launch.py \
+  enable_navigation:=true \
   map:=/home/create/maps/map.yaml \
   pcd_map_path:=/home/create/maps/scans.pcd \
   navigation_mode:=3dloc

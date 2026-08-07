@@ -9,6 +9,7 @@ from launch.actions import (
     IncludeLaunchDescription,
     OpaqueFunction,
 )
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 
@@ -33,6 +34,7 @@ def _navigation(context):
             os.path.join(navigation_share, "launch", filename)
         ),
         launch_arguments=arguments.items(),
+        condition=IfCondition(LaunchConfiguration("enable_navigation")),
     )]
 
 
@@ -68,6 +70,7 @@ def generate_launch_description() -> LaunchDescription:
             default_value="3dloc",
             description="Navigation mode: 2d or 3dloc",
         ),
+        DeclareLaunchArgument("enable_navigation", default_value="false"),
         DeclareLaunchArgument("web_host", default_value="0.0.0.0"),
         DeclareLaunchArgument("web_port", default_value="8443"),
         DeclareLaunchArgument("web_certfile", default_value=""),

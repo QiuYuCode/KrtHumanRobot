@@ -13,13 +13,15 @@ NAV3D_LAUNCH = (
 )
 
 
-def test_x86_bringup_owns_robot_control_web_and_navigation_without_cameras():
-    """The x86 entry point keeps hardware control but excludes camera drivers."""
+def test_x86_bringup_keeps_navigation_opt_in_and_excludes_cameras():
+    """The x86 entry point defaults navigation off but can explicitly enable it."""
     source = X86_LAUNCH.read_text(encoding="utf-8")
 
     assert '"enable_camera_stack": "false"' in source
     assert '"enable_arm_control_stack": "true"' in source
     assert '"enable_web_console": "true"' in source
+    assert '"enable_navigation", default_value="false"' in source
+    assert 'IfCondition(LaunchConfiguration("enable_navigation"))' in source
     assert '"rviz": "false"' in source
     assert "navigation_3dloc.launch.py" in source
     assert "navigation.launch.py" in source
