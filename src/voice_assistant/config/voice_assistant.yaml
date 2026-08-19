@@ -17,7 +17,8 @@ kws_num_threads: 1
 onnx_provider: cpu
 
 input_device_hint: XFM-DP
-output_device_hint: HDA Intel PCH
+output_device_hint: headphones
+output_port: analog-output-headphones
 
 wake_mode: software
 kws_keywords_score: 1.0

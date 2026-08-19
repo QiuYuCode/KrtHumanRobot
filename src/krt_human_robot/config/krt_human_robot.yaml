@@ -95,6 +95,7 @@ head_aligned_depth_info_topic: /camera/camera/aligned_depth_to_color/camera_info
 cameras:
   head:
     ros_topic: /camera/camera/color/image_raw
+    ros_compressed_topic: /camera/camera/color/image_jpeg
     width: 640
     height: 480
     record_fps: 15.0

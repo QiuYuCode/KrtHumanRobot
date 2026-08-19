@@ -221,6 +221,7 @@ class RobotConfig:
             "width": 640,
             "height": 480,
             "ros_topic": "/camera/camera/color/image_raw",
+            "ros_compressed_topic": "/camera/camera/color/image_jpeg",
             "record_fps": 30.0,
         },
         "left_palm": {

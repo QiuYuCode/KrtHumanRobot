@@ -24,9 +24,11 @@ class VoicePlaybackNode(Node):
     def __init__(self) -> None:
         super().__init__("voice_playback")
         self.declare_parameter("output_device_hint", "")
+        self.declare_parameter("output_port", "")
 
         configure_audio_devices(
             output_hint=str(self.get_parameter("output_device_hint").value),
+            output_port=str(self.get_parameter("output_port").value),
             configure_input=False,
             configure_output=True,
             log_info=self.get_logger().info,

@@ -274,6 +274,7 @@ def _launch_setup(context, *args, **kwargs):
             "voice_playback",
             {
                 "output_device_hint": cfg.get("output_device_hint", ""),
+                "output_port": cfg.get("output_port", ""),
             },
         ),
         _make_uv_process(

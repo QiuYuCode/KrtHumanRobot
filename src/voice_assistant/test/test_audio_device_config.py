@@ -13,7 +13,8 @@ def test_x86_audio_hints_match_deployed_devices():
     config = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))
 
     assert config["input_device_hint"] == "XFM-DP"
-    assert config["output_device_hint"] == "HDA Intel PCH"
+    assert config["output_device_hint"] == "headphones"
+    assert config["output_port"] == "analog-output-headphones"
 
 
 def test_kws_uses_one_inference_thread():

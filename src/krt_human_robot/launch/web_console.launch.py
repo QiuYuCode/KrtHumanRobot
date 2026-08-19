@@ -1,4 +1,4 @@
-"""Launch the single-worker HTTPS robot Web console."""
+"""Launch the single-worker robot Web console."""
 
 import os
 
@@ -31,6 +31,7 @@ def _launch_setup(context):
             "KRT_WEB_DB": LaunchConfiguration("web_db"),
             "KRT_MEDIA_DIR": LaunchConfiguration("media_dir"),
             "KRT_HUMAN_ROBOT_CONFIG": LaunchConfiguration("config_file"),
+            "KRT_WEB_SESSION_COOKIE_SECURE": "1" if certfile and keyfile else "0",
         },
         output="screen",
     )]

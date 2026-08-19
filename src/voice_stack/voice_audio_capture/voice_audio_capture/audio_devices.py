@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from collections.abc import Callable
 from typing import Any
 
@@ -12,6 +13,7 @@ def configure_audio_devices(
     *,
     input_hint: str = "",
     output_hint: str = "",
+    output_port: str = "",
     configure_input: bool = True,
     configure_output: bool = True,
     log_info: Callable[[str], Any] | None = None,
@@ -20,6 +22,19 @@ def configure_audio_devices(
     """根据 hint 选择麦克风/扬声器；优先 pulse/default，其次 hint，最后 USB。"""
     info = log_info or (lambda _msg: None)
     warn = log_warning or (lambda _msg: None)
+
+    if configure_output and output_port:
+        try:
+            subprocess.run(
+                ["pactl", "set-sink-port", "@DEFAULT_SINK@", output_port],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=3.0,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            reason = getattr(exc, "stderr", "") or str(exc)
+            warn(f"[Audio] 切换输出端口 {output_port} 失败: {reason.strip()}")
 
     try:
         devices = sd.query_devices()

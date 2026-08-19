@@ -69,6 +69,21 @@ def test_ros_camera_source_decodes_compressed_topic_and_closes(monkeypatch):
     assert node.destroyed == [node.subscription]
 
 
+def test_ros_camera_source_uses_explicit_compressed_topic(monkeypatch):
+    """A dedicated JPEG topic avoids activating an image_transport plugin."""
+    node = FakeNode()
+    monkeypatch.setattr(camera_source, "_ensure_ros_context", lambda _cfg: node)
+    spec = camera_source.CameraSpec(
+        ros_topic="/camera/color/image_raw",
+        ros_compressed_topic="/camera/color/image_jpeg",
+    )
+
+    camera_source.RosCameraSource("head", spec, make_config())
+
+    assert node.message_type is CompressedImage
+    assert node.topic == "/camera/color/image_jpeg"
+
+
 def test_ros_camera_source_rejects_invalid_jpeg_then_times_out(monkeypatch):
     """An invalid compressed payload never becomes a usable cached frame."""
     node = FakeNode()
@@ -83,5 +98,29 @@ def test_ros_camera_source_rejects_invalid_jpeg_then_times_out(monkeypatch):
 
     node.callback(msg)
 
+    with pytest.raises(RuntimeError, match="未收到帧"):
+        source.grab_frame()
+
+
+def test_ros_camera_source_rejects_empty_payload_before_opencv(monkeypatch):
+    """An empty compressed message never reaches OpenCV's decoder."""
+    node = FakeNode()
+    decode_calls = []
+    monkeypatch.setattr(camera_source, "_ensure_ros_context", lambda _cfg: node)
+    monkeypatch.setattr(
+        camera_source.cv2,
+        "imdecode",
+        lambda *args: decode_calls.append(args),
+    )
+    source = camera_source.RosCameraSource(
+        "head", camera_source.CameraSpec(ros_topic="/camera/color/image_raw"),
+        make_config(timeout=0.001),
+    )
+    msg = CompressedImage()
+    msg.format = "jpeg"
+
+    node.callback(msg)
+
+    assert decode_calls == []
     with pytest.raises(RuntimeError, match="未收到帧"):
         source.grab_frame()

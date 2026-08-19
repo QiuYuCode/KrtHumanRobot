@@ -4,5 +4,5 @@ SUBSYSTEM=="video4linux", ENV{ID_VENDOR_ID}=="8086", ENV{ID_MODEL_ID}=="0b07", E
 SUBSYSTEM=="video4linux", ENV{ID_VENDOR_ID}=="8086", ENV{ID_MODEL_ID}=="0b07", ENV{ID_PATH}=="platform-3610000.usb-usb-0:3.3:1.0", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", KERNEL=="video2", SYMLINK+="camera_head_ir"
 
 # Generic USB cams (1e45:8022) by physical port path (auto-detected).
-SUBSYSTEM=="video4linux", ENV{ID_VENDOR_ID}=="1e45", ENV{ID_MODEL_ID}=="8022", ENV{ID_PATH}=="platform-3610000.usb-usb-0:4.1:1.0", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", SYMLINK+="camera_left"
-SUBSYSTEM=="video4linux", ENV{ID_VENDOR_ID}=="1e45", ENV{ID_MODEL_ID}=="8022", ENV{ID_PATH}=="platform-3610000.usb-usb-0:4.4:1.0", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", SYMLINK+="camera_right"
+SUBSYSTEM=="video4linux", ENV{ID_VENDOR_ID}=="1e45", ENV{ID_MODEL_ID}=="8022", ENV{ID_PATH}=="platform-3610000.usb-usb-0:4.1:1.0", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", SYMLINK+="camera_right"
+SUBSYSTEM=="video4linux", ENV{ID_VENDOR_ID}=="1e45", ENV{ID_MODEL_ID}=="8022", ENV{ID_PATH}=="platform-3610000.usb-usb-0:4.4:1.0", ENV{ID_V4L_CAPABILITIES}=="*:capture:*", SYMLINK+="camera_left"

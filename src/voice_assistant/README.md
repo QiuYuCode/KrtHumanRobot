@@ -29,7 +29,7 @@ ros2 launch krt_human_robot robot.launch.py
 
 `config/voice_assistant.yaml` 只保留语音参数：
 
-- 音频输入/输出设备
+- 音频输入/输出设备及 PulseAudio 输出端口
 - KWS 模型和关键词
 - VAD 参数
 - ASR 后端和模型

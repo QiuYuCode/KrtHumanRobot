@@ -383,9 +383,7 @@ class RosBridge:
                     self.monitor_deadline = time.monotonic() + 3.0
                     return {"enabled": True}
                 previous = self._get_monitor_parameters()
-                self._set_monitor_parameters({
-                    "listen_enabled": True, "realtime_response_enabled": True,
-                })
+                self._set_monitor_parameters({"listen_enabled": True})
                 self.monitor_previous = previous
                 self.monitor_active = True
                 self.monitor_deadline = time.monotonic() + 3.0
@@ -536,7 +534,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         WEB_DB=os.environ.get("KRT_WEB_DB", "~/.local/share/krt_human_robot/web.db"),
         MEDIA_DIR=os.environ.get("KRT_MEDIA_DIR", "~/music"),
         MAX_CONTENT_LENGTH=100 * 1000 * 1000,
-        SESSION_COOKIE_SECURE=True,
+        SESSION_COOKIE_SECURE=os.environ.get(
+            "KRT_WEB_SESSION_COOKIE_SECURE", "1"
+        ) not in {"0", "false", "False"},
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         ROS_ENABLED=os.environ.get("KRT_WEB_ROS_ENABLED", "1")
@@ -567,11 +567,19 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     })
     adapter = RangerNavAdapter(robot_config)
     bridge = RosBridge(robot_config=robot_config) if app.config["ROS_ENABLED"] else None
+    if bridge is not None:
+        bridge.hand_adapter_indices.update({
+            item["side"]: int(item["adapter_index"])
+            for item in database.list_gripper_settings()
+        })
     gripper_system = GripperSystemController(
         bridge.node,
         database,
         hand_clients=bridge.hand_clients,
         future_result=bridge._future_result,
+        settings_updated=lambda side, settings: bridge.hand_adapter_indices.__setitem__(
+            side, int(settings["adapter_index"])
+        ),
     ) if bridge is not None else None
     robot_system = RobotSystemController(
         bridge.node,
@@ -583,6 +591,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     ) if bridge is not None else None
     if robot_system is not None:
         atexit.register(robot_system.shutdown_owned_providers)
+    if gripper_system is not None:
+        atexit.register(gripper_system.shutdown_owned_processes)
     runtime = WebRuntime(adapter, bridge)
     app.extensions.update(
         robot_db=database, auth_db=auth, runtime=runtime,
@@ -818,8 +828,13 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @protected(auth, role="admin")
     def update_gripper_system_settings(side: str):
         result = require_gripper_system().update_settings(side, request.get_json() or {})
+        message = (
+            "参数未修改" if result["restart"]["message"] == "参数未修改"
+            else "硬件参数已保存，夹爪已重启并开启"
+        )
         return audited(
-            auth, "update_gripper_system_settings", side, True, data={"settings": result}
+            auth, "update_gripper_system_settings", side, True,
+            message, data=result,
         )
 
     @app.put("/api/gripper/system/<side>/runtime")

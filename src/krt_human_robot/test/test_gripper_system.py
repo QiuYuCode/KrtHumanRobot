@@ -1,5 +1,7 @@
+import threading
 from types import SimpleNamespace
 
+import pytest
 from lifecycle_msgs.msg import State, Transition
 
 from krt_human_robot.gripper_system import GripperSystemController
@@ -116,7 +118,8 @@ class FakeDatabase:
         self.settings[side].update(changes)
 
 
-def make_controller(states, popen=lambda *_args, **_kwargs: None):
+def make_controller(
+        states, popen=lambda *_args, **_kwargs: None, settings_updated=None):
     node = FakeNode(states)
     controller = GripperSystemController(
         node,
@@ -129,6 +132,7 @@ def make_controller(states, popen=lambda *_args, **_kwargs: None):
         popen=popen,
         sleep=lambda _seconds: None,
         startup_timeout=0.01,
+        settings_updated=settings_updated,
     )
     return controller, node
 
@@ -181,6 +185,135 @@ def test_stop_active_hand_deactivates_and_cleans_up():
         Transition.TRANSITION_CLEANUP,
     ]
     assert result["hands"]["left"]["state"] == "unconfigured"
+
+
+def test_hardware_settings_restart_only_the_owned_hand():
+    states = {"left": "unconfigured", "right": "active"}
+    launched = []
+
+    def popen(command, **_kwargs):
+        side = "left" if "enable_left:=true" in command else "right"
+        launched.append(side)
+        states[side] = "unconfigured"
+        return SimpleNamespace(pid=200 + len(launched), poll=lambda: None)
+
+    controller, node = make_controller(states, popen=popen)
+    old_process = SimpleNamespace(pid=100, poll=lambda: None)
+    controller.processes = {"left": old_process}
+    stopped = []
+
+    def terminate(process):
+        stopped.append(process.pid)
+        states.pop("left")
+
+    controller._terminate = terminate
+
+    result = controller.update_settings("left", {"adapter_index": 4})
+
+    assert stopped == [100]
+    assert launched == ["left"]
+    assert states == {"left": "active", "right": "active"}
+    assert result["settings"]["adapter_index"] == 4
+    assert result["restart"]["state"] == "active"
+    assert node.clients[("left", "set")].values[
+        "adapter_index"
+    ].integer_value == 4
+
+
+def test_hardware_settings_reject_unowned_existing_node_before_saving():
+    controller, _node = make_controller({"left": "unconfigured"})
+
+    with pytest.raises(RuntimeError, match="不由 Web 管理"):
+        controller.update_settings("left", {"adapter_index": 4})
+
+    assert controller.database.get_gripper_settings("left")["adapter_index"] == 0
+
+
+def test_hardware_settings_sync_bridge_before_restart_can_fail():
+    synced = []
+    controller, _node = make_controller(
+        {}, settings_updated=lambda side, settings: synced.append(
+            (side, settings["adapter_index"])
+        )
+    )
+    controller._restart_side = lambda _side: (
+        (_ for _ in ()).throw(RuntimeError("start failed"))
+    )
+
+    with pytest.raises(RuntimeError, match="start failed"):
+        controller.update_settings("left", {"adapter_index": 4})
+
+    assert synced == [("left", 4)]
+
+
+def test_runtime_update_waits_for_hardware_restart_lock():
+    entered_restart = threading.Event()
+    release_restart = threading.Event()
+    runtime_finished = threading.Event()
+    controller, _node = make_controller({"left": "unconfigured"})
+    controller.processes = {
+        "left": SimpleNamespace(pid=100, poll=lambda: None)
+    }
+
+    def restart(_side):
+        entered_restart.set()
+        release_restart.wait(1.0)
+        return {"success": True, "state": "active", "message": "已重启"}
+
+    controller._restart_side = restart
+    settings_thread = threading.Thread(
+        target=controller.update_settings,
+        args=("left", {"adapter_index": 4}),
+    )
+    runtime_thread = threading.Thread(
+        target=lambda: (
+            controller.update_runtime("left", {"listen_enabled": True}),
+            runtime_finished.set(),
+        )
+    )
+
+    settings_thread.start()
+    assert entered_restart.wait(1.0)
+    runtime_thread.start()
+    assert not runtime_finished.wait(0.05)
+    release_restart.set()
+    settings_thread.join(1.0)
+    runtime_thread.join(1.0)
+
+    assert runtime_finished.is_set()
+    assert controller.database.get_gripper_settings("left")["listen_enabled"] is True
+
+
+def test_start_both_reports_each_hand_when_second_launch_fails():
+    states = {}
+
+    def popen(command, **_kwargs):
+        if "enable_left:=true" in command:
+            states["left"] = "unconfigured"
+        return SimpleNamespace(pid=100, poll=lambda: None, terminate=lambda: None)
+
+    controller, _node = make_controller(states, popen=popen)
+
+    result = controller.control("both", True)
+
+    assert result["success"] is False
+    assert result["hands"]["left"]["success"] is True
+    assert result["hands"]["right"]["success"] is False
+
+
+def test_empty_hardware_settings_do_not_restart():
+    controller, _node = make_controller({"left": "unconfigured"})
+    controller.processes = {
+        "left": SimpleNamespace(pid=100, poll=lambda: None)
+    }
+    controller._restart_side = lambda _side: (
+        (_ for _ in ()).throw(AssertionError("must not restart"))
+    )
+
+    result = controller.update_settings("left", {})
+
+    assert result["settings"]["adapter_index"] == 0
+    assert result["restart"]["message"] == "参数未修改"
 
 
 def test_status_keeps_other_hand_when_one_state_query_fails():

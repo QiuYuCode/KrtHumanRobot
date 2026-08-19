@@ -50,6 +50,7 @@ def generate_launch_description() -> LaunchDescription:
             "enable_camera_stack": "false",
             "enable_arm_control_stack": "true",
             "enable_web_console": "true",
+            "enable_hands_control_stack": "false",
             "web_host": LaunchConfiguration("web_host"),
             "web_port": LaunchConfiguration("web_port"),
             "web_certfile": LaunchConfiguration("web_certfile"),

@@ -33,6 +33,7 @@ class GripperSystemController:
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
         sleep: Callable[[float], None] = time.sleep,
         startup_timeout: float = 8.0,
+        settings_updated: Callable[[str, dict[str, Any]], None] | None = None,
     ) -> None:
         self.database = database
         self.hand_clients = hand_clients
@@ -40,8 +41,9 @@ class GripperSystemController:
         self._popen = popen
         self._sleep = sleep
         self.startup_timeout = startup_timeout
+        self._settings_updated = settings_updated
         self.lock = threading.Lock()
-        self.processes = []
+        self.processes: dict[str, subprocess.Popen] = {}
         self.last_errors = {side: "" for side in SIDES}
         self.state_clients = {}
         self.change_clients = {}
@@ -131,24 +133,25 @@ class GripperSystemController:
         if not response.success:
             raise RuntimeError(f"{side} 生命周期转换失败: {transition_id}")
 
-    def _launch_missing(self, sides: list[str]) -> None:
+    def _launch_side(self, side: str) -> None:
         command = [
             "ros2", "launch", "hands_control", "hand_control_launch.py",
-            f"enable_left:={'true' if 'left' in sides else 'false'}",
-            f"enable_right:={'true' if 'right' in sides else 'false'}",
+            f"enable_left:={'true' if side == 'left' else 'false'}",
+            f"enable_right:={'true' if side == 'right' else 'false'}",
             "autostart:=false",
         ]
         process = self._popen(command, start_new_session=True)
-        self.processes.append(process)
+        self.processes[side] = process
         deadline = time.monotonic() + self.startup_timeout
         while time.monotonic() < deadline:
-            if all(self._state(side) != "missing" for side in sides):
+            if self._state(side) != "missing":
                 return
             if process.poll() is not None:
                 break
             self._sleep(0.1)
         self._terminate(process)
-        raise RuntimeError(f"夹爪节点启动超时: {', '.join(sides)}")
+        self.processes.pop(side, None)
+        raise RuntimeError(f"夹爪节点启动超时: {side}")
 
     @staticmethod
     def _terminate(process) -> None:
@@ -192,16 +195,37 @@ class GripperSystemController:
             raise RuntimeError(f"{side} 无法从 {state} 进入 unconfigured")
         return {"success": True, "state": state, "message": "已关闭"}
 
+    def _restart_side(self, side: str) -> dict[str, Any]:
+        state = self._state(side)
+        if state != "missing":
+            process = self.processes.get(side)
+            if process is None or process.poll() is not None:
+                raise RuntimeError(f"{side} 夹爪节点不由 Web 管理，无法自动重启")
+            self._terminate(process)
+            deadline = time.monotonic() + self.startup_timeout
+            while time.monotonic() < deadline and self._state(side) != "missing":
+                self._sleep(0.1)
+            if self._state(side) != "missing":
+                raise RuntimeError(f"{side} 夹爪节点停止超时")
+            self.processes.pop(side, None)
+        self._launch_side(side)
+        return self._start_side(side)
+
+    def shutdown_owned_processes(self) -> None:
+        """Stop only gripper launch processes started by this Web worker."""
+        for process in reversed(list(self.processes.values())):
+            if process.poll() is None:
+                self._terminate(process)
+        self.processes.clear()
+
     def control(self, target: str, enabled: bool) -> dict[str, Any]:
         sides = self._selected(target)
         with self.lock:
-            if enabled:
-                missing = [side for side in sides if self._state(side) == "missing"]
-                if missing:
-                    self._launch_missing(missing)
             results = {}
             for side in sides:
                 try:
+                    if enabled and self._state(side) == "missing":
+                        self._launch_side(side)
                     result = self._start_side(side) if enabled else self._stop_side(side)
                     self.last_errors[side] = ""
                 except Exception as exc:
@@ -244,18 +268,33 @@ class GripperSystemController:
         return {"hands": hands}
 
     def update_settings(self, side: str, changes: dict[str, Any]) -> dict[str, Any]:
-        state = self._state(side)
-        if state not in {"missing", "unconfigured"}:
-            raise RuntimeError("请先关闭夹爪再修改硬件参数")
-        if set(changes) - set(STATIC_KEYS):
-            raise ValueError("这里只允许修改硬件参数")
-        self.database.update_gripper_settings(side, changes)
-        return self.database.get_gripper_settings(side)
+        with self.lock:
+            state = self._state(side)
+            if state not in {"missing", "unconfigured"}:
+                raise RuntimeError("请先关闭夹爪再修改硬件参数")
+            if state != "missing" and side not in self.processes:
+                raise RuntimeError(f"{side} 夹爪节点不由 Web 管理，无法自动重启")
+            if set(changes) - set(STATIC_KEYS):
+                raise ValueError("这里只允许修改硬件参数")
+            if not changes:
+                return {
+                    "settings": self.database.get_gripper_settings(side),
+                    "restart": {
+                        "success": True, "state": state, "message": "参数未修改",
+                    },
+                }
+            self.database.update_gripper_settings(side, changes)
+            settings = self.database.get_gripper_settings(side)
+            if self._settings_updated is not None:
+                self._settings_updated(side, settings)
+            restart = self._restart_side(side)
+            return {"settings": settings, "restart": restart}
 
     def update_runtime(self, side: str, changes: dict[str, Any]) -> dict[str, Any]:
-        if side not in SIDES or set(changes) - set(RUNTIME_KEYS):
-            raise ValueError("运行开关参数无效")
-        self.database.update_gripper_settings(side, changes)
-        if self._state(side) == "active":
-            self._set_parameters(side, changes)
-        return self.database.get_gripper_settings(side)
+        with self.lock:
+            if side not in SIDES or set(changes) - set(RUNTIME_KEYS):
+                raise ValueError("运行开关参数无效")
+            self.database.update_gripper_settings(side, changes)
+            if self._state(side) == "active":
+                self._set_parameters(side, changes)
+            return self.database.get_gripper_settings(side)

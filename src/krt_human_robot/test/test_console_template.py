@@ -90,6 +90,7 @@ def test_console_has_gripper_lifecycle_cards_and_settings():
     assert "function controlGripperSystem" in html
     assert "function saveGripperHardware" in html
     assert "/api/gripper/system/" in html
+    assert "!document.querySelector('#gripperSystem details[open]')" in html
 
 
 def test_routine_editor_uses_named_gripper_actions_and_keeps_legacy_fields():

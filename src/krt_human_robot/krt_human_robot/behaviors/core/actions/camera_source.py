@@ -38,6 +38,7 @@ class CameraSpec:
     width: int = 640
     height: int = 480
     ros_topic: str = ""
+    ros_compressed_topic: str = ""
     record_fps: float = 30.0
 
 
@@ -60,6 +61,7 @@ def _resolve_spec(config, camera_id: str) -> CameraSpec:
         width=int(raw.get("width", 640)),
         height=int(raw.get("height", 480)),
         ros_topic=str(raw.get("ros_topic", "")),
+        ros_compressed_topic=str(raw.get("ros_compressed_topic", "")),
         record_fps=float(raw.get("record_fps", 30.0)),
     )
 
@@ -430,6 +432,8 @@ class RosCameraSource(CameraSource):
         def _cb(msg):
             try:
                 if self._transport == "compressed":
+                    if not msg.data:
+                        raise ValueError("JPEG 数据为空")
                     data = np.frombuffer(msg.data, dtype=np.uint8)
                     frame = cv2.imdecode(data, cv2.IMREAD_COLOR)
                     if frame is None:
@@ -451,11 +455,10 @@ class RosCameraSource(CameraSource):
             durability=QoSDurabilityPolicy.VOLATILE,
         )
         message_type = CompressedImage if self._transport == "compressed" else RosImage
-        topic = (
-            f"{spec.ros_topic}/compressed"
-            if self._transport == "compressed"
-            else spec.ros_topic
-        )
+        if self._transport == "compressed":
+            topic = spec.ros_compressed_topic or f"{spec.ros_topic}/compressed"
+        else:
+            topic = spec.ros_topic
         self._sub = node.create_subscription(message_type, topic, _cb, qos)
         self._node = node
 

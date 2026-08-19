@@ -10,6 +10,7 @@ import rclpy
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
+from krt_task.robot_db import RobotDatabase
 from krt_human_robot.web_app import RosBridge, create_app
 
 
@@ -23,6 +24,78 @@ def web_test_app(tmp_path):
         "WEB_DB": str(tmp_path / "web.db"),
         "MEDIA_DIR": str(tmp_path / "media"),
     })
+
+
+def test_create_app_restores_saved_gripper_indices(monkeypatch, tmp_path):
+    robot_db = tmp_path / "robot.db"
+    database = RobotDatabase(str(robot_db))
+    database.ensure_gripper_settings({
+        "left": {
+            "adapter_type": "ZLG_MINI", "adapter_index": 4, "device_id": 1,
+            "listen_enabled": False, "realtime_response_enabled": False,
+        },
+        "right": {
+            "adapter_type": "ZLG_MINI", "adapter_index": 7, "device_id": 2,
+            "listen_enabled": False, "realtime_response_enabled": False,
+        },
+    })
+
+    class Bridge:
+        node = SimpleNamespace()
+        hand_clients = {}
+        hand_adapter_indices = {"left": 0, "right": 1}
+        _future_result = None
+
+        def __init__(self, robot_config):
+            del robot_config
+
+    class Controller:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def shutdown_owned_processes(self):
+            pass
+
+        def shutdown_owned_providers(self):
+            pass
+
+    monkeypatch.setattr("krt_human_robot.web_app.RosBridge", Bridge)
+    monkeypatch.setattr("krt_human_robot.web_app.GripperSystemController", Controller)
+    monkeypatch.setattr("krt_human_robot.web_app.RobotSystemController", Controller)
+
+    app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test",
+        "ROS_ENABLED": True,
+        "ROBOT_DB": str(robot_db),
+        "WEB_DB": str(tmp_path / "web.db"),
+        "MEDIA_DIR": str(tmp_path / "media"),
+    })
+
+    assert app.extensions["runtime"].bridge.hand_adapter_indices == {
+        "left": 4, "right": 7,
+    }
+
+
+@pytest.mark.parametrize(("secure", "expected"), (("0", False), ("1", True)))
+def test_session_cookie_security_matches_web_transport(
+        monkeypatch, tmp_path, secure, expected):
+    monkeypatch.setenv("KRT_WEB_SESSION_COOKIE_SECURE", secure)
+    app = create_app({
+        "TESTING": True,
+        "SECRET_KEY": "test",
+        "ROS_ENABLED": False,
+        "ROBOT_DB": str(tmp_path / "robot.db"),
+        "WEB_DB": str(tmp_path / "web.db"),
+        "MEDIA_DIR": str(tmp_path / "media"),
+    })
+    app.extensions["auth_db"].create_user("admin", "123456", "admin")
+
+    response = app.test_client().post("/api/login", json={
+        "username": "admin", "password": "123456",
+    })
+
+    assert ("Secure" in response.headers["Set-Cookie"]) is expected
 
 
 def test_first_admin_setup_creates_session_and_then_closes(tmp_path):
@@ -279,7 +352,18 @@ class FakeGripperSystem:
 
     def update_settings(self, side, changes):
         self.settings.append((side, changes))
-        return {"side": side, **changes}
+        if not changes:
+            return {
+                "settings": {"side": side},
+                "restart": {
+                    "success": True, "state": "unconfigured",
+                    "message": "参数未修改",
+                },
+            }
+        return {
+            "settings": {"side": side, **changes},
+            "restart": {"success": True, "state": "active", "message": "已重启"},
+        }
 
     def update_runtime(self, side, changes):
         self.runtime.append((side, changes))
@@ -303,6 +387,12 @@ def test_gripper_system_status_control_and_settings_api(tmp_path):
         "adapter_type": "ZLG_MINI", "adapter_index": 3, "device_id": 4,
     })
     assert settings.status_code == 200
+    assert settings.get_json()["restart"]["state"] == "active"
+    assert settings.get_json()["message"] == "硬件参数已保存，夹爪已重启并开启"
+    unchanged = client.put(
+        "/api/gripper/system/left/settings", headers=headers, json={}
+    )
+    assert unchanged.get_json()["message"] == "参数未修改"
     runtime = client.put("/api/gripper/system/right/runtime", headers=headers, json={
         "listen_enabled": True, "realtime_response_enabled": False,
     })
@@ -607,7 +697,7 @@ def test_ros_bridge_monitor_lease_restores_previous_parameters():
     bridge._set_monitor_parameters = lambda values: states.append(values)
 
     assert bridge.set_monitor(True)["enabled"] is True
-    assert states[-1] == {"listen_enabled": True, "realtime_response_enabled": True}
+    assert states[-1] == {"listen_enabled": True}
     bridge.monitor_deadline = time.monotonic() - 1.0
     bridge._monitor_watchdog()
 
@@ -653,7 +743,7 @@ def test_monitor_watchdog_restores_parameters_through_executor(monkeypatch, tmp_
     try:
         bridge.set_monitor(True)
         assert parameter_node.get_parameter("listen_enabled").value is True
-        assert parameter_node.get_parameter("realtime_response_enabled").value is True
+        assert parameter_node.get_parameter("realtime_response_enabled").value is False
 
         bridge.monitor_deadline = time.monotonic() - 1.0
         deadline = time.monotonic() + 3.0
@@ -677,6 +767,7 @@ def test_web_console_launch_passes_robot_config():
     web_launch = (package / "launch/web_console.launch.py").read_text(encoding="utf-8")
     assert 'if certfile and keyfile:' in web_launch
     assert 'cmd.extend(["--certfile", certfile, "--keyfile", keyfile])' in web_launch
+    assert '"KRT_WEB_SESSION_COOKIE_SECURE": "1" if certfile and keyfile else "0"' in web_launch
     robot_launch = (package / "launch/robot.launch.py").read_text(encoding="utf-8")
 
     assert '"config_file", default_value=' in web_launch

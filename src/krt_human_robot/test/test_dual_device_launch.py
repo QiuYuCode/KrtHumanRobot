@@ -20,6 +20,7 @@ def test_x86_bringup_keeps_navigation_opt_in_and_excludes_cameras():
     assert '"enable_camera_stack": "false"' in source
     assert '"enable_arm_control_stack": "true"' in source
     assert '"enable_web_console": "true"' in source
+    assert '"enable_hands_control_stack": "false"' in source
     assert '"enable_navigation", default_value="false"' in source
     assert 'IfCondition(LaunchConfiguration("enable_navigation"))' in source
     assert '"rviz": "false"' in source
@@ -36,7 +37,7 @@ def test_jetson_bringup_contains_only_realsense_and_hand_cameras():
     assert "hand_cameras.launch.py" in source
     assert 'executable="compressed_image_relay"' in source
     assert '"input_topic": "/camera/camera/color/image_raw"' in source
-    assert '"output_topic": "/camera/camera/color/image_raw/compressed"' in source
+    assert '"output_topic": "/camera/camera/color/image_jpeg"' in source
     assert '"rgb_camera.color_profile": "640x480x15"' in source
     assert '"fps": "15.0"' in source
     assert '"jpeg_quality": "70"' in source

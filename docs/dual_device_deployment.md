@@ -84,7 +84,9 @@ ldconfig -p | grep realsense
 不要在该 Jetson 上安装 `ros-humble-compressed-image-transport`。ROS Humble
 二进制包链接系统 OpenCV 4.5，而当前 JetPack RealSense 进程链接 NVIDIA
 OpenCV 4.8；在同一进程加载两套 ABI 会导致异常内存分配。D435 彩色 JPEG
-由 `hand_camera_driver/compressed_image_relay` 独立进程按需生成。
+由 `hand_camera_driver/compressed_image_relay` 独立进程按需生成到专用话题
+`/camera/camera/color/image_jpeg`。不要使用 `/image_raw/compressed` 后缀，避免
+RealSense 进程自动加载 `compressed_image_transport`。
 
 分机构建：
 
@@ -141,7 +143,7 @@ ros2 launch hand_camera_driver jetson_cameras.launch.py
 没有订阅者时跳过解码与 JPEG 编码。分别检查：
 
 ```bash
-ros2 topic hz /camera/camera/color/image_raw/compressed
+ros2 topic hz /camera/camera/color/image_jpeg
 ros2 topic hz /left_gripper/image_raw/compressed
 ros2 topic hz /right_gripper/image_raw/compressed
 ```
