@@ -134,10 +134,13 @@ class GripperSystemController:
             raise RuntimeError(f"{side} 生命周期转换失败: {transition_id}")
 
     def _launch_side(self, side: str) -> None:
+        settings = self.database.get_gripper_settings(side)
         command = [
             "ros2", "launch", "hands_control", "hand_control_launch.py",
             f"enable_left:={'true' if side == 'left' else 'false'}",
             f"enable_right:={'true' if side == 'right' else 'false'}",
+            f"{side}_hand_adapter_index:={settings['adapter_index']}",
+            f"{side}_hand_device_id:={settings['device_id']}",
             "autostart:=false",
         ]
         process = self._popen(command, start_new_session=True)

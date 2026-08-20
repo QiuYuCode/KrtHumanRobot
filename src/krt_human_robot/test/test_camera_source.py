@@ -98,7 +98,10 @@ def test_ros_camera_source_rejects_invalid_jpeg_then_times_out(monkeypatch):
 
     node.callback(msg)
 
-    with pytest.raises(RuntimeError, match="未收到帧"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"topic=/right_gripper/image_raw/compressed, transport=compressed",
+    ):
         source.grab_frame()
 
 
@@ -122,7 +125,10 @@ def test_ros_camera_source_rejects_empty_payload_before_opencv(monkeypatch):
     node.callback(msg)
 
     assert decode_calls == []
-    with pytest.raises(RuntimeError, match="未收到帧"):
+    with pytest.raises(
+        RuntimeError,
+        match=r"topic=/camera/color/image_raw/compressed, transport=compressed",
+    ):
         source.grab_frame()
 
 

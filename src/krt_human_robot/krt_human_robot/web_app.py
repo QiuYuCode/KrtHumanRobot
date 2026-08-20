@@ -587,6 +587,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         future_result=bridge._future_result,
         robot_db=app.config["ROBOT_DB"],
         media_dir=app.config["MEDIA_DIR"],
+        hand_adapter_indices=bridge.hand_adapter_indices,
         config_file=os.environ.get("KRT_HUMAN_ROBOT_CONFIG", ""),
     ) if bridge is not None else None
     if robot_system is not None:
@@ -712,7 +713,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     def action_groups():
         return jsonify(database.list_action_groups())
 
-    @app.get("/api/gripper-actions")
+    @app.get("/api/gripper-actions", strict_slashes=False)
     @protected(auth, csrf=False)
     def gripper_actions():
         return jsonify(database.list_gripper_actions())

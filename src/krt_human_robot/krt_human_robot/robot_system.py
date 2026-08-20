@@ -28,11 +28,6 @@ def provider_commands(requirements: set[str], config_file: str) -> dict[str, lis
             f"enable_tts:={'true' if 'tts' in requirements else 'false'}",
             "enable_playback:=true", "enable_media:=false", "enable_volume:=false",
         ]
-    if "camera:head" in requirements:
-        commands["camera:head"] = [
-            "ros2", "launch", "realsense2_camera", "rs_launch.py",
-            "enable_color:=true", "enable_depth:=false",
-        ]
     if requirements & {"camera:left_palm", "camera:right_palm"}:
         camera_command = [
             "ros2", "launch", "hand_camera_driver", "hand_cameras.launch.py",
@@ -75,7 +70,9 @@ def collect_routine_requirements(spec: dict[str, Any]) -> set[str]:
             requirements.add("playback")
         elif kind == "describe":
             camera_id = str(step.get("camera_id", "head")) or "head"
-            requirements.update({"vision", f"camera:{camera_id}"})
+            requirements.update({
+                "vision", f"camera:{camera_id}", "tts", "playback",
+            })
         elif kind == "photo":
             topic = str(step.get("topic", "")).strip()
             requirements.add(f"topic:{topic}" if topic else "camera:head")
@@ -146,6 +143,7 @@ class RobotSystemController:
         future_result: Callable[[Any, float], Any],
         robot_db: str,
         media_dir: str,
+        hand_adapter_indices: dict[str, int] | None = None,
         config_file: str = "",
         popen: Callable[..., subprocess.Popen] = subprocess.Popen,
         sleep: Callable[[float], None] = time.sleep,
@@ -193,6 +191,8 @@ class RobotSystemController:
         self.commands["routine"] = [
             "ros2", "launch", "krt_task", "routine_runner.launch.py",
             f"robot_db:={robot_db}", f"media_dir:={media_dir}",
+            f"left_hand_adapter_index:={(hand_adapter_indices or {}).get('left', 1)}",
+            f"right_hand_adapter_index:={(hand_adapter_indices or {}).get('right', 0)}",
             "autostart:=false",
         ]
         self.start_teach_client = node.create_client(
@@ -205,8 +205,14 @@ class RobotSystemController:
         self.provider_processes = []
         self.provider_commands = provider_commands(set(), config_file)
         self._config_file = config_file
+        transport = str(
+            getattr(robot_config, "camera_ros_transport", "raw")
+        ).strip().lower()
         self._camera_topics = {
-            name: str(values.get("ros_topic", ""))
+            name: (
+                str(values.get("ros_compressed_topic", ""))
+                or f"{values.get('ros_topic', '')}/compressed"
+            ) if transport == "compressed" else str(values.get("ros_topic", ""))
             for name, values in getattr(robot_config, "cameras", {}).items()
         }
         self.tts_client = node.create_client(

@@ -222,6 +222,7 @@ def test_login_csrf_media_and_routine(tmp_path):
         "name": ["joint_1"], "position": [0.1], "velocity": [], "effort": [],
     }])
     assert client.get("/api/action-groups").get_json()[0]["name"] == "挥手"
+    assert client.get("/api/gripper-actions/").status_code == 200
     renamed = client.patch("/api/action-groups/%E6%8C%A5%E6%89%8B", headers=headers,
                            json={"name": "新挥手"})
     assert renamed.status_code == 200

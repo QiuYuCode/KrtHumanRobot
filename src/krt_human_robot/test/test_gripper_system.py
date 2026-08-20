@@ -167,6 +167,8 @@ def test_missing_side_is_launched_then_configured_and_activated():
     assert result["success"] is True
     assert "enable_left:=false" in launches[0][0]
     assert "enable_right:=true" in launches[0][0]
+    assert "right_hand_adapter_index:=1" in launches[0][0]
+    assert "right_hand_device_id:=2" in launches[0][0]
     transitions = node.clients[("right", "change")].transitions
     assert transitions == [
         Transition.TRANSITION_CONFIGURE,

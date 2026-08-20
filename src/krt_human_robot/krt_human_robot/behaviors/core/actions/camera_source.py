@@ -479,6 +479,7 @@ class RosCameraSource(CameraSource):
             topic = spec.ros_compressed_topic or f"{spec.ros_topic}/compressed"
         else:
             topic = spec.ros_topic
+        self._topic = topic
         try:
             self._sub = node.create_subscription(message_type, topic, _cb, qos)
         except Exception as exc:
@@ -496,8 +497,8 @@ class RosCameraSource(CameraSource):
                     return
             time.sleep(0.02)
         raise RuntimeError(
-            f"ROS 相机 {self.camera_id} 话题 {self.spec.ros_topic} "
-            f"在 {self._warmup_timeout}s 内未收到帧。"
+            f"ROS 相机 {self.camera_id} 超时: topic={self._topic}, "
+            f"transport={self._transport}, 在 {self._warmup_timeout}s 内未收到帧。"
         )
 
     def grab_frame(self, warmup_frames: int = 30) -> np.ndarray:
