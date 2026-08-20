@@ -33,15 +33,19 @@ class RecognizeIntent(Behaviour):
     def update(self):
         command = self.blackboard.user_command
 
-        # 按优先级匹配意图关键词
+        # 选择最长关键词；同长度保留配置中的先后顺序。
+        best_match = None
         for intent_name, keywords in self.config.intent_patterns.items():
             for keyword in keywords:
                 if keyword in command:
-                    self.logger.info(
-                        f"意图: {intent_name} (匹配关键词: '{keyword}')"
-                    )
-                    self.blackboard.intent = intent_name
-                    return Status.SUCCESS
+                    if best_match is None or len(keyword) > len(best_match[0]):
+                        best_match = (keyword, intent_name)
+
+        if best_match is not None:
+            keyword, intent_name = best_match
+            self.logger.info(f"意图: {intent_name} (匹配关键词: '{keyword}')")
+            self.blackboard.intent = intent_name
+            return Status.SUCCESS
 
         # 没有匹配到，交给 LLM 自由对话
         self.logger.info("意图: chat (无关键词匹配)")
