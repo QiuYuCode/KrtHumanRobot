@@ -39,20 +39,15 @@ def generate_launch_description() -> LaunchDescription:
             "jpeg_quality": "70",
         }.items(),
     )
-
     head_color_compressor = Node(
         package="hand_camera_driver",
         executable="compressed_image_relay",
         name="head_color_compressor",
-        parameters=[
-            {
-                "input_topic": "/camera/camera/color/image_raw",
-                "output_topic": "/camera/camera/color/image_raw/compressed",
-                "jpeg_quality": 70,
-            }
-        ],
+        parameters=[{
+            "input_topic": "/camera/camera/color/image_raw",
+            "output_topic": "/camera/camera/color/image_jpeg",
+            "jpeg_quality": 70,
+        }],
     )
 
-    return LaunchDescription(
-        [realsense, hand_cameras, head_color_compressor]
-    )
+    return LaunchDescription([realsense, hand_cameras, head_color_compressor])
