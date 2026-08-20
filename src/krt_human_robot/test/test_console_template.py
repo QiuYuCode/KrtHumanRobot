@@ -13,17 +13,34 @@ def test_console_uses_offline_material_sidebar():
     assert '<svg' in html
     assert "https://" not in html
     for element_id in (
-        "nav", "execStatus", "cancelBtn", "who", "logoutBtn", "waypoints",
+        "nav", "execStatus", "cancelBtn", "who", "logoutBtn", "navigation", "waypoints",
         "routines", "actionGroups", "media", "users", "login", "message",
     ):
         assert f'id="{element_id}"' in html
+
+
+def test_console_has_navigation_controls():
+    html = TEMPLATE.read_text(encoding="utf-8")
+
+    for element_id in (
+        "startMapping", "finishMapping", "startNavigation", "stopNavigation",
+        "startCruise", "stopCruise", "resumeCruise",
+    ):
+        assert f'id="{element_id}"' in html
+    for path in (
+        "/api/navigation/mapping/start", "/api/navigation/mapping/finish",
+        "/api/navigation/start", "/api/navigation/stop",
+        "/api/navigation/cruise/start", "/api/navigation/cruise/stop",
+        "/api/navigation/cruise/resume",
+    ):
+        assert path in html
 
 
 def test_console_navigation_order_and_arm_action_label():
     html = TEMPLATE.read_text(encoding="utf-8")
 
     expected = (
-        "const names=[['waypoints','点位'],['actionGroups','机械臂动作'],"
+        "const names=[['navigation','导航'],['waypoints','点位'],['actionGroups','机械臂动作'],"
         "['grippers','夹爪动作'],['media','音乐'],['routines','动作编排'],"
         "...(user?.role==='admin'?[['users','账号']]:[])]"
     )

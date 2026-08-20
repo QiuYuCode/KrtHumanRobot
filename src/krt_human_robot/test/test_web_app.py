@@ -260,6 +260,73 @@ def authenticated_app(tmp_path):
     return app, client, {"X-CSRF-Token": login.get_json()["csrf_token"]}
 
 
+class FakeNavigationAdapter:
+    def __init__(self, success=True):
+        self.success = success
+        self.calls = []
+
+    def _result(self, name):
+        self.calls.append(name)
+        return SimpleNamespace(success=self.success, message=f"{name} result")
+
+    def start_mapping(self):
+        return self._result("start_mapping")
+
+    def save_mapping(self):
+        return self._result("save_mapping")
+
+    def start_navigation(self):
+        return self._result("start_navigation")
+
+    def stop_navigation(self):
+        return self._result("stop_navigation")
+
+    def start_cruise(self):
+        return self._result("start_cruise")
+
+    def stop_cruise(self):
+        return self._result("stop_cruise")
+
+    def continue_waypoint_input(self):
+        return self._result("continue_waypoint_input")
+
+
+def test_navigation_control_api_dispatches_all_commands(tmp_path):
+    app, client, headers = authenticated_app(tmp_path)
+    adapter = FakeNavigationAdapter()
+    app.extensions["runtime"].adapter = adapter
+    routes = (
+        ("/api/navigation/mapping/start", "start_mapping"),
+        ("/api/navigation/mapping/finish", "save_mapping"),
+        ("/api/navigation/start", "start_navigation"),
+        ("/api/navigation/stop", "stop_navigation"),
+        ("/api/navigation/cruise/start", "start_cruise"),
+        ("/api/navigation/cruise/stop", "stop_cruise"),
+        ("/api/navigation/cruise/resume", "continue_waypoint_input"),
+    )
+
+    for path, command in routes:
+        response = client.post(path, headers=headers)
+        assert response.status_code == 200
+        assert response.get_json() == {
+            "success": True, "message": f"{command} result",
+        }
+
+    assert adapter.calls == [command for _path, command in routes]
+
+
+def test_navigation_control_api_returns_adapter_failure(tmp_path):
+    app, client, headers = authenticated_app(tmp_path)
+    app.extensions["runtime"].adapter = FakeNavigationAdapter(success=False)
+
+    response = client.post("/api/navigation/start", headers=headers)
+
+    assert response.status_code == 400
+    assert response.get_json() == {
+        "success": False, "message": "start_navigation result",
+    }
+
+
 def gripper_target(side="left", position=500):
     return {
         "side": side, "finger_id": 0, "position": position,

@@ -772,6 +772,51 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             raise RuntimeError("ROS bridge 未启用")
         return system
 
+    def run_navigation_command(command: str, object_name: str):
+        result = getattr(runtime.adapter, command)()
+        return audited(
+            auth,
+            f"navigation_{command}",
+            object_name,
+            result.success,
+            result.message,
+        )
+
+    @app.post("/api/navigation/mapping/start")
+    @protected(auth)
+    def start_mapping():
+        return run_navigation_command("start_mapping", "mapping")
+
+    @app.post("/api/navigation/mapping/finish")
+    @protected(auth)
+    def finish_mapping():
+        return run_navigation_command("save_mapping", "mapping")
+
+    @app.post("/api/navigation/start")
+    @protected(auth)
+    def start_navigation():
+        return run_navigation_command("start_navigation", "navigation")
+
+    @app.post("/api/navigation/stop")
+    @protected(auth)
+    def stop_navigation():
+        return run_navigation_command("stop_navigation", "navigation")
+
+    @app.post("/api/navigation/cruise/start")
+    @protected(auth)
+    def start_cruise():
+        return run_navigation_command("start_cruise", "cruise")
+
+    @app.post("/api/navigation/cruise/stop")
+    @protected(auth)
+    def stop_cruise():
+        return run_navigation_command("stop_cruise", "cruise")
+
+    @app.post("/api/navigation/cruise/resume")
+    @protected(auth)
+    def resume_cruise():
+        return run_navigation_command("continue_waypoint_input", "cruise")
+
     @app.get("/api/robot-systems")
     @protected(auth, csrf=False)
     def robot_system_status():
