@@ -356,9 +356,29 @@ _ROS_CTX = {
 def _ensure_ros_context(config) -> "Any":
     """懒初始化 rclpy + 单一节点 + 后台 spin 线程，返回共享 Node。"""
     with _ROS_LOCK:
+        import rclpy
+
+        existing_node = _ROS_CTX["node"]
+        existing_thread = _ROS_CTX["thread"]
+        existing_context = getattr(existing_node, "context", None)
+        if _ROS_CTX["inited"] and (
+            not rclpy.ok()
+            or existing_node is None
+            or existing_context is not None and not existing_context.ok()
+            or existing_thread is not None and not existing_thread.is_alive()
+        ):
+            executor = _ROS_CTX["executor"]
+            if executor is not None:
+                try:
+                    executor.shutdown(timeout_sec=0.1)
+                except Exception:  # pragma: no cover
+                    pass
+            _ROS_CTX.update(
+                inited=False, node=None, executor=None, thread=None,
+            )
+
         if _ROS_CTX["inited"]:
             return _ROS_CTX["node"]
-        import rclpy
         from rclpy.executors import MultiThreadedExecutor
         from rclpy.node import Node
 
@@ -459,7 +479,13 @@ class RosCameraSource(CameraSource):
             topic = spec.ros_compressed_topic or f"{spec.ros_topic}/compressed"
         else:
             topic = spec.ros_topic
-        self._sub = node.create_subscription(message_type, topic, _cb, qos)
+        try:
+            self._sub = node.create_subscription(message_type, topic, _cb, qos)
+        except Exception as exc:
+            raise RuntimeError(
+                f"ROS 相机 {camera_id} 创建订阅失败: topic={topic!r}, "
+                f"type={message_type.__name__}, transport={self._transport}: {exc}"
+            ) from exc
         self._node = node
 
     def _wait_first_frame(self):

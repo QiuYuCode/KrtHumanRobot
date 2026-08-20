@@ -5,7 +5,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 import pytest
-from sensor_msgs.msg import CompressedImage
+from sensor_msgs.msg import CompressedImage, Image
 
 from krt_human_robot.behaviors.core.actions import camera_source
 
@@ -124,3 +124,32 @@ def test_ros_camera_source_rejects_empty_payload_before_opencv(monkeypatch):
     assert decode_calls == []
     with pytest.raises(RuntimeError, match="未收到帧"):
         source.grab_frame()
+
+
+@pytest.mark.parametrize(
+    ("camera_id", "topic"),
+    (
+        ("head", "/camera/camera/color/image_raw"),
+        ("left_palm", "/left_gripper/image_raw"),
+        ("right_palm", "/right_gripper/image_raw"),
+    ),
+)
+def test_ros_camera_source_reads_all_raw_cameras(monkeypatch, camera_id, topic):
+    """All configured cameras use Image subscriptions and return one frame."""
+    node = FakeNode()
+    monkeypatch.setattr(camera_source, "_ensure_ros_context", lambda _cfg: node)
+    source = camera_source.RosCameraSource(
+        camera_id, camera_source.CameraSpec(ros_topic=topic),
+        make_config(transport="raw"),
+    )
+    assert node.message_type is Image
+    assert node.topic == topic
+
+    msg = Image()
+    msg.height, msg.width = 2, 3
+    msg.encoding, msg.step = "bgr8", 9
+    msg.data = bytes(18)
+    node.callback(msg)
+
+    assert source.grab_frame().shape == (2, 3, 3)
+    source.close()
