@@ -6,10 +6,10 @@ from pathlib import Path
 from launch_ros.actions import Node
 
 
-def test_jetson_launch_uses_standard_compressed_transport(
+def test_jetson_launch_uses_isolated_head_jpeg_relay(
     monkeypatch, tmp_path
 ):
-    """The head image relay uses the ROS-supported transport plugin."""
+    """Head JPEG encoding stays outside the RealSense process."""
     monkeypatch.setenv("ROS_LOG_DIR", str(tmp_path))
     launch_file = (
         Path(__file__).parents[1] / "launch" / "jetson_cameras.launch.py"
@@ -25,5 +25,7 @@ def test_jetson_launch_uses_standard_compressed_transport(
     ]
 
     assert [(node.node_package, node.node_executable) for node in nodes] == [
-        ("image_transport", "republish")
+        ("hand_camera_driver", "compressed_image_relay")
     ]
+    source = launch_file.read_text(encoding="utf-8")
+    assert '"output_topic": "/camera/camera/color/image_jpeg"' in source
