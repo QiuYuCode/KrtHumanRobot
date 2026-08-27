@@ -29,3 +29,5 @@ def test_jetson_launch_uses_isolated_head_jpeg_relay(
     ]
     source = launch_file.read_text(encoding="utf-8")
     assert '"output_topic": "/camera/camera/color/image_jpeg"' in source
+    assert '"color_qos": "SENSOR_DATA"' in source
+    assert '"depth_qos": "SENSOR_DATA"' in source

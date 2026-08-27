@@ -23,6 +23,8 @@ def generate_launch_description() -> LaunchDescription:
             "enable_depth": "true",
             "align_depth.enable": "true",
             "enable_sync": "true",
+            "color_qos": "SENSOR_DATA",
+            "depth_qos": "SENSOR_DATA",
             "rgb_camera.color_profile": "640x480x15",
         }.items(),
     )

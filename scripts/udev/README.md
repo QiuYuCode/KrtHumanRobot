@@ -23,7 +23,7 @@ CAN 绑定：
 目标 Jetson `10.168.1.101` 相机绑定：
 
 - D435 `8086:0b07`，物理路径 `platform-3610000.usb-usb-0:3.3` → `/dev/camera_head_rgb`、`/dev/camera_head_depth`、`/dev/camera_head_ir`
-- `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:4.1:1.0` → `/dev/camera_right`
+- `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:4.2:1.0` → `/dev/camera_right`
 - `1e45:8022`，物理路径 `platform-3610000.usb-usb-0:4.4:1.0` → `/dev/camera_left`
 
 `/dev/camera_head_color` 是 `/dev/camera_head_rgb` 的兼容别名，两者都指向
