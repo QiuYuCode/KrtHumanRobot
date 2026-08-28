@@ -194,7 +194,7 @@ adapters:
     spark_sam_save_topic: /km_sam/save_dir
     map_dir: ~/maps
     fast_lio_pcd: ~/maps/scans.pcd
-    spark_sam_pcd: ~/maps/ranger/ranger_map.pcd
+    spark_sam_pcd: ~/maps/ranger_map.pcd
     map_yaml: ~/maps/map.yaml
     pcd_map_path: ~/maps/scans.pcd
     map_archive_dir: ~/maps

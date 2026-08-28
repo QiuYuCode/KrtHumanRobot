@@ -1,5 +1,5 @@
-from glob import glob
 import os
+from glob import glob
 
 from setuptools import find_packages, setup
 
@@ -16,6 +16,14 @@ setup(
         (os.path.join("share", package_name, "config"), glob("config/*")),
         (os.path.join("share", package_name, "scripts"), glob("scripts/*.sh")),
         (os.path.join("share", package_name, "templates"), glob("templates/*.html")),
+        (
+            os.path.join("share", package_name, "static"),
+            glob("static/*.html") + glob("static/*LICENSE"),
+        ),
+        (
+            os.path.join("share", package_name, "static", "vendor"),
+            glob("static/vendor/*"),
+        ),
     ],
     install_requires=["setuptools"],
     zip_safe=True,

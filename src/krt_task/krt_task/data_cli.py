@@ -19,9 +19,9 @@ def wav_info(path: Path) -> tuple[float, int, int]:
     with wave.open(str(path), "rb") as handle:
         if handle.getcomptype() != "NONE" or handle.getsampwidth() != 2:
             raise ValueError(f"仅支持 16-bit PCM WAV: {path}")
-        rate = int(handle.getframerate())
-        channels = int(handle.getnchannels())
-        return handle.getnframes() / float(rate), rate, channels
+        rate = handle.getframerate()
+        channels = handle.getnchannels()
+        return handle.getnframes() / rate, rate, channels
 
 
 def import_yaml(args: argparse.Namespace) -> int:
@@ -38,25 +38,25 @@ def import_yaml(args: argparse.Namespace) -> int:
 
     try:
         for name, spec in routines.items():
-            database.save_routine(
-                str(name), migrate_media(spec, database, media_dir)
-            )
+            database.save_routine(str(name), migrate_media(spec, database, media_dir))
         for item in waypoints:
             position = item.get("position", {}) or {}
             orientation = item.get("orientation", {}) or {}
             routine = str(item.get("routine", "") or "")
-            database.save_waypoint(WaypointRecord(
-                name=str(item["name"]),
-                frame_id=str(item.get("frame_id", "map")),
-                x=float(position.get("x", 0.0)),
-                y=float(position.get("y", 0.0)),
-                z=float(position.get("z", 0.0)),
-                qx=float(orientation.get("x", 0.0)),
-                qy=float(orientation.get("y", 0.0)),
-                qz=float(orientation.get("z", 0.0)),
-                qw=float(orientation.get("w", 1.0)),
-                routine=routine,
-            ))
+            database.save_waypoint(
+                WaypointRecord(
+                    name=str(item["name"]),
+                    frame_id=str(item.get("frame_id", "map")),
+                    x=float(position.get("x", 0.0)),
+                    y=float(position.get("y", 0.0)),
+                    z=float(position.get("z", 0.0)),
+                    qx=float(orientation.get("x", 0.0)),
+                    qy=float(orientation.get("y", 0.0)),
+                    qz=float(orientation.get("z", 0.0)),
+                    qw=float(orientation.get("w", 1.0)),
+                    routine=routine,
+                )
+            )
         for suffix in ("-wal", "-shm"):
             Path(f"{target}{suffix}").unlink(missing_ok=True)
         os.replace(temporary, target)
@@ -100,7 +100,9 @@ def migrate_media(spec: Any, database: RobotDatabase, media_dir: Path) -> Any:
         return [migrate_media(item, database, media_dir) for item in spec]
     if not isinstance(spec, dict):
         return spec
-    migrated = {key: migrate_media(value, database, media_dir) for key, value in spec.items()}
+    migrated = {
+        key: migrate_media(value, database, media_dir) for key, value in spec.items()
+    }
     if migrated.get("type") != "play_audio" or migrated.get("media_key"):
         return migrated
     source = Path(str(migrated.pop("file", migrated.pop("file_path", "")))).expanduser()
@@ -110,21 +112,29 @@ def migrate_media(spec: Any, database: RobotDatabase, media_dir: Path) -> Any:
     media_key = uuid.uuid4().hex
     filename = f"{media_key}.wav"
     shutil.copy2(source, media_dir / filename)
-    database.add_media({
-        "media_key": media_key, "display_name": source.name, "filename": filename,
-        "size_bytes": source.stat().st_size, "duration_sec": duration,
-        "sample_rate": rate, "channels": channels,
-    })
+    database.add_media(
+        {
+            "media_key": media_key,
+            "display_name": source.name,
+            "filename": filename,
+            "size_bytes": source.stat().st_size,
+            "duration_sec": duration,
+            "sample_rate": rate,
+            "channels": channels,
+        }
+    )
     migrated["media_key"] = media_key
     return migrated
 
 
 def waypoint_to_dict(row: WaypointRecord) -> dict[str, Any]:
     return {
-        "name": row.name, "frame_id": row.frame_id,
+        "name": row.name,
+        "frame_id": row.frame_id,
         "position": {"x": row.x, "y": row.y, "z": row.z},
         "orientation": {"x": row.qx, "y": row.qy, "z": row.qz, "w": row.qw},
         "routine": row.routine,
+        "map_id": row.map_id,
     }
 
 
@@ -143,4 +153,6 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
-    raise SystemExit(import_yaml(args) if args.command == "import-yaml" else export_yaml(args))
+    raise SystemExit(
+        import_yaml(args) if args.command == "import-yaml" else export_yaml(args)
+    )

@@ -4,16 +4,17 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import uuid
+from collections.abc import Iterator
 from contextlib import contextmanager
-from dataclasses import asdict, dataclass
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from typing import Any
 
 import yaml
 
-
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 PARALLEL_TASKS = {"play_audio", "arm_group", "gripper", "wait"}
 TASKS = PARALLEL_TASKS | {"sequence", "parallel", "speak", "describe", "photo"}
 
@@ -34,6 +35,25 @@ class WaypointRecord:
     qz: float
     qw: float
     routine: str = ""
+    map_id: str | None = None
+
+
+@dataclass(frozen=True)
+class MapRecord:
+    id: str
+    name: str
+    status: str
+    backend: str
+    session_dir: str
+    yaml_path: str
+    pgm_path: str
+    pcd_path: str
+    metadata_path: str
+    selected: bool
+    error_message: str
+    waypoint_count: int
+    created_at: str
+    updated_at: str
 
 
 class RobotDatabase:
@@ -71,6 +91,23 @@ class RobotDatabase:
                       created_at TEXT NOT NULL,
                       updated_at TEXT NOT NULL
                     );
+                    CREATE TABLE maps (
+                      id TEXT PRIMARY KEY,
+                      name TEXT NOT NULL UNIQUE,
+                      status TEXT NOT NULL CHECK(status IN ('saving', 'ready', 'failed')),
+                      backend TEXT NOT NULL CHECK(backend IN ('fast_lio', 'spark_sam')),
+                      session_dir TEXT NOT NULL DEFAULT '',
+                      yaml_path TEXT NOT NULL DEFAULT '',
+                      pgm_path TEXT NOT NULL DEFAULT '',
+                      pcd_path TEXT NOT NULL DEFAULT '',
+                      metadata_path TEXT NOT NULL DEFAULT '',
+                      selected INTEGER NOT NULL DEFAULT 0 CHECK(selected IN (0, 1)),
+                      error_message TEXT NOT NULL DEFAULT '',
+                      created_at TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX maps_one_selected
+                      ON maps(selected) WHERE selected = 1;
                     CREATE TABLE waypoints (
                       id INTEGER PRIMARY KEY,
                       name TEXT NOT NULL UNIQUE,
@@ -79,6 +116,7 @@ class RobotDatabase:
                       qx REAL NOT NULL, qy REAL NOT NULL,
                       qz REAL NOT NULL, qw REAL NOT NULL,
                       routine_id INTEGER REFERENCES routines(id) ON DELETE SET NULL,
+                      map_id TEXT REFERENCES maps(id) ON DELETE RESTRICT,
                       created_at TEXT NOT NULL,
                       updated_at TEXT NOT NULL
                     );
@@ -115,7 +153,7 @@ class RobotDatabase:
                       realtime_response_enabled INTEGER NOT NULL,
                       updated_at TEXT NOT NULL
                     );
-                    PRAGMA user_version = 4;
+                    PRAGMA user_version = 5;
                     """
                 )
                 connection.commit()
@@ -166,23 +204,219 @@ class RobotDatabase:
                     """
                 )
                 connection.commit()
+                version = 4
+            if version == 4:
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS maps (
+                      id TEXT PRIMARY KEY,
+                      name TEXT NOT NULL UNIQUE,
+                      status TEXT NOT NULL CHECK(status IN ('saving', 'ready', 'failed')),
+                      backend TEXT NOT NULL CHECK(backend IN ('fast_lio', 'spark_sam')),
+                      session_dir TEXT NOT NULL DEFAULT '',
+                      yaml_path TEXT NOT NULL DEFAULT '',
+                      pgm_path TEXT NOT NULL DEFAULT '',
+                      pcd_path TEXT NOT NULL DEFAULT '',
+                      metadata_path TEXT NOT NULL DEFAULT '',
+                      selected INTEGER NOT NULL DEFAULT 0 CHECK(selected IN (0, 1)),
+                      error_message TEXT NOT NULL DEFAULT '',
+                      created_at TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    CREATE UNIQUE INDEX IF NOT EXISTS maps_one_selected
+                      ON maps(selected) WHERE selected = 1;
+                    """
+                )
+                waypoint_columns = {
+                    str(row["name"])
+                    for row in connection.execute("PRAGMA table_info(waypoints)")
+                }
+                if "map_id" not in waypoint_columns:
+                    connection.execute(
+                        """ALTER TABLE waypoints ADD COLUMN map_id TEXT
+                           REFERENCES maps(id) ON DELETE RESTRICT"""
+                    )
+                connection.execute("PRAGMA user_version = 5")
+                connection.commit()
 
     def is_empty(self) -> bool:
         with self.connect() as connection:
             return not any(
-                connection.execute(f"SELECT 1 FROM {table} LIMIT 1").fetchone()
-                for table in (
-                    "routines", "waypoints", "media", "action_groups", "gripper_actions"
+                (
+                    connection.execute("SELECT 1 FROM routines LIMIT 1").fetchone(),
+                    connection.execute("SELECT 1 FROM waypoints LIMIT 1").fetchone(),
+                    connection.execute("SELECT 1 FROM media LIMIT 1").fetchone(),
+                    connection.execute(
+                        "SELECT 1 FROM action_groups LIMIT 1"
+                    ).fetchone(),
+                    connection.execute(
+                        "SELECT 1 FROM gripper_actions LIMIT 1"
+                    ).fetchone(),
+                    connection.execute("SELECT 1 FROM maps LIMIT 1").fetchone(),
                 )
             )
 
     @staticmethod
-    def _normalize_gripper_settings(side: str, values: dict[str, Any]) -> dict[str, Any]:
+    def _map_record(row: sqlite3.Row) -> MapRecord:
+        values = dict(row)
+        values["selected"] = bool(values["selected"])
+        return MapRecord(**values)
+
+    def create_map(self, name: str, backend: str) -> MapRecord:
+        name = validate_name(name, "地图")
+        backend = str(backend).strip().lower()
+        if backend not in {"fast_lio", "spark_sam"}:
+            raise ValueError("建图后端必须是 fast_lio 或 spark_sam")
+        map_id = uuid.uuid4().hex
+        now = utc_now()
+        try:
+            with self.connect() as connection:
+                connection.execute(
+                    """INSERT INTO maps(
+                         id, name, status, backend, created_at, updated_at)
+                       VALUES(?, ?, 'saving', ?, ?, ?)""",
+                    (map_id, name, backend, now, now),
+                )
+                connection.commit()
+        except sqlite3.IntegrityError as exc:
+            raise ValueError(f"地图名称已存在: {name}") from exc
+        return self.get_map(map_id)
+
+    def list_maps(self) -> list[MapRecord]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT m.*, COUNT(w.id) AS waypoint_count
+                   FROM maps m LEFT JOIN waypoints w ON w.map_id = m.id
+                   GROUP BY m.id
+                   ORDER BY m.selected DESC, m.created_at DESC"""
+            ).fetchall()
+        return [self._map_record(row) for row in rows]
+
+    def get_map(self, map_id: str) -> MapRecord:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT m.*, COUNT(w.id) AS waypoint_count
+                   FROM maps m LEFT JOIN waypoints w ON w.map_id = m.id
+                   WHERE m.id = ? GROUP BY m.id""",
+                (str(map_id),),
+            ).fetchone()
+        if row is None:
+            raise KeyError(f"地图不存在: {map_id}")
+        return self._map_record(row)
+
+    def get_selected_map(self) -> MapRecord | None:
+        with self.connect() as connection:
+            row = connection.execute(
+                """SELECT m.*, COUNT(w.id) AS waypoint_count
+                   FROM maps m LEFT JOIN waypoints w ON w.map_id = m.id
+                   WHERE m.selected = 1 GROUP BY m.id"""
+            ).fetchone()
+        return self._map_record(row) if row is not None else None
+
+    def complete_map(self, map_id: str, paths: dict[str, str]) -> MapRecord:
+        required = {"session_dir", "yaml_path", "pgm_path", "pcd_path", "metadata_path"}
+        missing = required - set(paths)
+        if missing:
+            raise ValueError(f"地图文件信息缺少: {', '.join(sorted(missing))}")
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            cursor = connection.execute(
+                """UPDATE maps SET status='ready', session_dir=?, yaml_path=?,
+                          pgm_path=?, pcd_path=?, metadata_path=?, error_message='',
+                          updated_at=? WHERE id=?""",
+                (
+                    str(paths["session_dir"]),
+                    str(paths["yaml_path"]),
+                    str(paths["pgm_path"]),
+                    str(paths["pcd_path"]),
+                    str(paths["metadata_path"]),
+                    now,
+                    str(map_id),
+                ),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"地图不存在: {map_id}")
+            selected = connection.execute(
+                "SELECT 1 FROM maps WHERE selected = 1"
+            ).fetchone()
+            if selected is None:
+                connection.execute(
+                    "UPDATE maps SET selected=1, updated_at=? WHERE id=?",
+                    (now, str(map_id)),
+                )
+            connection.commit()
+        return self.get_map(map_id)
+
+    def fail_map(self, map_id: str, message: str) -> MapRecord:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                """UPDATE maps SET status='failed', error_message=?, updated_at=?
+                   WHERE id=?""",
+                (str(message), utc_now(), str(map_id)),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"地图不存在: {map_id}")
+            connection.commit()
+        return self.get_map(map_id)
+
+    def select_map(self, map_id: str) -> MapRecord:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT status FROM maps WHERE id=?", (str(map_id),)
+            ).fetchone()
+            if row is None:
+                raise KeyError(f"地图不存在: {map_id}")
+            if row["status"] != "ready":
+                raise ValueError("只能选择已就绪的地图")
+            now = utc_now()
+            connection.execute(
+                "UPDATE maps SET selected=0, updated_at=? WHERE selected=1", (now,)
+            )
+            connection.execute(
+                "UPDATE maps SET selected=1, updated_at=? WHERE id=?",
+                (now, str(map_id)),
+            )
+            connection.commit()
+        return self.get_map(map_id)
+
+    def update_map_files(self, map_id: str) -> MapRecord:
+        with self.connect() as connection:
+            cursor = connection.execute(
+                "UPDATE maps SET updated_at=? WHERE id=? AND status='ready'",
+                (utc_now(), str(map_id)),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"已就绪地图不存在: {map_id}")
+            connection.commit()
+        return self.get_map(map_id)
+
+    def delete_map(self, map_id: str) -> None:
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            map_id = str(map_id)
+            if (
+                connection.execute("SELECT 1 FROM maps WHERE id=?", (map_id,)).fetchone()
+                is None
+            ):
+                raise KeyError(f"地图不存在: {map_id}")
+            connection.execute("DELETE FROM waypoints WHERE map_id=?", (map_id,))
+            connection.execute("DELETE FROM maps WHERE id=?", (map_id,))
+            connection.commit()
+
+    @staticmethod
+    def _normalize_gripper_settings(
+        side: str, values: dict[str, Any]
+    ) -> dict[str, Any]:
         if side not in {"left", "right"}:
             raise ValueError("side 必须是 left 或 right")
         allowed = {
-            "adapter_type", "adapter_index", "device_id",
-            "listen_enabled", "realtime_response_enabled",
+            "adapter_type",
+            "adapter_index",
+            "device_id",
+            "listen_enabled",
+            "realtime_response_enabled",
         }
         unknown = set(values) - allowed
         if unknown:
@@ -211,8 +445,11 @@ class RobotDatabase:
             for side, values in defaults.items():
                 normalized = self._normalize_gripper_settings(side, values)
                 missing = {
-                    "adapter_type", "adapter_index", "device_id",
-                    "listen_enabled", "realtime_response_enabled",
+                    "adapter_type",
+                    "adapter_index",
+                    "device_id",
+                    "listen_enabled",
+                    "realtime_response_enabled",
                 } - set(normalized)
                 if missing:
                     raise ValueError(f"夹爪默认设置缺少: {', '.join(sorted(missing))}")
@@ -222,9 +459,13 @@ class RobotDatabase:
                          listen_enabled, realtime_response_enabled, updated_at
                        ) VALUES(?, ?, ?, ?, ?, ?, ?)""",
                     (
-                        side, normalized["adapter_type"], normalized["adapter_index"],
-                        normalized["device_id"], int(normalized["listen_enabled"]),
-                        int(normalized["realtime_response_enabled"]), now,
+                        side,
+                        normalized["adapter_type"],
+                        normalized["adapter_index"],
+                        normalized["device_id"],
+                        int(normalized["listen_enabled"]),
+                        int(normalized["realtime_response_enabled"]),
+                        now,
                     ),
                 )
             connection.commit()
@@ -238,15 +479,15 @@ class RobotDatabase:
         for row in rows:
             item = dict(row)
             item["listen_enabled"] = bool(item["listen_enabled"])
-            item["realtime_response_enabled"] = bool(
-                item["realtime_response_enabled"]
-            )
+            item["realtime_response_enabled"] = bool(item["realtime_response_enabled"])
             result.append(item)
         return result
 
     def get_gripper_settings(self, side: str) -> dict[str, Any]:
         self._normalize_gripper_settings(side, {})
-        matches = [item for item in self.list_gripper_settings() if item["side"] == side]
+        matches = [
+            item for item in self.list_gripper_settings() if item["side"] == side
+        ]
         if not matches:
             raise KeyError(f"夹爪设置不存在: {side}")
         return matches[0]
@@ -255,15 +496,28 @@ class RobotDatabase:
         normalized = self._normalize_gripper_settings(side, changes)
         if not normalized:
             return
-        assignments = ", ".join(f"{key}=?" for key in normalized)
-        values = [
-            int(value) if isinstance(value, bool) else value
-            for value in normalized.values()
-        ]
+        values = {
+            key: int(value) if isinstance(value, bool) else value
+            for key, value in normalized.items()
+        }
         with self.connect() as connection:
             cursor = connection.execute(
-                f"UPDATE gripper_settings SET {assignments}, updated_at=? WHERE side=?",
-                [*values, utc_now(), side],
+                """UPDATE gripper_settings SET
+                     adapter_type=COALESCE(?, adapter_type),
+                     adapter_index=COALESCE(?, adapter_index),
+                     device_id=COALESCE(?, device_id),
+                     listen_enabled=COALESCE(?, listen_enabled),
+                     realtime_response_enabled=COALESCE(?, realtime_response_enabled),
+                     updated_at=? WHERE side=?""",
+                (
+                    values.get("adapter_type"),
+                    values.get("adapter_index"),
+                    values.get("device_id"),
+                    values.get("listen_enabled"),
+                    values.get("realtime_response_enabled"),
+                    utc_now(),
+                    side,
+                ),
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"夹爪设置不存在: {side}")
@@ -314,19 +568,27 @@ class RobotDatabase:
         now = utc_now()
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            if connection.execute(
-                "SELECT 1 FROM gripper_actions WHERE name = ?", (name,)
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM gripper_actions WHERE name = ?", (name,)
+                ).fetchone()
+                is None
+            ):
                 raise KeyError(f"夹爪动作不存在: {name}")
-            if connection.execute(
-                "SELECT 1 FROM gripper_actions WHERE name = ?", (new_name,)
-            ).fetchone() is not None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM gripper_actions WHERE name = ?", (new_name,)
+                ).fetchone()
+                is not None
+            ):
                 raise ValueError("夹爪动作名称已存在")
             connection.execute(
                 "UPDATE gripper_actions SET name=?, updated_at=? WHERE name=?",
                 (new_name, now, name),
             )
-            for row in connection.execute("SELECT id, spec_json FROM routines").fetchall():
+            for row in connection.execute(
+                "SELECT id, spec_json FROM routines"
+            ).fetchall():
                 spec = json.loads(row["spec_json"])
                 if _rename_gripper_action_refs(spec, name, new_name):
                     connection.execute(
@@ -342,13 +604,13 @@ class RobotDatabase:
     def delete_gripper_action(self, name: str) -> None:
         with self.connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            rows = connection.execute(
-                "SELECT name, spec_json FROM routines"
-            ).fetchall()
+            rows = connection.execute("SELECT name, spec_json FROM routines").fetchall()
             for row in rows:
                 if _uses_gripper_action(json.loads(row["spec_json"]), name):
                     raise ValueError(f"夹爪动作正在被 routine 使用: {row['name']}")
-            cursor = connection.execute("DELETE FROM gripper_actions WHERE name = ?", (name,))
+            cursor = connection.execute(
+                "DELETE FROM gripper_actions WHERE name = ?", (name,)
+            )
             if cursor.rowcount == 0:
                 raise KeyError(f"夹爪动作不存在: {name}")
             connection.commit()
@@ -370,7 +632,8 @@ class RobotDatabase:
         with self.connect() as connection:
             row = connection.execute(
                 "SELECT name, arm_target, samples_json, repeat_count "
-                "FROM action_groups WHERE name = ?", (name,)
+                "FROM action_groups WHERE name = ?",
+                (name,),
             ).fetchone()
         if row is None:
             raise KeyError(f"动作组不存在: {name}")
@@ -420,19 +683,27 @@ class RobotDatabase:
             return
         now = utc_now()
         with self.connect() as connection:
-            if connection.execute(
-                "SELECT 1 FROM action_groups WHERE name = ?", (name,)
-            ).fetchone() is None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM action_groups WHERE name = ?", (name,)
+                ).fetchone()
+                is None
+            ):
                 raise KeyError(f"动作组不存在: {name}")
-            if connection.execute(
-                "SELECT 1 FROM action_groups WHERE name = ?", (new_name,)
-            ).fetchone() is not None:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM action_groups WHERE name = ?", (new_name,)
+                ).fetchone()
+                is not None
+            ):
                 raise ValueError("动作组名称已存在")
             connection.execute(
                 "UPDATE action_groups SET name=?, updated_at=? WHERE name=?",
                 (new_name, now, name),
             )
-            for row in connection.execute("SELECT id, spec_json FROM routines").fetchall():
+            for row in connection.execute(
+                "SELECT id, spec_json FROM routines"
+            ).fetchall():
                 spec = json.loads(row["spec_json"])
                 if _rename_action_group_refs(spec, name, new_name):
                     connection.execute(
@@ -475,23 +746,33 @@ class RobotDatabase:
                 continue
             samples = []
             for step in group.get("steps", []):
-                payload_file = step.get("payload_file") if isinstance(step, dict) else None
+                payload_file = (
+                    step.get("payload_file") if isinstance(step, dict) else None
+                )
                 if not payload_file:
                     continue
                 payload_path = (path.parent / str(payload_file)).resolve()
                 try:
-                    payload = yaml.safe_load(payload_path.read_text(encoding="utf-8")) or {}
+                    payload = (
+                        yaml.safe_load(payload_path.read_text(encoding="utf-8")) or {}
+                    )
                 except OSError as exc:
                     raise ValueError(f"无法读取旧动作组采样: {payload_path}") from exc
-                samples.append({
-                    "name": list(payload.get("name", [])),
-                    "position": [float(value) for value in payload.get("position", [])],
-                    "velocity": [float(value) for value in payload.get("velocity", [])],
-                    "effort": [float(value) for value in payload.get("effort", [])],
-                    "hold_sec": float(step.get("hold_sec", 0.02)),
-                    "timeout_sec": float(step.get("timeout_sec", 8.0)),
-                    "wait_reach": bool(step.get("wait_reach", False)),
-                })
+                samples.append(
+                    {
+                        "name": list(payload.get("name", [])),
+                        "position": [
+                            float(value) for value in payload.get("position", [])
+                        ],
+                        "velocity": [
+                            float(value) for value in payload.get("velocity", [])
+                        ],
+                        "effort": [float(value) for value in payload.get("effort", [])],
+                        "hold_sec": float(step.get("hold_sec", 0.02)),
+                        "timeout_sec": float(step.get("timeout_sec", 8.0)),
+                        "wait_reach": bool(step.get("wait_reach", False)),
+                    }
+                )
             if not samples:
                 continue
             with self.connect() as connection:
@@ -500,7 +781,9 @@ class RobotDatabase:
                 ).fetchone()
             if exists is None:
                 self.save_action_group(
-                    str(name), str(group.get("arm_target", "unknown")), samples,
+                    str(name),
+                    str(group.get("arm_target", "unknown")),
+                    samples,
                     int(group.get("repeat_count", 1)),
                 )
                 imported += 1
@@ -512,8 +795,12 @@ class RobotDatabase:
                 "SELECT name, spec_json, created_at, updated_at FROM routines ORDER BY name"
             ).fetchall()
         return [
-            {"name": row["name"], "spec": json.loads(row["spec_json"]),
-             "created_at": row["created_at"], "updated_at": row["updated_at"]}
+            {
+                "name": row["name"],
+                "spec": json.loads(row["spec_json"]),
+                "created_at": row["created_at"],
+                "updated_at": row["updated_at"],
+            }
             for row in rows
         ]
 
@@ -552,9 +839,12 @@ class RobotDatabase:
             action_name = str(spec["action_name"]).strip()
             if connection is None:
                 self.get_gripper_action(action_name)
-            elif connection.execute(
-                "SELECT 1 FROM gripper_actions WHERE name = ?", (action_name,)
-            ).fetchone() is None:
+            elif (
+                connection.execute(
+                    "SELECT 1 FROM gripper_actions WHERE name = ?", (action_name,)
+                ).fetchone()
+                is None
+            ):
                 raise KeyError(f"夹爪动作不存在: {action_name}")
         for step in spec.get("steps", []):
             self._validate_gripper_action_refs(step, connection)
@@ -566,32 +856,69 @@ class RobotDatabase:
                 raise KeyError(f"routine 不存在: {name}")
             connection.commit()
 
-    def list_waypoints(self) -> list[WaypointRecord]:
+    def list_waypoints(self, map_id: str | None = None) -> list[WaypointRecord]:
         with self.connect() as connection:
-            rows = connection.execute(
-                """SELECT w.name, w.frame_id, w.x, w.y, w.z,
-                          w.qx, w.qy, w.qz, w.qw, COALESCE(r.name, '') AS routine
-                   FROM waypoints w LEFT JOIN routines r ON r.id = w.routine_id
-                   ORDER BY w.id"""
-            ).fetchall()
+            if map_id is None:
+                rows = connection.execute(
+                    """SELECT w.name, w.frame_id, w.x, w.y, w.z,
+                              w.qx, w.qy, w.qz, w.qw,
+                              COALESCE(r.name, '') AS routine, w.map_id
+                       FROM waypoints w
+                       LEFT JOIN routines r ON r.id = w.routine_id
+                       ORDER BY w.id"""
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    """SELECT w.name, w.frame_id, w.x, w.y, w.z,
+                              w.qx, w.qy, w.qz, w.qw,
+                              COALESCE(r.name, '') AS routine, w.map_id
+                       FROM waypoints w
+                       LEFT JOIN routines r ON r.id = w.routine_id
+                       WHERE w.map_id = ? ORDER BY w.id""",
+                    (str(map_id),),
+                ).fetchall()
         return [WaypointRecord(**dict(row)) for row in rows]
 
     def save_waypoint(self, waypoint: WaypointRecord) -> None:
         validate_name(waypoint.name, "点位")
         with self.connect() as connection:
             routine_id = self._routine_id(connection, waypoint.routine)
+            if (
+                waypoint.map_id is not None
+                and connection.execute(
+                    "SELECT 1 FROM maps WHERE id=? AND status='ready'",
+                    (str(waypoint.map_id),),
+                ).fetchone()
+                is None
+            ):
+                raise KeyError(f"已就绪地图不存在: {waypoint.map_id}")
             now = utc_now()
             connection.execute(
                 """INSERT INTO waypoints(
                        name, frame_id, x, y, z, qx, qy, qz, qw,
-                       routine_id, created_at, updated_at)
-                   VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                       routine_id, map_id, created_at, updated_at)
+                   VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                    ON CONFLICT(name) DO UPDATE SET
                      frame_id=excluded.frame_id, x=excluded.x, y=excluded.y,
                      z=excluded.z, qx=excluded.qx, qy=excluded.qy,
                      qz=excluded.qz, qw=excluded.qw,
-                     routine_id=excluded.routine_id, updated_at=excluded.updated_at""",
-                (*list(asdict(waypoint).values())[:-1], routine_id, now, now),
+                     routine_id=excluded.routine_id, map_id=excluded.map_id,
+                     updated_at=excluded.updated_at""",
+                (
+                    waypoint.name,
+                    waypoint.frame_id,
+                    waypoint.x,
+                    waypoint.y,
+                    waypoint.z,
+                    waypoint.qx,
+                    waypoint.qy,
+                    waypoint.qz,
+                    waypoint.qw,
+                    routine_id,
+                    waypoint.map_id,
+                    now,
+                    now,
+                ),
             )
             connection.commit()
 
@@ -601,6 +928,23 @@ class RobotDatabase:
             cursor = connection.execute(
                 "UPDATE waypoints SET routine_id=?, updated_at=? WHERE name=?",
                 (routine_id, utc_now(), name),
+            )
+            if cursor.rowcount == 0:
+                raise KeyError(f"点位不存在: {name}")
+            connection.commit()
+
+    def bind_waypoint_map(self, name: str, map_id: str) -> None:
+        with self.connect() as connection:
+            if (
+                connection.execute(
+                    "SELECT 1 FROM maps WHERE id=? AND status='ready'", (str(map_id),)
+                ).fetchone()
+                is None
+            ):
+                raise KeyError(f"已就绪地图不存在: {map_id}")
+            cursor = connection.execute(
+                "UPDATE waypoints SET map_id=?, updated_at=? WHERE name=?",
+                (str(map_id), utc_now(), name),
             )
             if cursor.rowcount == 0:
                 raise KeyError(f"点位不存在: {name}")
@@ -619,17 +963,27 @@ class RobotDatabase:
                 """INSERT INTO media(media_key, display_name, filename, size_bytes,
                    duration_sec, sample_rate, channels, created_at)
                    VALUES(?, ?, ?, ?, ?, ?, ?, ?)""",
-                (record["media_key"], record["display_name"], record["filename"],
-                 int(record["size_bytes"]), float(record["duration_sec"]),
-                 int(record["sample_rate"]), int(record["channels"]), utc_now()),
+                (
+                    record["media_key"],
+                    record["display_name"],
+                    record["filename"],
+                    int(record["size_bytes"]),
+                    float(record["duration_sec"]),
+                    int(record["sample_rate"]),
+                    int(record["channels"]),
+                    utc_now(),
+                ),
             )
             connection.commit()
 
     def list_media(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
-            return [dict(row) for row in connection.execute(
-                "SELECT * FROM media ORDER BY display_name"
-            ).fetchall()]
+            return [
+                dict(row)
+                for row in connection.execute(
+                    "SELECT * FROM media ORDER BY display_name"
+                ).fetchall()
+            ]
 
     def get_media(self, media_key: str) -> dict[str, Any]:
         with self.connect() as connection:
@@ -654,7 +1008,9 @@ class RobotDatabase:
     def _routine_id(connection: sqlite3.Connection, routine: str) -> int | None:
         if not routine:
             return None
-        row = connection.execute("SELECT id FROM routines WHERE name = ?", (routine,)).fetchone()
+        row = connection.execute(
+            "SELECT id FROM routines WHERE name = ?", (routine,)
+        ).fetchone()
         if row is None:
             raise KeyError(f"routine 不存在: {routine}")
         return int(row["id"])
@@ -722,8 +1078,11 @@ def validate_gripper_targets(targets: Any) -> list[dict[str, int | str]]:
         sides.add(side)
         item: dict[str, int | str] = {"side": side}
         for key, low, high in (
-            ("finger_id", 0, 3), ("position", 0, 1000), ("speed", 0, 1000),
-            ("force", 0, 255), ("wait_time", 0, 255),
+            ("finger_id", 0, 3),
+            ("position", 0, 1000),
+            ("speed", 0, 1000),
+            ("force", 0, 255),
+            ("wait_time", 0, 255),
         ):
             try:
                 value = int(target[key])
@@ -765,8 +1124,11 @@ def validate_routine(spec: Any, *, parallel: bool = False) -> None:
         if str(spec.get("side", "")) not in {"left", "right"}:
             raise ValueError("gripper.side 必须是 left/right")
         for key, low, high in (
-            ("finger_id", 0, 3), ("position", 0, 1000), ("speed", 0, 1000),
-            ("force", 0, 255), ("wait_time", 0, 255),
+            ("finger_id", 0, 3),
+            ("position", 0, 1000),
+            ("speed", 0, 1000),
+            ("force", 0, 255),
+            ("wait_time", 0, 255),
         ):
             value = int(spec.get(key, 0 if key == "finger_id" else -1))
             if not low <= value <= high:

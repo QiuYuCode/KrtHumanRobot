@@ -22,8 +22,7 @@ from rclpy.node import Node
 from rclpy.task import Future
 from rclpy.time import Time as RclpyTime
 from std_msgs.msg import Empty
-from tf2_ros import Buffer, TransformException, TransformListener
-
+from tf2_ros import Buffer, TransformListener
 
 DEFAULT_ROBOT_DB = "~/maps/krt_robot.db"
 DEFAULT_INPUT_TOPIC = "/input_at_waypoint/input"
@@ -41,6 +40,7 @@ class Waypoint:
     name: str
     pose: PoseStamped
     routine: str = ""
+    map_id: str | None = None
 
 
 @dataclass
@@ -62,17 +62,45 @@ class WaypointStore:
     def __init__(self, path: str) -> None:
         self.database = RobotDatabase(path)
 
-    def load(self) -> list[Waypoint]:
-        return [self._from_record(item) for item in self.database.list_waypoints()]
+    def resolve_map_id(
+        self, map_id: str | None = None, *, required: bool = False
+    ) -> str | None:
+        if map_id:
+            record = self.database.get_map(map_id)
+            if record.status != "ready":
+                raise ValueError("只能使用已就绪的地图")
+            return record.id
+        selected = self.database.get_selected_map()
+        if selected is not None:
+            return selected.id
+        if required or self.database.list_maps():
+            raise ValueError("请先选择地图")
+        return None
 
-    def save(self, waypoint: Waypoint) -> None:
+    def load(self, map_id: str | None = None) -> list[Waypoint]:
+        resolved = self.resolve_map_id(map_id)
+        return [
+            self._from_record(item) for item in self.database.list_waypoints(resolved)
+        ]
+
+    def save(self, waypoint: Waypoint, map_id: str | None = None) -> None:
         pose = waypoint.pose.pose
-        self.database.save_waypoint(WaypointRecord(
-            name=waypoint.name, frame_id=waypoint.pose.header.frame_id or "map",
-            x=pose.position.x, y=pose.position.y, z=pose.position.z,
-            qx=pose.orientation.x, qy=pose.orientation.y,
-            qz=pose.orientation.z, qw=pose.orientation.w, routine=waypoint.routine,
-        ))
+        resolved = self.resolve_map_id(map_id or waypoint.map_id, required=True)
+        self.database.save_waypoint(
+            WaypointRecord(
+                name=waypoint.name,
+                frame_id=waypoint.pose.header.frame_id or "map",
+                x=pose.position.x,
+                y=pose.position.y,
+                z=pose.position.z,
+                qx=pose.orientation.x,
+                qy=pose.orientation.y,
+                qz=pose.orientation.z,
+                qw=pose.orientation.w,
+                routine=waypoint.routine,
+                map_id=resolved,
+            )
+        )
 
     def next_name(self, waypoints: list[Waypoint]) -> str:
         used = {wp.name for wp in waypoints}
@@ -87,10 +115,16 @@ class WaypointStore:
     def _from_record(data: WaypointRecord) -> Waypoint:
         pose = PoseStamped()
         pose.header.frame_id = data.frame_id
-        pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = data.x, data.y, data.z
+        pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = (
+            data.x,
+            data.y,
+            data.z,
+        )
         pose.pose.orientation.x, pose.pose.orientation.y = data.qx, data.qy
         pose.pose.orientation.z, pose.pose.orientation.w = data.qz, data.qw
-        return Waypoint(name=data.name, pose=pose, routine=data.routine)
+        return Waypoint(
+            name=data.name, pose=pose, routine=data.routine, map_id=data.map_id
+        )
 
 
 class WaypointNode(Node):
@@ -109,14 +143,17 @@ class WaypointNode(Node):
         self.accuracy_samples: list[AccuracySample] = []
 
     def mark(self, name: str | None, routine: str) -> int:
-        waypoints = self.store.load()
+        map_id = self.store.resolve_map_id(self.args.map_id, required=True)
+        waypoints = self.store.load(map_id)
         if not name:
             name = self.store.next_name(waypoints)
         if any(wp.name == name for wp in waypoints):
             self.get_logger().error(f"点位已存在: {name}")
             return 1
         pose = self.current_pose()
-        self.store.save(Waypoint(name=name, pose=pose, routine=routine))
+        self.store.save(
+            Waypoint(name=name, pose=pose, routine=routine, map_id=map_id), map_id
+        )
         self.get_logger().info(
             f"已保存点位 {name}: x={pose.pose.position.x:.3f}, "
             f"y={pose.pose.position.y:.3f}, routine={routine}"
@@ -124,7 +161,7 @@ class WaypointNode(Node):
         return 0
 
     def list_waypoints(self) -> int:
-        waypoints = self.store.load()
+        waypoints = self.store.load(self.args.map_id)
         if not waypoints:
             print("没有保存的点位。")
             return 0
@@ -152,7 +189,7 @@ class WaypointNode(Node):
         return 0
 
     def clear(self) -> int:
-        for waypoint in self.store.load():
+        for waypoint in self.store.load(self.args.map_id):
             self.store.database.delete_waypoint(waypoint.name)
         self.get_logger().info("已清空所有点位。")
         return 0
@@ -193,7 +230,7 @@ class WaypointNode(Node):
         return 0
 
     def select_waypoints(self, names: list[str]) -> list[Waypoint]:
-        waypoints = self.store.load()
+        waypoints = self.store.load(self.args.map_id)
         if not names:
             return waypoints
         by_name = {wp.name: wp for wp in waypoints}
@@ -212,7 +249,7 @@ class WaypointNode(Node):
                     self.args.map_frame,
                     self.args.base_frame,
                     RclpyTime(),
-                    timeout=Duration(seconds=0.0),
+                    timeout=Duration(seconds=0),
                 )
                 pose = PoseStamped()
                 pose.header.frame_id = self.args.map_frame
@@ -222,7 +259,7 @@ class WaypointNode(Node):
                 pose.pose.position.z = transform.transform.translation.z
                 pose.pose.orientation = transform.transform.rotation
                 return pose
-            except TransformException as exc:
+            except Exception as exc:
                 last_error = exc
                 rclpy.spin_once(self, timeout_sec=0.1)
         raise RuntimeError(
@@ -253,9 +290,7 @@ class WaypointNode(Node):
         return True
 
     def approach_pose(self, wp: Waypoint) -> PoseStamped | None:
-        distance = float((wp.args or {}).get(
-            "approach_distance", self.args.approach_distance
-        ))
+        distance = float(self.args.approach_distance)
         if distance <= 0.0:
             return None
         yaw = _yaw_from_pose(wp.pose)
@@ -370,11 +405,15 @@ class WaypointNode(Node):
             self.get_logger().info(f"点位 {wp.name} 未绑定 routine，跳过动作。")
             return True
         if not self.routine_client.wait_for_server(timeout_sec=5.0):
-            self.get_logger().error(f"routine action 不可用: {self.args.routine_action}")
+            self.get_logger().error(
+                f"routine action 不可用: {self.args.routine_action}"
+            )
             return False
         goal = RunRoutine.Goal()
         goal.routine_name = routine
-        self.get_logger().info(f"执行点位 routine: waypoint={wp.name}, routine={routine}")
+        self.get_logger().info(
+            f"执行点位 routine: waypoint={wp.name}, routine={routine}"
+        )
         goal_handle = self.wait_future(
             self.routine_client.send_goal_async(goal),
             "发送 routine 目标超时",
@@ -445,6 +484,11 @@ def _positive_float(value: str) -> float:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="ranger_nav waypoint manager")
     parser.add_argument("--robot-db", default=DEFAULT_ROBOT_DB)
+    parser.add_argument(
+        "--map-id",
+        default=None,
+        help="地图数据库 ID；省略时使用当前选中的地图",
+    )
     parser.add_argument("--map-frame", default="map")
     parser.add_argument("--base-frame", default="base_footprint")
     parser.add_argument("--navigate-action", default=DEFAULT_NAVIGATE_ACTION)

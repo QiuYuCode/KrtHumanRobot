@@ -42,6 +42,35 @@ ros2 launch krt_human_robot robot.launch.py enable_camera_stack:=false
 - `enable_camera_stack`：是否一起启动 RealSense 和左右手 USB 相机。
 - `core_start_delay_s`：相机/语音栈启动后延迟多少秒启动核心。
 
+## Web 地图管理
+
+```bash
+source install/setup.bash
+ros2 launch krt_human_robot web_console.launch.py \
+  host:=0.0.0.0 map_archive_dir:=$HOME/maps
+```
+
+默认仅监听 `127.0.0.1`；只有在受控机器人局域网中需要远程访问时才显式传入
+`host:=0.0.0.0`，并建议配置 `certfile`/`keyfile`。
+
+导航页按地图名称登记每次 Web 建图。FAST-LIO 和 Spark + SAM 建图均保持
+RViz 开启；结束建图后，`map.yaml`、`map.pgm`、`cloud.pcd` 和元数据会登记到
+时间戳目录。选择表格中的地图后：
+
+- 导航从数据库读取该地图的绝对 `map.yaml`/`cloud.pcd` 路径；
+- 新点位自动绑定当前 `map_id`，点位列表和巡航只使用当前地图的数据；
+- “编辑”打开本地打包的 ROS-SLAM-Map-Editor（固定上游 commit
+  `646104ee80570d66ce86d51fd19fb44b31d936a0`）；
+- 编辑保存会原子覆盖当前时间戳目录中的 `map.yaml`/`map.pgm`，不会修改
+  `cloud.pcd`，也不会创建 revision。
+
+编辑前必须先停止导航，建图或保存期间不能切换、编辑地图。当前不提供 Keepout
+编辑。原命令行入口保持兼容：
+
+```bash
+ros2 launch ranger_nav navigation.launch.py map:=$HOME/maps/map.yaml
+```
+
 ## 验证
 
 ```bash

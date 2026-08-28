@@ -10,12 +10,20 @@ import threading
 import time
 import uuid
 import wave
+from collections.abc import Callable
 from functools import wraps
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
-from flask import Flask, jsonify, render_template, request, session
 from agx_action_group_interfaces.action import RunActionGroup
+from flask import (  # pyright: ignore[reportMissingImports]
+    Flask,
+    jsonify,
+    render_template,
+    request,
+    send_file,
+    session,
+)
 from hands_control_interfaces.action import HandControl
 from hands_control_interfaces.srv import (
     GetApproachingValue,
@@ -31,12 +39,15 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from werkzeug.exceptions import RequestEntityTooLarge
-from werkzeug.utils import secure_filename
+from werkzeug.exceptions import (  # pyright: ignore[reportMissingImports]
+    RequestEntityTooLarge,
+)
+from werkzeug.utils import secure_filename  # pyright: ignore[reportMissingImports]
 
 from krt_human_robot.adapters.navigation import RangerNavAdapter
 from krt_human_robot.config import load_config
 from krt_human_robot.gripper_system import GripperSystemController
+from krt_human_robot.map_manager import MapManager
 from krt_human_robot.robot_system import (
     RobotSystemController,
     collect_routine_requirements,
@@ -47,32 +58,44 @@ from krt_human_robot.web_auth import AuthDatabase
 class RosBridge:
     """One rclpy node owned by the single Gunicorn worker."""
 
-    def __init__(self, action_name: str = "/krt_task/run_routine", robot_config=None) -> None:
+    def __init__(
+        self, action_name: str = "/krt_task/run_routine", robot_config=None
+    ) -> None:
         import rclpy
 
         if not rclpy.ok():
             rclpy.init()
-        self.node = Node("krt_web_bridge")
+        self.node: Any = Node("krt_web_bridge")
         self.executor = MultiThreadedExecutor(num_threads=2)
         self.executor.add_node(self.node)
         self.client = ActionClient(self.node, RunRoutine, action_name)
         self.arm_group_client = ActionClient(
             self.node, RunActionGroup, "/agx_action_group/run_action_group"
         )
-        self.hand_clients = {
+        self.hand_clients: dict[str, Any] = {
             side: ActionClient(self.node, HandControl, f"/{side}/hand_control")
             for side in ("left", "right")
         }
         self.hand_adapter_indices = {
-            "left": int(getattr(robot_config, "left_gripper", {}).get("adapter_index", 0)),
-            "right": int(getattr(robot_config, "right_gripper", {}).get("adapter_index", 1)),
+            "left": coerce_int(
+                getattr(robot_config, "left_gripper", {}).get("adapter_index", 0),
+                "left.adapter_index",
+            ),
+            "right": coerce_int(
+                getattr(robot_config, "right_gripper", {}).get("adapter_index", 1),
+                "right.adapter_index",
+            ),
         }
-        self.telemetry_clients = {
+        self.telemetry_clients: dict[str, dict[str, Any]] = {
             "left": {
-                "position": self.node.create_client(GetFingerValue, "/left/get_joint_degree"),
+                "position": self.node.create_client(
+                    GetFingerValue, "/left/get_joint_degree"
+                ),
             },
             "right": {
-                "position": self.node.create_client(GetFingerValue, "/right/get_joint_degree"),
+                "position": self.node.create_client(
+                    GetFingerValue, "/right/get_joint_degree"
+                ),
                 "normal_pressure": self.node.create_client(
                     GetNormalPressure, "/right/get_normal_pressure"
                 ),
@@ -108,7 +131,12 @@ class RosBridge:
         self.gripper_goal_handles = {}
         self._gripper_remaining: set[str] = set()
         self.cancel_requested = False
-        self.state = {"mode": "idle", "status": "idle", "current_step": "", "message": ""}
+        self.state: dict[str, Any] = {
+            "mode": "idle",
+            "status": "idle",
+            "current_step": "",
+            "message": "",
+        }
         self.thread = threading.Thread(target=self.executor.spin, daemon=True)
         self.thread.start()
 
@@ -119,8 +147,10 @@ class RosBridge:
             if not self.client.wait_for_server(timeout_sec=2.0):
                 raise RuntimeError("routine action 不可用")
             self.state = {
-                "mode": "routine", "status": "running",
-                "current_step": "", "message": "",
+                "mode": "routine",
+                "status": "running",
+                "current_step": "",
+                "message": "",
             }
             self.cancel_requested = False
         goal = RunRoutine.Goal()
@@ -135,8 +165,10 @@ class RosBridge:
                 raise RuntimeError(f"夹爪 action 不可用: /{side}/hand_control")
         hands = {
             str(target["side"]): {
-                "status": "pending", "progress": 0.0,
-                "current_positions": [], "message": "",
+                "status": "pending",
+                "progress": 0.0,
+                "current_positions": [],
+                "message": "",
             }
             for target in targets
         }
@@ -144,8 +176,11 @@ class RosBridge:
             if self.state["status"] == "running":
                 raise RuntimeError("已有任务正在执行")
             self.state = {
-                "mode": "gripper", "status": "running", "current_step": "",
-                "message": "", "hands": hands,
+                "mode": "gripper",
+                "status": "running",
+                "current_step": "",
+                "message": "",
+                "hands": hands,
             }
             self.cancel_requested = False
             self.gripper_goal_handles = {}
@@ -154,11 +189,11 @@ class RosBridge:
             side = str(target["side"])
             goal = HandControl.Goal()
             goal.adapter_index = self.hand_adapter_indices[side]
-            goal.finger_id = int(target["finger_id"])
-            goal.position = int(target["position"])
-            goal.speed = int(target["speed"])
-            goal.force = int(target["force"])
-            goal.wait_time = int(target["wait_time"])
+            goal.finger_id = coerce_int(target["finger_id"], "finger_id")
+            goal.position = coerce_int(target["position"], "position")
+            goal.speed = coerce_int(target["speed"], "speed")
+            goal.force = coerce_int(target["force"], "force")
+            goal.wait_time = coerce_int(target["wait_time"], "wait_time")
             try:
                 future = self.hand_clients[side].send_goal_async(
                     goal,
@@ -167,21 +202,26 @@ class RosBridge:
                     ),
                 )
                 future.add_done_callback(
-                    lambda response, hand=side: self._gripper_goal_response(hand, response)
+                    lambda response, hand=side: self._gripper_goal_response(
+                        hand, response
+                    )
                 )
             except Exception as exc:
                 self._finish_gripper_hand(side, False, str(exc), [])
 
-    def run_arm_group(self, arm_target: str, group_name: str,
-                      repeat_count: int = 1) -> None:
+    def run_arm_group(
+        self, arm_target: str, group_name: str, repeat_count: int = 1
+    ) -> None:
         if not self.arm_group_client.wait_for_server(timeout_sec=2.0):
             raise RuntimeError("动作组 action 不可用")
         with self.lock:
             if self.state["status"] == "running":
                 raise RuntimeError("已有任务正在执行")
             self.state = {
-                "mode": "arm_group", "status": "running",
-                "current_step": "", "message": "",
+                "mode": "arm_group",
+                "status": "running",
+                "current_step": "",
+                "message": "",
             }
             self.cancel_requested = False
         goal = RunActionGroup.Goal()
@@ -207,7 +247,7 @@ class RosBridge:
             if hand is None:
                 return
             hand["status"] = "running"
-            hand["progress"] = float(feedback.progress)
+            hand["progress"] = coerce_float(feedback.progress, "progress")
             hand["current_positions"] = list(feedback.current_positions)
             self.state["current_step"] = f"gripper:{side}"
 
@@ -232,7 +272,10 @@ class RosBridge:
         try:
             result = future.result().result
             self._finish_gripper_hand(
-                side, bool(result.success), str(result.message), list(result.final_positions)
+                side,
+                bool(result.success),
+                str(result.message),
+                list(result.final_positions),
             )
         except Exception as exc:
             self._finish_gripper_hand(side, False, str(exc), [])
@@ -254,7 +297,8 @@ class RosBridge:
             handles = list(self.gripper_goal_handles.values()) if not success else []
             if not self._gripper_remaining:
                 all_succeeded = all(
-                    item["status"] == "succeeded" for item in self.state["hands"].values()
+                    item["status"] == "succeeded"
+                    for item in self.state["hands"].values()
                 )
                 self.state["status"] = "succeeded" if all_succeeded else "failed"
                 self.state["message"] = "夹爪动作完成" if all_succeeded else message
@@ -331,7 +375,7 @@ class RosBridge:
                 if not self.monitor_active:
                     raise RuntimeError("夹爪监测尚未开启")
                 self.monitor_deadline = time.monotonic() + 3.0
-            snapshot = {
+            snapshot: dict[str, Any] = {
                 "timestamp": time.time(),
                 "hands": {
                     "left": {"pressure_supported": False, "fingers": []},
@@ -342,18 +386,21 @@ class RosBridge:
             for side, clients in self.telemetry_clients.items():
                 fingers = snapshot["hands"][side]["fingers"]
                 for finger_id in (1, 2, 3):
-                    finger = {"id": finger_id}
+                    finger: dict[str, Any] = {"id": finger_id}
                     fingers.append(finger)
                     for metric, client in clients.items():
                         if not client.wait_for_service(timeout_sec=0.05):
                             finger[metric] = {
-                                "available": False, "value": None,
+                                "available": False,
+                                "value": None,
                                 "error": f"服务不可用: {client.srv_name}",
                             }
                             continue
                         request_message = client.srv_type.Request()
                         request_message.finger_id = finger_id
-                        pending.append((finger, metric, client.call_async(request_message)))
+                        pending.append(
+                            (finger, metric, client.call_async(request_message))
+                        )
             deadline = time.monotonic() + 0.45
             for finger, metric, future in pending:
                 try:
@@ -370,7 +417,9 @@ class RosBridge:
                     }
                 except Exception as exc:
                     finger[metric] = {
-                        "available": False, "value": None, "error": str(exc),
+                        "available": False,
+                        "value": None,
+                        "error": str(exc),
                     }
             return snapshot
         finally:
@@ -414,10 +463,12 @@ class RosBridge:
             raise RuntimeError("右手参数读取服务不可用")
         request_message = GetParameters.Request()
         request_message.names = ["listen_enabled", "realtime_response_enabled"]
-        response = self._future_result(self.monitor_get_client.call_async(request_message), 1.0)
+        response = self._future_result(
+            self.monitor_get_client.call_async(request_message), 1.0
+        )
         return {
             name: bool(value.bool_value)
-            for name, value in zip(request_message.names, response.values)
+            for name, value in zip(request_message.names, response.values, strict=False)
         }
 
     def _set_monitor_parameters(self, values: dict[str, bool]) -> None:
@@ -433,8 +484,12 @@ class RosBridge:
             )
             for name, value in values.items()
         ]
-        response = self._future_result(self.monitor_set_client.call_async(request_message), 1.0)
-        failures = [result.reason for result in response.results if not result.successful]
+        response = self._future_result(
+            self.monitor_set_client.call_async(request_message), 1.0
+        )
+        failures = [
+            result.reason for result in response.results if not result.successful
+        ]
         if failures:
             raise RuntimeError("; ".join(failures))
 
@@ -473,8 +528,9 @@ class WebRuntime:
             self.bridge.run_gripper(targets)
             self.mode = "gripper"
 
-    def run_arm_group(self, arm_target: str, group_name: str,
-                      repeat_count: int) -> None:
+    def run_arm_group(
+        self, arm_target: str, group_name: str, repeat_count: int
+    ) -> None:
         if self.bridge is None:
             raise RuntimeError("ROS bridge 未启用")
         with self.lock:
@@ -503,16 +559,21 @@ class WebRuntime:
             code = None if running or process is None else process.poll()
             return {
                 "mode": "waypoint",
-                "status": "running" if running else ("succeeded" if code == 0 else "failed"),
+                "status": "running"
+                if running
+                else ("succeeded" if code == 0 else "failed"),
                 "current_step": "",
                 "message": "" if code in {None, 0} else f"巡航退出码: {code}",
             }
         return {"mode": "idle", "status": "idle", "current_step": "", "message": ""}
 
     def cancel(self) -> None:
-        if self.mode == "routine" and self.bridge:
-            self.bridge.cancel()
-        elif self.mode in {"gripper", "arm_group"} and self.bridge:
+        if (
+            self.mode == "routine"
+            and self.bridge
+            or self.mode in {"gripper", "arm_group"}
+            and self.bridge
+        ):
             self.bridge.cancel()
         elif self.mode == "waypoint":
             result = self.adapter.stop_cruise()
@@ -523,81 +584,124 @@ class WebRuntime:
 
 
 def create_app(test_config: dict[str, Any] | None = None) -> Flask:
-    source_templates = Path(__file__).resolve().parent.parent / "templates"
-    if not source_templates.is_dir():
+    package_source = Path(__file__).resolve().parent.parent
+    source_templates = package_source / "templates"
+    source_static = package_source / "static"
+    if not source_templates.is_dir() or not source_static.is_dir():
         from ament_index_python.packages import get_package_share_directory
-        source_templates = Path(get_package_share_directory("krt_human_robot")) / "templates"
-    app = Flask(__name__, template_folder=str(source_templates))
+
+        package_share = Path(get_package_share_directory("krt_human_robot"))
+        source_templates = package_share / "templates"
+        source_static = package_share / "static"
+    app = Flask(
+        __name__,
+        template_folder=str(source_templates),
+        static_folder=str(source_static),
+        static_url_path="/static",
+    )
     app.config.from_mapping(
         SECRET_KEY=None,
         ROBOT_DB=os.environ.get("KRT_ROBOT_DB", "~/maps/krt_robot.db"),
         WEB_DB=os.environ.get("KRT_WEB_DB", "~/.local/share/krt_human_robot/web.db"),
         MEDIA_DIR=os.environ.get("KRT_MEDIA_DIR", "~/music"),
         MAX_CONTENT_LENGTH=100 * 1000 * 1000,
-        SESSION_COOKIE_SECURE=os.environ.get(
-            "KRT_WEB_SESSION_COOKIE_SECURE", "1"
-        ) not in {"0", "false", "False"},
+        SESSION_COOKIE_SECURE=os.environ.get("KRT_WEB_SESSION_COOKIE_SECURE", "1")
+        not in {"0", "false", "False"},
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
         ROS_ENABLED=os.environ.get("KRT_WEB_ROS_ENABLED", "1")
         not in {"0", "false", "False"},
+        MAP_ARCHIVE_DIR=os.environ.get("KRT_MAP_ARCHIVE_DIR", ""),
     )
     if test_config:
         app.config.update(test_config)
     if not app.config["SECRET_KEY"]:
-        app.config["SECRET_KEY"] = load_secret(os.environ.get(
-            "KRT_WEB_SECRET_FILE", "~/.config/krt_human_robot/web_secret"
-        ))
+        app.config["SECRET_KEY"] = load_secret(
+            os.environ.get(
+                "KRT_WEB_SECRET_FILE", "~/.config/krt_human_robot/web_secret"
+            )
+        )
 
     database = RobotDatabase(app.config["ROBOT_DB"])
     auth = AuthDatabase(app.config["WEB_DB"])
     media_dir = Path(app.config["MEDIA_DIR"]).expanduser().resolve()
     media_dir.mkdir(parents=True, exist_ok=True)
     robot_config = load_config(os.environ.get("KRT_HUMAN_ROBOT_CONFIG"))
+    navigation_config = robot_config.adapters.setdefault("navigation", {})
+    navigation_config["robot_db"] = app.config["ROBOT_DB"]
+    map_root = app.config["MAP_ARCHIVE_DIR"] or navigation_config.get(
+        "map_archive_dir", navigation_config.get("map_dir", "~/maps")
+    )
+    navigation_config["map_archive_dir"] = str(Path(map_root).expanduser().resolve())
     adapter_type = str(robot_config.gripper_adapter_type).upper()
-    database.ensure_gripper_settings({
-        side: {
-            "adapter_type": adapter_type,
-            "adapter_index": int(getattr(robot_config, f"{side}_gripper")["adapter_index"]),
-            "device_id": int(getattr(robot_config, f"{side}_gripper")["device_id"]),
-            "listen_enabled": False,
-            "realtime_response_enabled": False,
+    database.ensure_gripper_settings(
+        {
+            side: {
+                "adapter_type": adapter_type,
+                "adapter_index": coerce_int(
+                    getattr(robot_config, f"{side}_gripper")["adapter_index"],
+                    f"{side}.adapter_index",
+                ),
+                "device_id": coerce_int(
+                    getattr(robot_config, f"{side}_gripper")["device_id"],
+                    f"{side}.device_id",
+                ),
+                "listen_enabled": False,
+                "realtime_response_enabled": False,
+            }
+            for side in ("left", "right")
         }
-        for side in ("left", "right")
-    })
+    )
     adapter = RangerNavAdapter(robot_config)
     bridge = RosBridge(robot_config=robot_config) if app.config["ROS_ENABLED"] else None
     if bridge is not None:
-        bridge.hand_adapter_indices.update({
-            item["side"]: int(item["adapter_index"])
-            for item in database.list_gripper_settings()
-        })
-    gripper_system = GripperSystemController(
-        bridge.node,
-        database,
-        hand_clients=bridge.hand_clients,
-        future_result=bridge._future_result,
-        settings_updated=lambda side, settings: bridge.hand_adapter_indices.__setitem__(
-            side, int(settings["adapter_index"])
-        ),
-    ) if bridge is not None else None
-    robot_system = RobotSystemController(
-        bridge.node,
-        robot_config,
-        future_result=bridge._future_result,
-        robot_db=app.config["ROBOT_DB"],
-        media_dir=app.config["MEDIA_DIR"],
-        hand_adapter_indices=bridge.hand_adapter_indices,
-        config_file=os.environ.get("KRT_HUMAN_ROBOT_CONFIG", ""),
-    ) if bridge is not None else None
+        bridge.hand_adapter_indices.update(
+            {
+                item["side"]: coerce_int(item["adapter_index"], "adapter_index")
+                for item in database.list_gripper_settings()
+            }
+        )
+    gripper_system = (
+        GripperSystemController(
+            bridge.node,
+            database,
+            hand_clients=bridge.hand_clients,
+            future_result=bridge._future_result,
+            settings_updated=lambda side, settings: (
+                bridge.hand_adapter_indices.__setitem__(
+                    side, coerce_int(settings["adapter_index"], "adapter_index")
+                )
+            ),
+        )
+        if bridge is not None
+        else None
+    )
+    robot_system = (
+        RobotSystemController(
+            bridge.node,
+            robot_config,
+            future_result=bridge._future_result,
+            robot_db=app.config["ROBOT_DB"],
+            media_dir=app.config["MEDIA_DIR"],
+            hand_adapter_indices=bridge.hand_adapter_indices,
+            config_file=os.environ.get("KRT_HUMAN_ROBOT_CONFIG", ""),
+        )
+        if bridge is not None
+        else None
+    )
     if robot_system is not None:
         atexit.register(robot_system.shutdown_owned_providers)
     if gripper_system is not None:
         atexit.register(gripper_system.shutdown_owned_processes)
     runtime = WebRuntime(adapter, bridge)
+    map_manager = MapManager(adapter, database, str(map_root))
     app.extensions.update(
-        robot_db=database, auth_db=auth, runtime=runtime,
-        gripper_system=gripper_system, robot_system=robot_system,
+        robot_db=database,
+        auth_db=auth,
+        runtime=runtime,
+        map_manager=map_manager,
+        gripper_system=gripper_system,
+        robot_system=robot_system,
     )
     # ponytail: one-worker in-memory limiter; move to shared storage for multi-worker use.
     failures: dict[str, list[float]] = {}
@@ -608,8 +712,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         if request.path.startswith("/api/") and request.method not in {"GET", "HEAD"}:
             user = current_user(auth)
             auth.audit(
-                user["username"] if user else "-", request.remote_addr or "-",
-                f"{request.method} {request.path}", request.path, False, str(exc),
+                user["username"] if user else "-",
+                request.remote_addr or "-",
+                f"{request.method} {request.path}",
+                request.path,
+                False,
+                str(exc),
             )
         app.logger.exception("request failed")
         return jsonify(error=str(exc)), code
@@ -627,7 +735,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         user = current_user(auth)
         token = session.setdefault("csrf_token", secrets.token_urlsafe(24))
         return jsonify(
-            user=public_user(user), csrf_token=token,
+            user=public_user(user),
+            csrf_token=token,
             needs_setup=auth.needs_setup(),
         )
 
@@ -644,8 +753,11 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         session["user_id"] = user["id"]
         session["csrf_token"] = secrets.token_urlsafe(24)
         auth.audit(
-            user["username"], request.remote_addr or "-", "setup",
-            user["username"], True,
+            user["username"],
+            request.remote_addr or "-",
+            "setup",
+            user["username"],
+            True,
         )
         return jsonify(user=public_user(user), csrf_token=session["csrf_token"])
 
@@ -661,8 +773,14 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         if user is None:
             recent.append(time.time())
             failures[key] = recent
-            auth.audit(username or "-", request.remote_addr or "-", "login", username,
-                       False, "用户名或密码错误")
+            auth.audit(
+                username or "-",
+                request.remote_addr or "-",
+                "login",
+                username,
+                False,
+                "用户名或密码错误",
+            )
             return jsonify(error="用户名或密码错误"), 401
         session.clear()
         session["user_id"] = user["id"]
@@ -679,16 +797,32 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.get("/api/waypoints")
     @protected(auth, csrf=False)
     def waypoints():
-        return jsonify([row.__dict__ for row in database.list_waypoints()])
+        map_id = request.args.get("map_id")
+        if map_id is None:
+            selected_map = map_manager.selected_map()
+            map_id = selected_map.id if selected_map else None
+        return jsonify([row.__dict__ for row in database.list_waypoints(map_id)])
 
     @app.post("/api/waypoints")
     @protected(auth)
     def mark_waypoint():
         payload = request.get_json() or {}
-        result = adapter.mark_waypoint(str(payload.get("name", "")).strip() or None,
-                                       routine=str(payload.get("routine", "")))
-        return audited(auth, "mark_waypoint", str(payload.get("name", "")), result.success,
-                       result.message)
+        selected_map = map_manager.selected_map(required=True)
+        if selected_map is None:
+            raise ValueError("请先选择地图")
+        result = adapter.mark_waypoint(
+            str(payload.get("name", "")).strip() or None,
+            routine=str(payload.get("routine", "")),
+            map_id=selected_map.id,
+        )
+        return audited(
+            auth,
+            "mark_waypoint",
+            str(payload.get("name", "")),
+            result.success,
+            result.message,
+            data={"map_id": selected_map.id},
+        )
 
     @app.patch("/api/waypoints/<name>")
     @protected(auth)
@@ -696,6 +830,13 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         routine = str((request.get_json() or {}).get("routine", ""))
         database.bind_waypoint(name, routine)
         return audited(auth, "bind_waypoint", name, True, routine)
+
+    @app.put("/api/waypoints/<name>/map")
+    @protected(auth)
+    def bind_waypoint_map(name: str):
+        map_id = str((request.get_json() or {}).get("map_id", ""))
+        database.bind_waypoint_map(name, map_id)
+        return audited(auth, "bind_waypoint_map", name, True, data={"map_id": map_id})
 
     @app.delete("/api/waypoints/<name>")
     @protected(auth)
@@ -742,16 +883,27 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @protected(auth, csrf=False)
     def gripper_defaults():
         return jsonify(
-            open_position=int(robot_config.gripper_open_value),
-            close_position=int(robot_config.gripper_close_value),
-            open_speed=int(robot_config.gripper_speed_open),
-            close_speed=int(robot_config.gripper_speed_close),
-            default_speed=int(robot_config.gripper_default_speed),
-            default_force=int(robot_config.gripper_control_mode),
-            default_wait_time=int(robot_config.gripper_exec_delay_ms),
+            open_position=coerce_int(robot_config.gripper_open_value, "open_position"),
+            close_position=coerce_int(
+                robot_config.gripper_close_value, "close_position"
+            ),
+            open_speed=coerce_int(robot_config.gripper_speed_open, "open_speed"),
+            close_speed=coerce_int(robot_config.gripper_speed_close, "close_speed"),
+            default_speed=coerce_int(
+                robot_config.gripper_default_speed, "default_speed"
+            ),
+            default_force=coerce_int(
+                robot_config.gripper_control_mode, "default_force"
+            ),
+            default_wait_time=coerce_int(
+                robot_config.gripper_exec_delay_ms, "default_wait_time"
+            ),
             ranges={
-                "finger_id": [0, 3], "position": [0, 1000], "speed": [0, 1000],
-                "force": [0, 255], "wait_time": [0, 255],
+                "finger_id": [0, 3],
+                "position": [0, 1000],
+                "speed": [0, 1000],
+                "force": [0, 255],
+                "wait_time": [0, 255],
             },
         )
 
@@ -772,35 +924,122 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             raise RuntimeError("ROS bridge 未启用")
         return system
 
-    def run_navigation_command(command: str, object_name: str):
-        result = getattr(runtime.adapter, command)()
+    def navigation_response(command: str, object_name: str, result):
         return audited(
             auth,
             f"navigation_{command}",
             object_name,
             result.success,
             result.message,
+            data=result.data,
         )
+
+    def run_navigation_command(command: str, object_name: str):
+        result = getattr(runtime.adapter, command)()
+        return navigation_response(command, object_name, result)
+
+    @app.get("/api/maps")
+    @protected(auth, csrf=False)
+    def maps():
+        return jsonify(map_manager.list_maps())
+
+    @app.get("/map-editor")
+    @protected(auth, csrf=False)
+    def map_editor():
+        map_id = str(request.args.get("map_id", "")).strip()
+        if not map_id:
+            raise ValueError("缺少 map_id")
+        map_manager.editor_paths(map_id)
+        return send_file(source_static / "map_editor.html", mimetype="text/html")
+
+    @app.get("/api/maps/<map_id>/editor/<file_type>")
+    @protected(auth, csrf=False)
+    def map_editor_file(map_id: str, file_type: str):
+        _record, yaml_path, pgm_path = map_manager.editor_paths(map_id)
+        if file_type == "yaml":
+            return send_file(yaml_path, mimetype="application/yaml")
+        if file_type == "pgm":
+            return send_file(pgm_path, mimetype="image/x-portable-graymap")
+        raise ValueError("地图编辑器文件类型无效")
+
+    @app.put("/api/maps/<map_id>/editor")
+    @protected(auth)
+    def save_map_editor(map_id: str):
+        yaml_upload = request.files.get("yaml")
+        pgm_upload = request.files.get("pgm")
+        if yaml_upload is None or pgm_upload is None:
+            raise ValueError("必须同时提交 YAML 和 PGM")
+        yaml_bytes = yaml_upload.read()
+        pgm_bytes = pgm_upload.read()
+        if not yaml_bytes or not pgm_bytes:
+            raise ValueError("YAML 和 PGM 不能为空")
+        if len(yaml_bytes) > 1024 * 1024 or len(pgm_bytes) > 64 * 1024 * 1024:
+            raise ValueError("地图编辑文件过大")
+        record = map_manager.replace_edited_map(map_id, yaml_bytes, pgm_bytes)
+        return audited(
+            auth,
+            "edit_map",
+            record.name,
+            True,
+            "地图已安全覆盖。",
+            data={"map": map_manager.public_map(record)},
+        )
+
+    @app.post("/api/maps/<map_id>/select")
+    @protected(auth)
+    def select_map(map_id: str):
+        record = map_manager.select_map(map_id)
+        return audited(
+            auth,
+            "select_map",
+            record.name,
+            True,
+            data={"map": map_manager.public_map(record)},
+        )
+
+    @app.delete("/api/maps/<map_id>")
+    @protected(auth)
+    def delete_map(map_id: str):
+        record = database.get_map(map_id)
+        map_manager.delete_map(map_id)
+        return audited(auth, "delete_map", record.name, True)
+
+    @app.get("/api/navigation/status")
+    @protected(auth, csrf=False)
+    def navigation_status():
+        return jsonify(map_manager.status())
 
     @app.post("/api/navigation/mapping/start")
     @protected(auth)
     def start_mapping():
-        return run_navigation_command("start_mapping", "mapping")
+        payload = request.get_json(silent=True) or {}
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise ValueError("请输入地图名称")
+        backend = str(payload.get("backend", "fast_lio"))
+        result = map_manager.start_mapping(name, backend, rviz=True)
+        return navigation_response("start_mapping", name, result)
 
     @app.post("/api/navigation/mapping/finish")
     @protected(auth)
     def finish_mapping():
-        return run_navigation_command("save_mapping", "mapping")
+        result = map_manager.finish_mapping()
+        return navigation_response("save_mapping", "mapping", result)
 
     @app.post("/api/navigation/start")
     @protected(auth)
     def start_navigation():
-        return run_navigation_command("start_navigation", "navigation")
+        payload = request.get_json(silent=True) or {}
+        map_id = str(payload.get("map_id", "")).strip() or None
+        mode = str(payload.get("mode", "")).strip() or None
+        result = map_manager.start_navigation(map_id, mode, rviz=True)
+        return navigation_response("start_navigation", map_id or "selected", result)
 
     @app.post("/api/navigation/stop")
     @protected(auth)
     def stop_navigation():
-        return run_navigation_command("stop_navigation", "navigation")
+        result = map_manager.stop_navigation()
+        return navigation_response("stop_navigation", "navigation", result)
 
     @app.post("/api/navigation/cruise/start")
     @protected(auth)
@@ -830,7 +1069,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             runtime.cancel()
         result = require_robot_system().control(component, enabled)
         return audited(
-            auth, "control_robot_system", component, result["success"],
+            auth,
+            "control_robot_system",
+            component,
+            result["success"],
             data={"components": result["components"]},
         )
 
@@ -842,8 +1084,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             str(payload.get("arm_target", "")),
             str(payload.get("group_name", "")),
         )
-        return audited(auth, "start_arm_teach", result["arm_target"], True,
-                       data=result)
+        return audited(auth, "start_arm_teach", result["arm_target"], True, data=result)
 
     @app.post("/api/arm/teach/stop")
     @protected(auth)
@@ -851,8 +1092,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         result = require_robot_system().stop_teach(
             str((request.get_json() or {}).get("group_name", ""))
         )
-        return audited(auth, "stop_arm_teach", result["group_name"], True,
-                       data=result)
+        return audited(auth, "stop_arm_teach", result["group_name"], True, data=result)
 
     @app.post("/api/gripper/system/control")
     @protected(auth)
@@ -865,22 +1105,33 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         result = require_gripper_system().control(target, enabled)
         user = current_user(auth)
         auth.audit(
-            user["username"], request.remote_addr or "-", "control_gripper_system",
-            target, bool(result["success"]), str(enabled),
+            user["username"] if user else "-",
+            request.remote_addr or "-",
+            "control_gripper_system",
+            target,
+            bool(result["success"]),
+            str(enabled),
         )
         return jsonify(result)
 
     @app.put("/api/gripper/system/<side>/settings")
     @protected(auth, role="admin")
     def update_gripper_system_settings(side: str):
-        result = require_gripper_system().update_settings(side, request.get_json() or {})
+        result = require_gripper_system().update_settings(
+            side, request.get_json() or {}
+        )
         message = (
-            "参数未修改" if result["restart"]["message"] == "参数未修改"
+            "参数未修改"
+            if result["restart"]["message"] == "参数未修改"
             else "硬件参数已保存，夹爪已重启并开启"
         )
         return audited(
-            auth, "update_gripper_system_settings", side, True,
-            message, data=result,
+            auth,
+            "update_gripper_system_settings",
+            side,
+            True,
+            message,
+            data=result,
         )
 
     @app.put("/api/gripper/system/<side>/runtime")
@@ -894,12 +1145,15 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.post("/api/gripper/run")
     @protected(auth)
     def run_gripper():
-        targets = validate_gripper_targets((request.get_json() or {}).get("targets", []))
+        targets = validate_gripper_targets(
+            (request.get_json() or {}).get("targets", [])
+        )
         system = app.extensions.get("gripper_system")
         if system is not None:
             hands = system.status()["hands"]
             inactive = [
-                str(target["side"]) for target in targets
+                str(target["side"])
+                for target in targets
                 if hands[str(target["side"])]["lifecycle_state"] != "active"
             ]
             if inactive:
@@ -941,15 +1195,14 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     def ensure_motion_requirements(requirements: set[str]) -> None:
         system = app.extensions.get("robot_system")
         if system is not None:
-            for component in (
-                "left_arm", "right_arm", "action_group_stack", "routine"
-            ):
+            for component in ("left_arm", "right_arm", "action_group_stack", "routine"):
                 if component not in requirements:
                     continue
                 result = system.control(component, True)
                 if not result["success"]:
                     messages = [
-                        item["message"] for item in result["components"].values()
+                        item["message"]
+                        for item in result["components"].values()
                         if not item["success"]
                     ]
                     raise RuntimeError("；".join(messages))
@@ -965,7 +1218,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         payload = request.get_json() or {}
         group = database.get_action_group(name)
         arm_target = str(payload.get("arm_target", group["arm_target"]))
-        repeat_count = int(payload.get("repeat_count", 1))
+        repeat_count = coerce_int(payload.get("repeat_count", 1), "repeat_count")
         if arm_target not in {"left", "right", "both"}:
             raise ValueError("请选择回放机械臂")
         if repeat_count < 1 or repeat_count > 100:
@@ -977,8 +1230,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             requirements.add("right_arm")
         ensure_motion_requirements(requirements)
         runtime.run_arm_group(arm_target, name, repeat_count)
-        return audited(auth, "run_action_group", name, True,
-                       data={"arm_target": arm_target})
+        return audited(
+            auth, "run_action_group", name, True, data={"arm_target": arm_target}
+        )
 
     @app.put("/api/routines/<name>")
     @protected(auth)
@@ -1012,15 +1266,23 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         upload.save(path)
         try:
             duration, rate, channels = inspect_wav(path)
-            database.add_media({
-                "media_key": media_key, "display_name": display_name,
-                "filename": filename, "size_bytes": path.stat().st_size,
-                "duration_sec": duration, "sample_rate": rate, "channels": channels,
-            })
+            database.add_media(
+                {
+                    "media_key": media_key,
+                    "display_name": display_name,
+                    "filename": filename,
+                    "size_bytes": path.stat().st_size,
+                    "duration_sec": duration,
+                    "sample_rate": rate,
+                    "channels": channels,
+                }
+            )
         except Exception:
             path.unlink(missing_ok=True)
             raise
-        return audited(auth, "upload_media", display_name, True, data={"media_key": media_key})
+        return audited(
+            auth, "upload_media", display_name, True, data={"media_key": media_key}
+        )
 
     @app.delete("/api/media/<media_key>")
     @protected(auth)
@@ -1040,9 +1302,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.post("/api/waypoints/<name>/run")
     @protected(auth)
     def run_waypoint(name: str):
-        if name not in {row.name for row in database.list_waypoints()}:
-            raise KeyError("点位不存在")
-        runtime.run_waypoint(name)
+        selected_map = map_manager.selected_map(required=True)
+        if selected_map is None:
+            raise ValueError("请先选择地图")
+        if name not in {row.name for row in database.list_waypoints(selected_map.id)}:
+            raise KeyError("当前地图中不存在该点位")
+        runtime.adapter.start_cruise([name], map_id=selected_map.id)
         return audited(auth, "run_waypoint", name, True)
 
     @app.get("/api/execution")
@@ -1065,15 +1330,20 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @protected(auth, role="admin")
     def add_user():
         payload = request.get_json() or {}
-        auth.create_user(str(payload.get("username", "")), str(payload.get("password", "")),
-                         str(payload.get("role", "operator")))
+        auth.create_user(
+            str(payload.get("username", "")),
+            str(payload.get("password", "")),
+            str(payload.get("role", "operator")),
+        )
         return audited(auth, "create_user", str(payload.get("username", "")), True)
 
     @app.patch("/api/users/<int:user_id>")
     @protected(auth, role="admin")
     def update_user(user_id: int):
         payload = request.get_json() or {}
-        auth.update_user(user_id, enabled=payload.get("enabled"), password=payload.get("password"))
+        auth.update_user(
+            user_id, enabled=payload.get("enabled"), password=payload.get("password")
+        )
         return audited(auth, "update_user", str(user_id), True)
 
     @app.get("/api/audit-logs")
@@ -1093,31 +1363,71 @@ def protected(auth: AuthDatabase, *, role: str | None = None, csrf: bool = True)
                 return jsonify(error="未登录"), 401
             if role and user["role"] != role:
                 return jsonify(error="权限不足"), 403
-            if csrf and request.method not in {"GET", "HEAD", "OPTIONS"}:
-                if not secrets.compare_digest(
-                    request.headers.get("X-CSRF-Token", ""), session.get("csrf_token", "x")
-                ):
-                    return jsonify(error="CSRF 校验失败"), 403
+            if (
+                csrf
+                and request.method not in {"GET", "HEAD", "OPTIONS"}
+                and not secrets.compare_digest(
+                    request.headers.get("X-CSRF-Token", ""),
+                    session.get("csrf_token", "x"),
+                )
+            ):
+                return jsonify(error="CSRF 校验失败"), 403
             return function(*args, **kwargs)
+
         return wrapper
+
     return decorator
 
 
 def current_user(auth: AuthDatabase) -> dict[str, Any] | None:
     user_id = session.get("user_id")
-    return auth.get_user(int(user_id)) if user_id is not None else None
+    return (
+        auth.get_user(coerce_int(user_id, "user_id")) if user_id is not None else None
+    )
 
 
 def public_user(user: dict[str, Any] | None) -> dict[str, Any] | None:
-    return {"id": user["id"], "username": user["username"], "role": user["role"]} if user else None
+    return (
+        {"id": user["id"], "username": user["username"], "role": user["role"]}
+        if user
+        else None
+    )
 
 
-def audited(auth: AuthDatabase, action: str, object_name: str, success: bool,
-            detail: str = "", data: dict[str, Any] | None = None):
+def audited(
+    auth: AuthDatabase,
+    action: str,
+    object_name: str,
+    success: bool,
+    detail: str = "",
+    data: dict[str, Any] | None = None,
+):
     user = current_user(auth)
-    auth.audit(user["username"] if user else "-", request.remote_addr or "-",
-               action, object_name, success, detail)
-    return jsonify(success=success, message=detail, **(data or {})), 200 if success else 400
+    auth.audit(
+        user["username"] if user else "-",
+        request.remote_addr or "-",
+        action,
+        object_name,
+        success,
+        detail,
+    )
+    return jsonify(
+        success=success, message=detail, **(data or {})
+    ), 200 if success else 400
+
+
+def coerce_int(value: Any, label: str) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 必须是整数") from exc
+
+
+def coerce_float(value: Any, label: str) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{label} 必须是数字") from exc
 
 
 def inspect_wav(path: Path) -> tuple[float, int, int]:
@@ -1126,10 +1436,14 @@ def inspect_wav(path: Path) -> tuple[float, int, int]:
     with wave.open(str(path), "rb") as handle:
         if handle.getcomptype() != "NONE" or handle.getsampwidth() != 2:
             raise ValueError("仅支持未压缩 16-bit PCM WAV")
-        rate, channels, frames = handle.getframerate(), handle.getnchannels(), handle.getnframes()
+        rate, channels, frames = (
+            handle.getframerate(),
+            handle.getnchannels(),
+            handle.getnframes(),
+        )
     if rate <= 0 or channels not in {1, 2}:
         raise ValueError("WAV 采样率或声道无效")
-    return frames / float(rate), int(rate), int(channels)
+    return frames / rate, rate, channels
 
 
 def validate_media_refs(spec: Any, database: RobotDatabase) -> None:

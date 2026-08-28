@@ -22,8 +22,6 @@ def generate_launch_description():
     ranger_nav_share = get_package_share_directory('ranger_nav')
     kiss_share = get_package_share_directory('kiss_matcher_ros')
 
-    os.makedirs(os.path.expanduser('~/maps/ranger'), exist_ok=True)
-
     use_rviz = LaunchConfiguration('sam_rviz')
     declare_rviz = DeclareLaunchArgument(
         'sam_rviz', default_value='true', description='是否启动 KISS-Matcher-SAM RViz')

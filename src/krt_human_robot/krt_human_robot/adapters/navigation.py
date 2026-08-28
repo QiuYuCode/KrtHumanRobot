@@ -8,10 +8,11 @@ import shutil
 import signal
 import subprocess
 import time
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import yaml
 
@@ -25,6 +26,7 @@ except ImportError:
 class NavigationResult:
     success: bool
     message: str
+    data: dict[str, Any] = field(default_factory=dict)
 
 
 class RangerNavAdapter:
@@ -34,7 +36,7 @@ class RangerNavAdapter:
         self,
         config: Any,
         *,
-        popen: Callable[..., subprocess.Popen] = subprocess.Popen,
+        popen: Callable[..., Any] = subprocess.Popen,
         run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
         sleep: Callable[[float], None] = time.sleep,
     ) -> None:
@@ -42,17 +44,20 @@ class RangerNavAdapter:
         self._popen = popen
         self._run = run
         self._sleep = sleep
-        self._mapping_process: subprocess.Popen | None = None
-        self._navigation_process: subprocess.Popen | None = None
-        self._cruise_process: subprocess.Popen | None = None
+        self._mapping_process: Any | None = None
+        self._navigation_process: Any | None = None
+        self._cruise_process: Any | None = None
+        self._mapping_backend: str | None = None
 
-    def start_mapping(self) -> NavigationResult:
+    def start_mapping(
+        self, backend: str | None = None, *, rviz: bool = True
+    ) -> NavigationResult:
         if not self._enabled():
             return NavigationResult(False, "导航功能未启用，无法开始建图。")
         if self._running(self._mapping_process):
             return NavigationResult(True, "建图已经启动。")
 
-        backend = self._backend()
+        backend = str(backend or self._backend()).strip().lower()
         launch_file = {
             "fast_lio": self._cfg.get("mapping_launch_fast_lio", "mapping.launch.py"),
             "spark_sam": self._cfg.get(
@@ -62,23 +67,32 @@ class RangerNavAdapter:
         if launch_file is None:
             return NavigationResult(False, f"未知建图后端：{backend}。")
 
+        rviz_argument = "sam_rviz" if backend == "spark_sam" else "rviz"
         try:
             self._mapping_process = self._popen(
-                ["ros2", "launch", self._package(), launch_file],
+                [
+                    "ros2",
+                    "launch",
+                    self._package(),
+                    launch_file,
+                    f"{rviz_argument}:={'true' if rviz else 'false'}",
+                ],
                 start_new_session=True,
             )
+            self._mapping_backend = backend
         except OSError as exc:
             return NavigationResult(False, f"启动建图失败：{exc}。")
-        logger.info(
-            f"已启动建图 launch: backend={backend}, pid={self._mapping_process.pid}"
-        )
+        process = self._mapping_process
+        if process is None:
+            return NavigationResult(False, "建图进程未创建。")
+        logger.info(f"已启动建图 launch: backend={backend}, pid={process.pid}")
         return NavigationResult(True, "已开始建图。")
 
     def save_mapping(self) -> NavigationResult:
         if not self._running(self._mapping_process):
             return NavigationResult(False, "建图未启动，无法保存地图。")
 
-        backend = self._backend()
+        backend = self._mapping_backend or self._backend()
         if backend not in {"fast_lio", "spark_sam"}:
             return NavigationResult(False, f"未知建图后端：{backend}。")
 
@@ -86,15 +100,19 @@ class RangerNavAdapter:
         cloud_path = session_dir / str(
             self._cfg.get("session_cloud_filename", "cloud.pcd")
         )
+        result = NavigationResult(False, "地图保存命令未执行。")
+        source_pcd = Path()
         if backend == "fast_lio":
-            result = self._call([
-                "ros2",
-                "service",
-                "call",
-                self._cfg.get("fast_lio_save_service", "/map_save"),
-                "std_srvs/srv/Trigger",
-                "{}",
-            ])
+            result = self._call(
+                [
+                    "ros2",
+                    "service",
+                    "call",
+                    self._cfg.get("fast_lio_save_service", "/map_save"),
+                    "std_srvs/srv/Trigger",
+                    "{}",
+                ]
+            )
             source_pcd = Path(
                 self._expand(
                     self._cfg.get(
@@ -104,21 +122,19 @@ class RangerNavAdapter:
                 )
             )
         elif backend == "spark_sam":
-            result = self._call([
-                "ros2",
-                "topic",
-                "pub",
-                "--once",
-                self._cfg.get("spark_sam_save_topic", "/km_sam/save_dir"),
-                "std_msgs/msg/String",
-                f"data: '{session_dir}'",
-            ])
             seq_name = str(self._cfg.get("spark_sam_sequence_name", "ranger")).strip()
-            source_pcd = (
-                session_dir / seq_name / f"{seq_name}_map.pcd"
-                if seq_name
-                else session_dir / "map.pcd"
+            result = self._call(
+                [
+                    "ros2",
+                    "topic",
+                    "pub",
+                    "--once",
+                    self._cfg.get("spark_sam_save_topic", "/km_sam/save_dir"),
+                    "std_msgs/msg/String",
+                    f"data: '{session_dir}'",
+                ]
             )
+            source_pcd = session_dir / f"{seq_name}_map.pcd"
 
         if not result.success:
             return result
@@ -137,7 +153,11 @@ class RangerNavAdapter:
 
         if not self._cfg.get("auto_convert_pcd", True):
             self._stop_mapping_after_save()
-            return NavigationResult(True, f"地图已保存到 {session_dir}，建图已退出。")
+            return NavigationResult(
+                True,
+                f"地图已保存到 {session_dir}，建图已退出。",
+                self._map_paths(session_dir, cloud_path),
+            )
 
         result = self._convert_pcd(cloud_path, session_dir)
         if result.success:
@@ -149,19 +169,30 @@ class RangerNavAdapter:
             )
             self._stop_mapping_after_save()
             return NavigationResult(
-                True, f"地图已保存并转换到 {session_dir}，建图已退出。"
+                True,
+                f"地图已保存并转换到 {session_dir}，建图已退出。",
+                self._map_paths(session_dir, cloud_path),
             )
         return result
 
-    def start_navigation(self) -> NavigationResult:
+    def start_navigation(
+        self,
+        map_yaml: str | None = None,
+        pcd_map_path: str | None = None,
+        mode: str | None = None,
+        *,
+        rviz: bool = True,
+    ) -> NavigationResult:
         if not self._enabled():
             return NavigationResult(False, "导航功能未启用，无法开始导航。")
 
-        mode = str(self._cfg.get("navigation_mode", "3dloc")).strip().lower()
+        mode = str(mode or self._cfg.get("navigation_mode", "3dloc")).strip().lower()
         if mode not in {"3dloc", "amcl"}:
             return NavigationResult(False, f"未知导航定位模式：{mode}。")
 
-        map_yaml = self._expand(self._cfg.get("map_yaml", "~/maps/map.yaml"))
+        map_yaml = self._expand(
+            map_yaml or self._cfg.get("map_yaml", "~/maps/map.yaml")
+        )
         if not Path(map_yaml).is_file():
             return NavigationResult(False, "未找到地图文件，无法开始导航。")
         launch_file = str(
@@ -179,7 +210,8 @@ class RangerNavAdapter:
         ]
         if mode == "3dloc":
             pcd_map_path = self._expand(
-                self._cfg.get(
+                pcd_map_path
+                or self._cfg.get(
                     "pcd_map_path",
                     self._cfg.get("fast_lio_pcd", "~/maps/scans.pcd"),
                 )
@@ -187,6 +219,7 @@ class RangerNavAdapter:
             if not Path(pcd_map_path).is_file():
                 return NavigationResult(False, f"未找到 3D PCD 地图：{pcd_map_path}。")
             launch_args.append(f"pcd_map_path:={pcd_map_path}")
+        launch_args.append(f"rviz:={'true' if rviz else 'false'}")
         if self._running(self._navigation_process):
             return NavigationResult(True, "导航已经启动。")
 
@@ -198,11 +231,22 @@ class RangerNavAdapter:
             )
         except OSError as exc:
             return NavigationResult(False, f"启动导航失败：{exc}。")
+        process = self._navigation_process
+        if process is None:
+            return NavigationResult(False, "导航进程未创建。")
         logger.info(
-            f"已启动导航 launch: mode={mode}, launch={launch_file}, "
-            f"pid={self._navigation_process.pid}"
+            f"已启动导航 launch: mode={mode}, launch={launch_file}, pid={process.pid}"
         )
         return NavigationResult(True, "已开始导航。")
+
+    def mapping_running(self) -> bool:
+        return self._running(self._mapping_process)
+
+    def navigation_running(self) -> bool:
+        return self._running(self._navigation_process)
+
+    def default_navigation_mode(self) -> str:
+        return str(self._cfg.get("navigation_mode", "3dloc")).strip().lower()
 
     def stop_navigation(self) -> NavigationResult:
         if self._running(self._cruise_process):
@@ -224,8 +268,9 @@ class RangerNavAdapter:
         name: str | None = None,
         *,
         routine: str = "",
+        map_id: str | None = None,
     ) -> NavigationResult:
-        cmd = self._waypoint_cmd(["mark"])
+        cmd = self._waypoint_cmd(["mark"], map_id=map_id)
         if name:
             cmd.append(name)
         if routine:
@@ -270,12 +315,13 @@ class RangerNavAdapter:
         *,
         repeat: int | None = None,
         loop: bool = False,
+        map_id: str | None = None,
     ) -> NavigationResult:
         if not self._enabled():
             return NavigationResult(False, "导航功能未启用，无法开始巡航。")
         if self._running(self._cruise_process):
             return NavigationResult(True, "巡航已经在执行。")
-        cmd = self._waypoint_cmd(["cruise"])
+        cmd = self._waypoint_cmd(["cruise"], map_id=map_id)
         if repeat is not None:
             cmd.extend(["--repeat", str(repeat)])
         if loop:
@@ -285,12 +331,15 @@ class RangerNavAdapter:
             self._cruise_process = self._popen(cmd, start_new_session=True)
         except OSError as exc:
             return NavigationResult(False, f"启动巡航失败：{exc}。")
-        logger.info(f"已启动 waypoint 巡航: pid={self._cruise_process.pid}")
+        process = self._cruise_process
+        if process is None:
+            return NavigationResult(False, "巡航进程未创建。")
+        logger.info(f"已启动 waypoint 巡航: pid={process.pid}")
         return NavigationResult(True, "已开始巡航。")
 
     def stop_cruise(self) -> NavigationResult:
         process = self._cruise_process
-        if not self._running(process):
+        if process is None or not self._running(process):
             return NavigationResult(False, "巡航未启动，无法停止。")
         logger.info(f"正在停止 waypoint 巡航: pid={process.pid}")
         self._terminate_process_tree(process)
@@ -308,7 +357,7 @@ class RangerNavAdapter:
         params_path = session_dir / "pcd2pgm.yaml"
         self._write_pcd2pgm_params(pcd_path, params_path)
 
-        process: subprocess.Popen | None = None
+        process: Any | None = None
         try:
             process = self._popen(
                 [
@@ -341,21 +390,21 @@ class RangerNavAdapter:
                     process.wait(timeout=3)
 
     def _write_pcd2pgm_params(self, pcd_path: Path, params_path: Path) -> None:
-        lidar_height = float(self._cfg.get("pcd2pgm_lidar_height", 0.30))
+        lidar_height = self._config_float("pcd2pgm_lidar_height", 0.30)
         params = {
             "pcd2pgm": {
                 "ros__parameters": {
                     "pcd_file": str(pcd_path),
                     "odom_to_lidar_odom": [0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
                     "flag_pass_through": False,
-                    "map_resolution": float(self._cfg.get("pcd2pgm_resolution", 0.05)),
+                    "map_resolution": self._config_float("pcd2pgm_resolution", 0.05),
                     "map_topic_name": "map",
-                    "thre_radius": float(self._cfg.get("pcd2pgm_ror_radius", 0.1)),
-                    "thres_point_count": int(self._cfg.get("pcd2pgm_ror_min_pts", 10)),
+                    "thre_radius": self._config_float("pcd2pgm_ror_radius", 0.1),
+                    "thres_point_count": self._config_int("pcd2pgm_ror_min_pts", 10),
                     "thre_z_min": -lidar_height
-                    + float(self._cfg.get("pcd2pgm_z_min", 0.15)),
+                    + self._config_float("pcd2pgm_z_min", 0.15),
                     "thre_z_max": -lidar_height
-                    + float(self._cfg.get("pcd2pgm_z_max", 1.2)),
+                    + self._config_float("pcd2pgm_z_max", 1.2),
                 }
             }
         }
@@ -365,9 +414,9 @@ class RangerNavAdapter:
     def _save_published_map(
         self,
         out_prefix: Path,
-        pcd2pgm_process: subprocess.Popen,
+        pcd2pgm_process: Any,
     ) -> NavigationResult:
-        timeout_s = float(self._cfg.get("map_save_wait_s", 30.0))
+        timeout_s = self._config_float("map_save_wait_s", 30.0)
         deadline = time.monotonic() + timeout_s
         cmd = [
             "ros2",
@@ -397,8 +446,8 @@ class RangerNavAdapter:
                 if completed.returncode == 0:
                     return NavigationResult(True, "地图已保存。")
                 detail = (
-                    completed.stderr or completed.stdout or ""
-                ).strip().splitlines()
+                    (completed.stderr or completed.stdout or "").strip().splitlines()
+                )
                 if detail:
                     last_error = detail[-1]
             self._sleep(0.5)
@@ -421,7 +470,7 @@ class RangerNavAdapter:
         return session_dir
 
     def _wait_for_file(self, path: Path) -> bool:
-        timeout_s = float(self._cfg.get("map_save_wait_s", 30.0))
+        timeout_s = self._config_float("map_save_wait_s", 30.0)
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             if path.is_file() and path.stat().st_size > 0:
@@ -442,9 +491,7 @@ class RangerNavAdapter:
         )
         latest_pgm = Path(
             self._expand(
-                self._cfg.get(
-                    "latest_map_pgm", str(latest_yaml.with_suffix(".pgm"))
-                )
+                self._cfg.get("latest_map_pgm", str(latest_yaml.with_suffix(".pgm")))
             )
         )
         try:
@@ -479,6 +526,17 @@ class RangerNavAdapter:
         with metadata_path.open("w", encoding="utf-8") as f:
             yaml.safe_dump(metadata, f, allow_unicode=True, sort_keys=False)
 
+    def _map_paths(self, session_dir: Path, cloud_path: Path) -> dict[str, Any]:
+        map_prefix = str(self._cfg.get("session_map_prefix", "map"))
+        return {
+            "session_dir": str(session_dir.resolve()),
+            "yaml_path": str((session_dir / f"{map_prefix}.yaml").resolve()),
+            "pgm_path": str((session_dir / f"{map_prefix}.pgm").resolve()),
+            "pcd_path": str(cloud_path.resolve()),
+            "metadata_path": str((session_dir / "metadata.yaml").resolve()),
+            "backend": self._mapping_backend or self._backend(),
+        }
+
     def _call(self, cmd: list[str]) -> NavigationResult:
         try:
             completed = self._call_completed(cmd)
@@ -507,7 +565,7 @@ class RangerNavAdapter:
         suffix = f"：{detail[-1]}" if detail else "。"
         return NavigationResult(False, f"ROS 命令执行失败{suffix}")
 
-    def _waypoint_cmd(self, args: list[str]) -> list[str]:
+    def _waypoint_cmd(self, args: list[str], *, map_id: str | None = None) -> list[str]:
         cmd = ["ros2", "run", self._package(), "waypoint_manager"]
         options = {
             "--robot-db": self._cfg.get("robot_db"),
@@ -516,6 +574,8 @@ class RangerNavAdapter:
             "--input-topic": self._cfg.get("waypoint_input_topic"),
             "--default-wait-ms": self._cfg.get("default_waypoint_wait_ms"),
         }
+        if map_id:
+            options["--map-id"] = map_id
         for key, value in options.items():
             if value is not None:
                 cmd.extend([key, str(value)])
@@ -524,7 +584,7 @@ class RangerNavAdapter:
 
     def _stop_mapping(self) -> None:
         process = self._mapping_process
-        if not self._running(process):
+        if process is None or not self._running(process):
             return
         logger.info(f"正在退出建图 launch: pid={process.pid}")
         self._terminate_process_tree(process)
@@ -535,9 +595,10 @@ class RangerNavAdapter:
             self._kill_process_tree(process)
             process.wait(timeout=3)
         logger.info(f"建图 launch 已退出: pid={process.pid}")
+        self._mapping_backend = None
 
     def _stop_mapping_after_save(self) -> None:
-        delay_s = float(self._cfg.get("mapping_stop_delay_s", 3.0))
+        delay_s = self._config_float("mapping_stop_delay_s", 3.0)
         if delay_s > 0:
             logger.info(f"地图保存完成，{delay_s} 秒后退出建图 launch。")
             self._sleep(delay_s)
@@ -545,7 +606,7 @@ class RangerNavAdapter:
 
     def _stop_navigation(self) -> None:
         process = self._navigation_process
-        if not self._running(process):
+        if process is None or not self._running(process):
             return
         logger.info(f"正在退出导航 launch: pid={process.pid}")
         self._terminate_process_tree(process)
@@ -577,31 +638,47 @@ class RangerNavAdapter:
                 continue
             logger.info(f"正在退出残留 launch: pid={pid_s}, pgid={pgid_s}")
             try:
-                os.killpg(int(pgid_s), signal.SIGTERM)
+                process_group = int(pgid_s)
+                os.killpg(process_group, signal.SIGTERM)
                 stopped = True
-            except ProcessLookupError:
-                pass
+            except ValueError:
+                logger.warning(f"残留 launch 的进程组无效: pid={pid_s}, pgid={pgid_s}")
             except OSError as exc:
-                logger.warning(f"退出残留 launch 失败: pid={pid_s}, {exc}")
+                if isinstance(exc, ProcessLookupError):
+                    logger.debug(f"残留 launch 已退出: pid={pid_s}")
+                else:
+                    logger.warning(f"退出残留 launch 失败: pid={pid_s}, {exc}")
         return stopped
 
     @staticmethod
-    def _terminate_process_tree(process: subprocess.Popen) -> None:
+    def _terminate_process_tree(process: Any) -> None:
         try:
             os.killpg(process.pid, signal.SIGTERM)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            process.terminate()
+        except OSError as exc:
+            if not isinstance(exc, ProcessLookupError):
+                process.terminate()
 
     @staticmethod
-    def _kill_process_tree(process: subprocess.Popen) -> None:
+    def _kill_process_tree(process: Any) -> None:
         try:
             os.killpg(process.pid, signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        except OSError:
-            process.kill()
+        except OSError as exc:
+            if not isinstance(exc, ProcessLookupError):
+                process.kill()
+
+    def _config_float(self, key: str, default: float) -> float:
+        try:
+            return float(self._cfg.get(key, default))
+        except (TypeError, ValueError):
+            logger.warning(f"导航配置 {key} 无效，使用默认值 {default}")
+            return default
+
+    def _config_int(self, key: str, default: int) -> int:
+        try:
+            return int(self._cfg.get(key, default))
+        except (TypeError, ValueError):
+            logger.warning(f"导航配置 {key} 无效，使用默认值 {default}")
+            return default
 
     def _enabled(self) -> bool:
         return bool(self._cfg.get("enabled", False))
@@ -617,5 +694,5 @@ class RangerNavAdapter:
         return str(Path(path).expanduser())
 
     @staticmethod
-    def _running(process: subprocess.Popen | None) -> bool:
+    def _running(process: Any | None) -> bool:
         return process is not None and process.poll() is None
