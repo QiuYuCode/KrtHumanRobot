@@ -1,12 +1,15 @@
 """DexHand021S 双手控制 Action Server."""
 import time
 import threading
+
 import rclpy
 from rclpy.action import ActionServer, CancelResponse
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
+from rclpy.qos import qos_profile_sensor_data
 from rcl_interfaces.msg import SetParametersResult
+from sensor_msgs.msg import JointState
 from std_srvs.srv import Trigger
 
 try:
@@ -43,6 +46,12 @@ class HandControlServer(LifecycleNode):
         self.declare_parameter('listen_enabled', False)
         self.declare_parameter('realtime_response_enabled', False)
         self.declare_parameter('has_pressure_sensor', False)
+        self.declare_parameter('feedback_topic', 'feedback/hand_joint_states')
+        self.declare_parameter('control_topic', 'control/joint_states')
+        self.declare_parameter('state_publish_rate_hz', 50.0)
+        self.declare_parameter('stream_speed', 500)
+        self.declare_parameter('stream_force', 85)
+        self.declare_parameter('stream_wait_time', 0)
 
         self.comm_lock = threading.Lock()
         self._callback_group = ReentrantCallbackGroup()
@@ -52,6 +61,9 @@ class HandControlServer(LifecycleNode):
         self._stopping = False
         self._interfaces_active = False
         self._control_services = []
+        self._state_publisher = None
+        self._state_subscription = None
+        self._state_timer = None
         self.listen_enabled = bool(self.get_parameter('listen_enabled').value)
         self.realtime_response_enabled = bool(
             self.get_parameter('realtime_response_enabled').value
@@ -77,6 +89,13 @@ class HandControlServer(LifecycleNode):
             self.realtime_response_enabled = bool(
                 self.get_parameter('realtime_response_enabled').value
             )
+            self.feedback_topic = str(self.get_parameter('feedback_topic').value)
+            self.control_topic = str(self.get_parameter('control_topic').value)
+            self.state_publish_rate_hz = float(
+                self.get_parameter('state_publish_rate_hz').value
+            )
+            if self.state_publish_rate_hz <= 0.0:
+                raise ValueError('state_publish_rate_hz 必须大于 0')
             if not hasattr(self, 'hand'):
                 self.hand = DexHand021S(
                     adapter_type=self.adapter_type,
@@ -191,6 +210,21 @@ class HandControlServer(LifecycleNode):
                     self._handle_approaching_value,
                 ),
             ])
+        self._state_publisher = self.create_publisher(
+            JointState, self.feedback_topic, qos_profile_sensor_data
+        )
+        self._state_subscription = self.create_subscription(
+            JointState,
+            self.control_topic,
+            self._joint_state_callback,
+            10,
+            callback_group=self._callback_group,
+        )
+        self._state_timer = self.create_timer(
+            1.0 / self.state_publish_rate_hz,
+            self._publish_joint_state,
+            callback_group=self._callback_group,
+        )
         self._interfaces_active = True
 
     def _destroy_control_interfaces(self):
@@ -198,10 +232,63 @@ class HandControlServer(LifecycleNode):
             return
         self._hand_control_server.destroy()
         self._reset_hand_server.destroy()
+        if self._state_timer is not None:
+            self.destroy_timer(self._state_timer)
+        if self._state_subscription is not None:
+            self.destroy_subscription(self._state_subscription)
+        if self._state_publisher is not None:
+            self.destroy_publisher(self._state_publisher)
+        self._state_timer = None
+        self._state_subscription = None
+        self._state_publisher = None
         for service in self._control_services:
             self.destroy_service(service)
         self._control_services = []
         self._interfaces_active = False
+
+    def _publish_joint_state(self):
+        if self._stopping or self._state_publisher is None:
+            return
+        try:
+            with self.comm_lock:
+                positions = self._read_all_positions(self.hand, self.device_id)
+            msg = JointState()
+            msg.header.stamp = self.get_clock().now().to_msg()
+            msg.name = ['finger_1', 'finger_2', 'finger_3']
+            msg.position = [float(value) for value in positions]
+            self._state_publisher.publish(msg)
+        except Exception as exc:
+            self.get_logger().error(f'{self.hand_name} 状态发布失败: {exc}')
+
+    def _joint_state_callback(self, msg: JointState):
+        if self._stopping or not msg.name or not msg.position:
+            return
+        positions = dict(zip(msg.name, msg.position))
+        commands = []
+        for finger_id in (1, 2, 3):
+            name = f'finger_{finger_id}'
+            if name not in positions:
+                continue
+            value = int(round(float(positions[name])))
+            if not 0 <= value <= 1000:
+                self.get_logger().warning(
+                    f'{self.hand_name} 忽略超范围位置: {name}={value}'
+                )
+                continue
+            commands.append((finger_id, value))
+        if not commands:
+            return
+        speed = int(self.get_parameter('stream_speed').value)
+        force = int(self.get_parameter('stream_force').value)
+        wait_time = int(self.get_parameter('stream_wait_time').value)
+        try:
+            with self.comm_lock:
+                for finger_id, position in commands:
+                    self.hand.move_finger(
+                        self.device_id, finger_id, position, speed, force, wait_time
+                    )
+        except Exception as exc:
+            self.get_logger().error(f'{self.hand_name} 流式控制失败: {exc}')
 
     def _parse_adapter_type(self, adapter_type_str):
         """解析适配器类型字符串."""

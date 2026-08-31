@@ -193,6 +193,19 @@ class ActionGroupRunnerNode(LifecycleNode):
             msg.position = payload.get("position", [])
             msg.velocity = payload.get("velocity", [])
             msg.effort = payload.get("effort", [])
+            gripper = payload.get("gripper")
+            if isinstance(gripper, dict):
+                names = gripper.get("name", [])
+                positions = gripper.get("position", [])
+                if names and len(names) == len(positions):
+                    msg.name.extend(str(name) for name in names)
+                    msg.position.extend(float(value) for value in positions)
+                    if msg.velocity:
+                        msg.velocity.extend([0.0] * len(names))
+                    if msg.effort:
+                        msg.effort.extend(
+                            float(value) for value in gripper.get("effort", [0.0] * len(names))
+                        )
             return msg
         if step_type == "move_p" or step_type == "move_l":
             msg = PoseStamped()

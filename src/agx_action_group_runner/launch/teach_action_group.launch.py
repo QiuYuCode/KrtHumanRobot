@@ -17,6 +17,9 @@ def generate_launch_description():
     stream_step_interval_arg = DeclareLaunchArgument(
         "stream_step_interval_sec", default_value="0.02", description="Streaming replay interval"
     )
+    sample_rate_arg = DeclareLaunchArgument(
+        "sample_rate_hz", default_value="50.0", description="Synchronized teach sample rate"
+    )
     autostart_arg = DeclareLaunchArgument("autostart", default_value="true")
 
     runner = Node(
@@ -47,6 +50,7 @@ def generate_launch_description():
             "left_namespace": LaunchConfiguration("left_namespace"),
             "right_namespace": LaunchConfiguration("right_namespace"),
             "playback_step_interval_sec": LaunchConfiguration("stream_step_interval_sec"),
+            "sample_rate_hz": LaunchConfiguration("sample_rate_hz"),
             "autostart": ParameterValue(LaunchConfiguration("autostart"), value_type=bool),
         }],
     )
@@ -57,6 +61,7 @@ def generate_launch_description():
         left_namespace_arg,
         right_namespace_arg,
         stream_step_interval_arg,
+        sample_rate_arg,
         autostart_arg,
         runner,
         teach,

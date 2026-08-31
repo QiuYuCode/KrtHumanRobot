@@ -9,6 +9,8 @@ ROS 2 功能包，用于通过 Action 接口控制两个 DexHand021S 灵巧手�
 - 支持单个手指精确控制
 - 支持手部重置功能
 - 提供实时位置反馈
+- 发布 `feedback/hand_joint_states` 状态话题，并支持通过 `control/joint_states`
+  按三指位置流式控制
 - 支持通过参数服务器控制底层反馈监听与实时反馈线程
 - 提供设备信息、清错、安全阈值和电机状态查询 ROS Service
 - 右手额外提供指尖法向压力、切向压力和接近觉 ROS Service
@@ -97,6 +99,12 @@ ros2 launch hands_control hand_control_launch.py \
 # 运行测试客户端（包含示例动作）
 ros2 run hands_control hand_control_client
 ```
+
+### 2.1 三指流式控制
+
+每个手节点默认以 50 Hz 发布 `feedback/hand_joint_states`。动作组回放向同一
+命名空间的 `control/joint_states` 发布 `finger_1`、`finger_2`、`finger_3`，
+位置范围为 0 到 1000；原有 Action 接口仍可继续使用。
 
 ### 3. 逐接口测试
 

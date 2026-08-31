@@ -50,6 +50,18 @@ ros2 launch krt_human_robot web_console.launch.py \
   host:=0.0.0.0 map_archive_dir:=$HOME/maps
 ```
 
+也可以直接使用 `ros2 run` 启动 Web 控制台或操作示教动作组：
+
+```bash
+ros2 run krt_human_robot web_app serve --host 127.0.0.1 --port 8443
+ros2 run krt_human_robot web_app teach start --arm left --group 挥手
+ros2 run krt_human_robot web_app teach stop --arm left --group 挥手
+ros2 run krt_human_robot web_app play 挥手 --arm left --repeat 1
+```
+
+示教动作组默认按 50 Hz 同时记录机械臂和同侧夹爪；可在
+`teach_action_group.launch.py` 中通过 `sample_rate_hz` 调整。
+
 默认仅监听 `127.0.0.1`；只有在受控机器人局域网中需要远程访问时才显式传入
 `host:=0.0.0.0`，并建议配置 `certfile`/`keyfile`。
 

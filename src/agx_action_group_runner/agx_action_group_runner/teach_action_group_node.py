@@ -1,6 +1,6 @@
+import copy
 import threading
 from datetime import datetime
-from typing import Optional
 
 import rclpy
 from agx_action_group_interfaces.srv import StartTeach, StopTeach
@@ -8,6 +8,7 @@ from krt_task.robot_db import RobotDatabase
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
 
@@ -18,21 +19,37 @@ class ArmRecorder:
         node: LifecycleNode,
         namespace: str,
         min_joint_delta_rad: float,
+        sample_rate_hz: float,
         callback_group: ReentrantCallbackGroup,
     ):
         self.node = node
         self.namespace = self._normalize_ns(namespace)
         self.min_joint_delta_rad = max(0.0, float(min_joint_delta_rad))
-        self.latest: Optional[JointState] = None
-        self.samples: list[JointState] = []
+        self.latest: JointState | None = None
+        self.latest_hand: JointState | None = None
+        self.samples: list[dict] = []
         self.recording = False
-        self.last_positions: list[float] | None = None
         self.lock = threading.Lock()
         self.sub = node.create_subscription(
             JointState,
             self._topic("feedback/leader_joint_states"),
             self._joint_cb,
-            10,
+            qos_profile_sensor_data,
+            callback_group=callback_group,
+        )
+        self.hand_sub = node.create_subscription(
+            JointState,
+            self._topic("feedback/hand_joint_states"),
+            self._hand_cb,
+            qos_profile_sensor_data,
+            callback_group=callback_group,
+        )
+        rate = float(sample_rate_hz)
+        if rate <= 0.0:
+            raise ValueError("sample_rate_hz must be greater than zero")
+        self.timer = node.create_timer(
+            1.0 / rate,
+            self._sample_cb,
             callback_group=callback_group,
         )
         self.client = node.create_client(
@@ -54,29 +71,43 @@ class ArmRecorder:
         return f"{self.namespace}/{suffix}" if self.namespace else f"/{suffix}"
 
     def _joint_cb(self, msg: JointState):
-        self.latest = msg
-        if not self.recording or not msg.name or not msg.position:
-            return
-        positions = list(msg.position)
         with self.lock:
-            if self.last_positions is not None and self.min_joint_delta_rad > 0.0:
-                if len(self.last_positions) == len(positions):
-                    delta = max(abs(a - b) for a, b in zip(self.last_positions, positions))
-                    if delta < self.min_joint_delta_rad:
-                        return
-            self.samples.append(msg)
-            self.last_positions = positions
+            self.latest = copy.deepcopy(msg)
+
+    def _hand_cb(self, msg: JointState):
+        with self.lock:
+            self.latest_hand = copy.deepcopy(msg)
+
+    def _sample_cb(self):
+        with self.lock:
+            if not self.recording or self.latest is None:
+                return
+            if not self.latest.name or not self.latest.position:
+                return
+            sample = {
+                "name": list(self.latest.name),
+                "position": [float(value) for value in self.latest.position],
+                "velocity": [float(value) for value in self.latest.velocity],
+                "effort": [float(value) for value in self.latest.effort],
+            }
+            hand = self.latest_hand
+            if hand is not None and hand.name and hand.position:
+                sample["gripper"] = {
+                    "source": "hands_control",
+                    "name": list(hand.name),
+                    "position": [float(value) for value in hand.position],
+                }
+            self.samples.append(sample)
 
     def start(self):
         with self.lock:
             self.samples = []
-            self.last_positions = None
             self.recording = True
 
-    def stop(self) -> list[JointState]:
+    def stop(self) -> list[dict]:
         with self.lock:
             self.recording = False
-            return list(self.samples)
+            return copy.deepcopy(self.samples)
 
 
 class TeachActionGroupNode(LifecycleNode):
@@ -90,6 +121,7 @@ class TeachActionGroupNode(LifecycleNode):
         self.declare_parameter("step_timeout_sec", 8.0)
         self.declare_parameter("service_timeout_sec", 5.0)
         self.declare_parameter("min_joint_delta_rad", 0.01)
+        self.declare_parameter("sample_rate_hz", 50.0)
         self.declare_parameter("playback_step_interval_sec", 0.02)
         self.declare_parameter("autostart", True)
         self.database = None
@@ -111,18 +143,24 @@ class TeachActionGroupNode(LifecycleNode):
         self.playback_step_interval_sec = float(
             self.get_parameter("playback_step_interval_sec").value
         )
+        sample_rate_hz = float(self.get_parameter("sample_rate_hz").value)
+        if sample_rate_hz <= 0.0:
+            raise ValueError("sample_rate_hz must be greater than zero")
+        self.sample_interval_sec = 1.0 / sample_rate_hz
         min_joint_delta_rad = float(self.get_parameter("min_joint_delta_rad").value)
         self.recorders = {
             "left": ArmRecorder(
                 self,
                 str(self.get_parameter("left_namespace").value),
                 min_joint_delta_rad,
+                sample_rate_hz,
                 self.cb_group,
             ),
             "right": ArmRecorder(
                 self,
                 str(self.get_parameter("right_namespace").value),
                 min_joint_delta_rad,
+                sample_rate_hz,
                 self.cb_group,
             ),
         }
@@ -157,6 +195,8 @@ class TeachActionGroupNode(LifecycleNode):
     def on_cleanup(self, _state: State) -> TransitionCallbackReturn:
         for recorder in self.recorders.values():
             self.destroy_subscription(recorder.sub)
+            self.destroy_subscription(recorder.hand_sub)
+            self.destroy_timer(recorder.timer)
             self.destroy_client(recorder.client)
         if self._start_service is not None:
             self.destroy_service(self._start_service)
@@ -248,15 +288,17 @@ class TeachActionGroupNode(LifecycleNode):
         response.groups_file = str(self.database.path)
         return response
 
-    def _write_group(self, group_name: str, arm: str, samples: list[JointState]):
-        self.database.save_action_group(group_name, arm, [{
-            "name": list(msg.name),
-            "position": [float(value) for value in msg.position],
-            "velocity": [], "effort": [],
-            "timeout_sec": self.step_timeout_sec,
-            "wait_reach": False,
-            "hold_sec": self.playback_step_interval_sec,
-        } for msg in samples])
+    def _write_group(self, group_name: str, arm: str, samples: list[dict]):
+        steps = []
+        for sample in samples:
+            step = dict(sample)
+            step.update(
+                timeout_sec=self.step_timeout_sec,
+                wait_reach=False,
+                hold_sec=self.sample_interval_sec,
+            )
+            steps.append(step)
+        self.database.save_action_group(group_name, arm, steps)
 
 
 def main(args=None):

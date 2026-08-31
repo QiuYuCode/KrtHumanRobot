@@ -7,6 +7,8 @@ Nero 双臂示教录制与动作组回放。
 - 进入/退出 Nero 示教模式：`/left/set_teach_mode`、`/right/set_teach_mode`
 - 保存命名动作组：`/agx_action_group/start_teach`、`/agx_action_group/stop_teach`
 - 执行动作组：`/agx_action_group/run_action_group`
+- 示教默认按 50 Hz 同时记录机械臂和同侧 `hands_control` 三指；内置
+  `agx_gripper` / `Revo2` 关节随 `leader_joint_states` 一起记录
 - 动作组数据运行时生成，默认位置：
   - `config/action_groups.yaml`
   - `config/steps/`
@@ -63,6 +65,13 @@ ros2 launch agx_action_group_runner teach_action_group.launch.py \
   left_namespace:=/left \
   right_namespace:=/right \
   stream_step_interval_sec:=0.01
+```
+
+示教采样频率可单独设置：
+
+```bash
+ros2 launch agx_action_group_runner teach_action_group.launch.py \
+  sample_rate_hz:=50.0
 ```
 
 ## 完整流程测试

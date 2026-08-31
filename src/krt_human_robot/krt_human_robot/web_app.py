@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import atexit
+import argparse
 import copy
 import os
 import secrets
@@ -16,14 +17,7 @@ from pathlib import Path
 from typing import Any
 
 from agx_action_group_interfaces.action import RunActionGroup
-from flask import (  # pyright: ignore[reportMissingImports]
-    Flask,
-    jsonify,
-    render_template,
-    request,
-    send_file,
-    session,
-)
+from agx_action_group_interfaces.srv import StartTeach, StopTeach
 from hands_control_interfaces.action import HandControl
 from hands_control_interfaces.srv import (
     GetApproachingValue,
@@ -39,11 +33,6 @@ from rclpy.action import ActionClient
 from rclpy.callback_groups import ReentrantCallbackGroup
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
-from werkzeug.exceptions import (  # pyright: ignore[reportMissingImports]
-    RequestEntityTooLarge,
-)
-from werkzeug.utils import secure_filename  # pyright: ignore[reportMissingImports]
-
 from krt_human_robot.adapters.navigation import RangerNavAdapter
 from krt_human_robot.config import load_config
 from krt_human_robot.gripper_system import GripperSystemController
@@ -52,7 +41,38 @@ from krt_human_robot.robot_system import (
     RobotSystemController,
     collect_routine_requirements,
 )
-from krt_human_robot.web_auth import AuthDatabase
+
+
+Flask = jsonify = render_template = request = send_file = session = None
+RequestEntityTooLarge = secure_filename = AuthDatabase = None
+
+
+def _load_flask() -> None:
+    global Flask, jsonify, render_template, request, send_file, session
+    global RequestEntityTooLarge, secure_filename, AuthDatabase
+    if Flask is not None:
+        return
+    from flask import (  # pyright: ignore[reportMissingImports]
+        Flask as FlaskType,
+        jsonify as jsonify_fn,
+        render_template as render_template_fn,
+        request as request_proxy,
+        send_file as send_file_fn,
+        session as session_proxy,
+    )
+    from werkzeug.exceptions import RequestEntityTooLarge as RequestEntityTooLargeType
+    from werkzeug.utils import secure_filename as secure_filename_fn
+    from krt_human_robot.web_auth import AuthDatabase as AuthDatabaseType
+
+    Flask = FlaskType
+    jsonify = jsonify_fn
+    render_template = render_template_fn
+    request = request_proxy
+    send_file = send_file_fn
+    session = session_proxy
+    RequestEntityTooLarge = RequestEntityTooLargeType
+    secure_filename = secure_filename_fn
+    AuthDatabase = AuthDatabaseType
 
 
 class RosBridge:
@@ -584,6 +604,7 @@ class WebRuntime:
 
 
 def create_app(test_config: dict[str, Any] | None = None) -> Flask:
+    _load_flask()
     package_source = Path(__file__).resolve().parent.parent
     source_templates = package_source / "templates"
     source_static = package_source / "static"
@@ -1080,8 +1101,14 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @protected(auth)
     def start_arm_teach():
         payload = request.get_json() or {}
+        arm_target = str(payload.get("arm_target", ""))
+        gripper_system = app.extensions.get("gripper_system")
+        if gripper_system is not None:
+            result = gripper_system.control(arm_target, True)
+            if not result["success"]:
+                raise RuntimeError(f"夹爪系统启动失败: {result}")
         result = require_robot_system().start_teach(
-            str(payload.get("arm_target", "")),
+            arm_target,
             str(payload.get("group_name", "")),
         )
         return audited(auth, "start_arm_teach", result["arm_target"], True, data=result)
@@ -1485,3 +1512,131 @@ def load_secret(path_value: str) -> str:
     path.write_text(value, encoding="utf-8")
     path.chmod(0o600)
     return value
+
+
+def _cli_ros_call(node, client, request_message, timeout_sec: float):
+    if not client.wait_for_service(timeout_sec=timeout_sec):
+        raise RuntimeError(f"ROS service unavailable: {client.srv_name}")
+    import rclpy
+
+    future = client.call_async(request_message)
+    rclpy.spin_until_future_complete(node, future, timeout_sec=timeout_sec)
+    if not future.done():
+        raise TimeoutError(f"ROS service timeout: {client.srv_name}")
+    response = future.result()
+    if response is None:
+        raise RuntimeError(f"ROS service failed: {client.srv_name}")
+    return response
+
+
+def _cli_teach(args) -> int:
+    import rclpy
+
+    rclpy.init()
+    node = Node("krt_web_cli")
+    try:
+        if args.operation == "start":
+            client = node.create_client(StartTeach, "/agx_action_group/start_teach")
+            request_message = StartTeach.Request()
+            request_message.arm_target = args.arm
+            request_message.group_name = args.group
+        else:
+            client = node.create_client(StopTeach, "/agx_action_group/stop_teach")
+            request_message = StopTeach.Request()
+            request_message.arm_target = args.arm or ""
+            request_message.group_name = args.group or ""
+        response = _cli_ros_call(node, client, request_message, 8.0)
+        print(response.message)
+        return 0 if response.success else 1
+    except Exception as exc:
+        print(f"操作失败: {exc}")
+        return 1
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+def _cli_play(args) -> int:
+    import rclpy
+
+    rclpy.init()
+    node = Node("krt_web_cli")
+    client = ActionClient(node, RunActionGroup, "/agx_action_group/run_action_group")
+    try:
+        if not client.wait_for_server(timeout_sec=8.0):
+            raise RuntimeError("动作组 action 不可用")
+        goal = RunActionGroup.Goal()
+        goal.group_name = args.group
+        goal.arm_target = args.arm
+        goal.repeat_count = args.repeat
+        send_future = client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(node, send_future, timeout_sec=8.0)
+        if not send_future.done():
+            raise TimeoutError("动作组目标发送超时")
+        goal_handle = send_future.result()
+        if goal_handle is None or not goal_handle.accepted:
+            raise RuntimeError("动作组目标被拒绝")
+        result_future = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(node, result_future, timeout_sec=120.0)
+        if not result_future.done():
+            raise TimeoutError("动作组回放超时")
+        result = result_future.result().result
+        print(result.message)
+        return 0 if result.success else 1
+    except Exception as exc:
+        print(f"回放失败: {exc}")
+        return 1
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
+
+def main(argv=None) -> int:
+    parser = argparse.ArgumentParser(description="KRT Web and teach control CLI")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    serve = subparsers.add_parser("serve", help="start the Web console")
+    serve.add_argument("--host", default="127.0.0.1")
+    serve.add_argument("--port", type=int, default=8443)
+    serve.add_argument("--certfile", default="")
+    serve.add_argument("--keyfile", default="")
+
+    teach = subparsers.add_parser("teach", help="start or stop arm teaching")
+    teach_subparsers = teach.add_subparsers(dest="operation", required=True)
+    start = teach_subparsers.add_parser("start")
+    start.add_argument("--arm", choices=("left", "right"), required=True)
+    start.add_argument("--group", default="")
+    stop = teach_subparsers.add_parser("stop")
+    stop.add_argument("--arm", choices=("left", "right"), default="")
+    stop.add_argument("--group", default="")
+
+    play = subparsers.add_parser("play", help="replay an action group")
+    play.add_argument("group")
+    play.add_argument("--arm", choices=("left", "right", "both"), required=True)
+    play.add_argument("--repeat", type=int, default=1)
+
+    args = parser.parse_args(argv)
+    if args.command == "serve":
+        ssl_context = None
+        if args.certfile or args.keyfile:
+            if not args.certfile or not args.keyfile:
+                parser.error("--certfile and --keyfile must be provided together")
+            ssl_context = (args.certfile, args.keyfile)
+        create_app().run(
+            host=args.host,
+            port=args.port,
+            ssl_context=ssl_context,
+            threaded=True,
+        )
+        return 0
+    if args.command == "teach":
+        return _cli_teach(args)
+    if args.repeat < 1:
+        parser.error("--repeat must be >= 1")
+    return _cli_play(args)
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

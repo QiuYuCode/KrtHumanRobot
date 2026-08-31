@@ -12,6 +12,7 @@ from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 
 from krt_human_robot.adapters.navigation import NavigationResult
+import krt_human_robot.web_app as web_app
 from krt_human_robot.web_app import RosBridge, create_app
 
 
@@ -779,6 +780,21 @@ def test_robot_system_and_teach_api(tmp_path):
         json={"group_name": "挥手"},
     )
     assert stopped.get_json()["sample_count"] == 3
+
+
+def test_web_app_cli_dispatches_teach(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        web_app,
+        "_cli_teach",
+        lambda args: calls.append((args.operation, args.arm, args.group)) or 0,
+    )
+
+    assert (
+        web_app.main(["teach", "start", "--arm", "left", "--group", "挥手"])
+        == 0
+    )
+    assert calls == [("start", "left", "挥手")]
 
 
 def test_action_group_run_starts_dependencies_and_tracks_execution(tmp_path):
