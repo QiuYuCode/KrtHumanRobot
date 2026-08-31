@@ -1,5 +1,5 @@
 import time
-from typing import Dict, List, Optional
+from typing import List, Optional
 
 import rclpy
 from agx_action_group_interfaces.action import RunActionGroup
@@ -8,6 +8,7 @@ from geometry_msgs.msg import PoseArray, PoseStamped
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.executors import MultiThreadedExecutor
 from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
 from krt_task.robot_db import RobotDatabase
 
@@ -21,6 +22,7 @@ class ArmIo:
         self.node = node
         self.namespace = self._normalize_ns(namespace)
         self.latest_status: Optional[AgxArmStatus] = None
+        self.latest_joint_states: Optional[JointState] = None
         self.pub_move_j = node.create_publisher(
             JointState, self._topic("control/move_j"), 10
         )
@@ -37,6 +39,12 @@ class ArmIo:
         self.sub_status = node.create_subscription(
             AgxArmStatus, self._topic("feedback/arm_status"), self._status_cb, 10
         )
+        self.sub_joint_states = node.create_subscription(
+            JointState,
+            self._topic("feedback/joint_states"),
+            self._joint_states_cb,
+            qos_profile_sensor_data,
+        )
 
     def destroy(self):
         self.node.destroy_publisher(self.pub_move_j)
@@ -45,9 +53,13 @@ class ArmIo:
         self.node.destroy_publisher(self.pub_move_c)
         self.node.destroy_publisher(self.pub_joint_states)
         self.node.destroy_subscription(self.sub_status)
+        self.node.destroy_subscription(self.sub_joint_states)
 
     def _status_cb(self, msg: AgxArmStatus):
         self.latest_status = msg
+
+    def _joint_states_cb(self, msg: JointState):
+        self.latest_joint_states = msg
 
     @staticmethod
     def _normalize_ns(namespace: str) -> str:
@@ -87,6 +99,9 @@ class ActionGroupRunnerNode(LifecycleNode):
         self.declare_parameter("default_step_timeout_sec", 8.0)
         self.declare_parameter("poll_interval_sec", 0.05)
         self.declare_parameter("stream_step_interval_sec", 0.02)
+        self.declare_parameter("pause_min_duration_sec", 0.5)
+        self.declare_parameter("pause_joint_range_rad", 0.002)
+        self.declare_parameter("pause_reach_tolerance_rad", 0.02)
         self.declare_parameter("left_namespace", "/left_arm")
         self.declare_parameter("right_namespace", "/right_arm")
         self.declare_parameter("autostart", True)
@@ -112,6 +127,21 @@ class ActionGroupRunnerNode(LifecycleNode):
         self.stream_step_interval_sec = float(
             self.get_parameter("stream_step_interval_sec").value
         )
+        self.pause_min_duration_sec = float(
+            self.get_parameter("pause_min_duration_sec").value
+        )
+        self.pause_joint_range_rad = float(
+            self.get_parameter("pause_joint_range_rad").value
+        )
+        self.pause_reach_tolerance_rad = float(
+            self.get_parameter("pause_reach_tolerance_rad").value
+        )
+        if self.pause_min_duration_sec <= 0.0:
+            raise ValueError("pause_min_duration_sec must be greater than zero")
+        if self.pause_joint_range_rad < 0.0:
+            raise ValueError("pause_joint_range_rad must be non-negative")
+        if self.pause_reach_tolerance_rad < 0.0:
+            raise ValueError("pause_reach_tolerance_rad must be non-negative")
 
         left_namespace = str(self.get_parameter("left_namespace").value)
         right_namespace = str(self.get_parameter("right_namespace").value)
@@ -240,15 +270,91 @@ class ActionGroupRunnerNode(LifecycleNode):
             return msg
         raise ValueError(f"Unsupported step type: {step_type}")
 
-    def _wait_reach(self, arm: ArmIo, timeout_sec: float) -> bool:
+    def _pause_start_indices(self, steps: List[dict]) -> set[int]:
+        """Return the first sample of each sustained near-static joint segment."""
+        pause_starts = set()
+        index = 0
+        while index < len(steps):
+            first = steps[index]
+            if first.get("type", "joint_states") != "joint_states":
+                index += 1
+                continue
+            names = list(first.get("name", []))
+            positions = list(first.get("position", []))
+            if not names or len(names) != len(positions):
+                index += 1
+                continue
+
+            lows = [float(value) for value in positions]
+            highs = list(lows)
+            duration_sec = 0.0
+            end = index
+            while end < len(steps):
+                sample = steps[end]
+                if sample.get("type", "joint_states") != "joint_states":
+                    break
+                if list(sample.get("name", [])) != names:
+                    break
+                current = list(sample.get("position", []))
+                if len(current) != len(positions):
+                    break
+                for joint_index, value in enumerate(current):
+                    numeric_value = float(value)
+                    lows[joint_index] = min(lows[joint_index], numeric_value)
+                    highs[joint_index] = max(highs[joint_index], numeric_value)
+                if max(high - low for low, high in zip(lows, highs)) > self.pause_joint_range_rad:
+                    break
+                duration_sec += float(
+                    sample.get("hold_sec", self.stream_step_interval_sec)
+                )
+                end += 1
+
+            if duration_sec >= self.pause_min_duration_sec:
+                pause_starts.add(index)
+                index = end
+            else:
+                index += 1
+        return pause_starts
+
+    def _with_pause_waits(self, steps: List[dict]) -> List[dict]:
+        """Copy sampled steps and wait for reach at each dwell's first frame."""
+        pause_starts = self._pause_start_indices(steps)
+        replay_steps = []
+        for index, step in enumerate(steps):
+            replay_step = dict(step)
+            if index in pause_starts:
+                replay_step["wait_reach"] = True
+            replay_steps.append(replay_step)
+        return replay_steps
+
+    def _wait_reach(
+        self,
+        arm: ArmIo,
+        timeout_sec: float,
+        target: Optional[JointState] = None,
+    ) -> bool:
         waited = 0.0
         while waited < timeout_sec:
             status = arm.latest_status
             if status is not None:
                 if status.arm_status != 0:
                     return False
-                if status.motion_status == 0:
+            if not isinstance(target, JointState):
+                if status is not None and status.motion_status == 0:
                     return True
+            else:
+                feedback = arm.latest_joint_states
+                if feedback is not None:
+                    target_positions = dict(zip(target.name, target.position))
+                    feedback_positions = dict(zip(feedback.name, feedback.position))
+                    common_names = target_positions.keys() & feedback_positions.keys()
+                    if common_names and all(
+                        abs(target_positions[name] - feedback_positions[name])
+                        <= self.pause_reach_tolerance_rad
+                        for name in common_names
+                    ):
+                        if status is None or status.motion_status == 0:
+                            return True
             time.sleep(self.poll_interval_sec)
             waited += self.poll_interval_sec
         return False
@@ -292,7 +398,7 @@ class ActionGroupRunnerNode(LifecycleNode):
             target_arm = self.left_arm if arm_target == "left" else self.right_arm
             target_arm.publish(step_type, msg)
             if wait_reach:
-                ok = self._wait_reach(target_arm, timeout_sec)
+                ok = self._wait_reach(target_arm, timeout_sec, msg)
                 if not ok:
                     raise RuntimeError(f"{step_name} did not reach target in {timeout_sec}s")
         else:
@@ -301,8 +407,8 @@ class ActionGroupRunnerNode(LifecycleNode):
             self.left_arm.publish(step_type, left_msg)
             self.right_arm.publish(step_type, right_msg)
             if wait_reach:
-                left_ok = self._wait_reach(self.left_arm, timeout_sec)
-                right_ok = self._wait_reach(self.right_arm, timeout_sec)
+                left_ok = self._wait_reach(self.left_arm, timeout_sec, left_msg)
+                right_ok = self._wait_reach(self.right_arm, timeout_sec, right_msg)
                 if not left_ok or not right_ok:
                     raise RuntimeError(f"{step_name} did not reach target on both arms")
 
@@ -322,7 +428,7 @@ class ActionGroupRunnerNode(LifecycleNode):
                     f"动作组 '{goal.group_name}' 录制于 {recorded_arm} 臂，"
                     f"不能以 {goal.arm_target} 回放"
                 )
-            steps = group["samples"]
+            steps = self._with_pause_waits(group["samples"])
             total_steps = len(steps)
             repeat_count = int(goal.repeat_count) if goal.repeat_count > 0 else int(
                 group.get("repeat_count", 1)

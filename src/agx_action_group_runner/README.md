@@ -74,6 +74,17 @@ ros2 launch agx_action_group_runner teach_action_group.launch.py \
   sample_rate_hz:=50.0
 ```
 
+回放时会自动识别持续静止的关节采样。机械臂先到达停顿姿态，再完整保持
+录制的停顿时间；停顿期间夹爪仍按原采样频率同步回放。默认识别持续 0.5 秒、
+关节范围不超过 0.002 rad 的静止段，可按需调整：
+
+```bash
+ros2 launch agx_action_group_runner teach_action_group.launch.py \
+  pause_min_duration_sec:=0.5 \
+  pause_joint_range_rad:=0.002 \
+  pause_reach_tolerance_rad:=0.02
+```
+
 ## 完整流程测试
 
 ### 确认服务和 action

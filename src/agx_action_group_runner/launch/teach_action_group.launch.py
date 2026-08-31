@@ -20,6 +20,15 @@ def generate_launch_description():
     sample_rate_arg = DeclareLaunchArgument(
         "sample_rate_hz", default_value="50.0", description="Synchronized teach sample rate"
     )
+    pause_min_duration_arg = DeclareLaunchArgument(
+        "pause_min_duration_sec", default_value="0.5", description="Minimum dwell duration"
+    )
+    pause_joint_range_arg = DeclareLaunchArgument(
+        "pause_joint_range_rad", default_value="0.002", description="Dwell joint range"
+    )
+    pause_reach_tolerance_arg = DeclareLaunchArgument(
+        "pause_reach_tolerance_rad", default_value="0.02", description="Dwell reach tolerance"
+    )
     autostart_arg = DeclareLaunchArgument("autostart", default_value="true")
 
     runner = Node(
@@ -34,6 +43,9 @@ def generate_launch_description():
             "left_namespace": LaunchConfiguration("left_namespace"),
             "right_namespace": LaunchConfiguration("right_namespace"),
             "stream_step_interval_sec": LaunchConfiguration("stream_step_interval_sec"),
+            "pause_min_duration_sec": LaunchConfiguration("pause_min_duration_sec"),
+            "pause_joint_range_rad": LaunchConfiguration("pause_joint_range_rad"),
+            "pause_reach_tolerance_rad": LaunchConfiguration("pause_reach_tolerance_rad"),
             "autostart": ParameterValue(LaunchConfiguration("autostart"), value_type=bool),
         }],
     )
@@ -62,6 +74,9 @@ def generate_launch_description():
         right_namespace_arg,
         stream_step_interval_arg,
         sample_rate_arg,
+        pause_min_duration_arg,
+        pause_joint_range_arg,
+        pause_reach_tolerance_arg,
         autostart_arg,
         runner,
         teach,
