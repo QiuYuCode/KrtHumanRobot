@@ -758,7 +758,9 @@ class FakeRobotSystem:
 def test_robot_system_and_teach_api(tmp_path):
     app, client, headers = authenticated_app(tmp_path)
     system = FakeRobotSystem()
+    gripper_system = FakeGripperSystem()
     app.extensions["robot_system"] = system
+    app.extensions["gripper_system"] = gripper_system
 
     assert client.get("/api/robot-systems").status_code == 200
     control = client.post(
@@ -774,6 +776,7 @@ def test_robot_system_and_teach_api(tmp_path):
         json={"arm_target": "left", "group_name": "挥手"},
     )
     assert started.status_code == 200
+    assert gripper_system.controls == []
     stopped = client.post(
         "/api/arm/teach/stop",
         headers=headers,

@@ -1,4 +1,5 @@
 import copy
+import re
 import threading
 from datetime import datetime
 
@@ -11,6 +12,13 @@ from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import JointState
 from std_srvs.srv import SetBool
+
+
+ARM_JOINT_NAME_PATTERN = re.compile(r"^joint_?\d+$")
+
+
+def _is_arm_joint_name(name: str) -> bool:
+    return bool(ARM_JOINT_NAME_PATTERN.fullmatch(str(name)))
 
 
 class ArmRecorder:
@@ -26,7 +34,6 @@ class ArmRecorder:
         self.namespace = self._normalize_ns(namespace)
         self.min_joint_delta_rad = max(0.0, float(min_joint_delta_rad))
         self.latest: JointState | None = None
-        self.latest_hand: JointState | None = None
         self.samples: list[dict] = []
         self.recording = False
         self.lock = threading.Lock()
@@ -34,13 +41,6 @@ class ArmRecorder:
             JointState,
             self._topic("feedback/leader_joint_states"),
             self._joint_cb,
-            qos_profile_sensor_data,
-            callback_group=callback_group,
-        )
-        self.hand_sub = node.create_subscription(
-            JointState,
-            self._topic("feedback/hand_joint_states"),
-            self._hand_cb,
             qos_profile_sensor_data,
             callback_group=callback_group,
         )
@@ -74,29 +74,35 @@ class ArmRecorder:
         with self.lock:
             self.latest = copy.deepcopy(msg)
 
-    def _hand_cb(self, msg: JointState):
-        with self.lock:
-            self.latest_hand = copy.deepcopy(msg)
-
     def _sample_cb(self):
         with self.lock:
             if not self.recording or self.latest is None:
                 return
             if not self.latest.name or not self.latest.position:
                 return
+            arm_indices = [
+                index
+                for index, name in enumerate(self.latest.name)
+                if _is_arm_joint_name(name) and index < len(self.latest.position)
+            ]
+            if not arm_indices:
+                return
             sample = {
-                "name": list(self.latest.name),
-                "position": [float(value) for value in self.latest.position],
-                "velocity": [float(value) for value in self.latest.velocity],
-                "effort": [float(value) for value in self.latest.effort],
+                "name": [str(self.latest.name[index]) for index in arm_indices],
+                "position": [
+                    float(self.latest.position[index]) for index in arm_indices
+                ],
+                "velocity": (
+                    [float(self.latest.velocity[index]) for index in arm_indices]
+                    if self.latest.velocity
+                    else []
+                ),
+                "effort": (
+                    [float(self.latest.effort[index]) for index in arm_indices]
+                    if self.latest.effort
+                    else []
+                ),
             }
-            hand = self.latest_hand
-            if hand is not None and hand.name and hand.position:
-                sample["gripper"] = {
-                    "source": "hands_control",
-                    "name": list(hand.name),
-                    "position": [float(value) for value in hand.position],
-                }
             self.samples.append(sample)
 
     def start(self):
@@ -195,7 +201,6 @@ class TeachActionGroupNode(LifecycleNode):
     def on_cleanup(self, _state: State) -> TransitionCallbackReturn:
         for recorder in self.recorders.values():
             self.destroy_subscription(recorder.sub)
-            self.destroy_subscription(recorder.hand_sub)
             self.destroy_timer(recorder.timer)
             self.destroy_client(recorder.client)
         if self._start_service is not None:

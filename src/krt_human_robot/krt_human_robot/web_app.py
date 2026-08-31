@@ -1102,11 +1102,6 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     def start_arm_teach():
         payload = request.get_json() or {}
         arm_target = str(payload.get("arm_target", ""))
-        gripper_system = app.extensions.get("gripper_system")
-        if gripper_system is not None:
-            result = gripper_system.control(arm_target, True)
-            if not result["success"]:
-                raise RuntimeError(f"夹爪系统启动失败: {result}")
         result = require_robot_system().start_teach(
             arm_target,
             str(payload.get("group_name", "")),

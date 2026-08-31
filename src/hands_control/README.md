@@ -102,7 +102,7 @@ ros2 run hands_control hand_control_client
 
 ### 2.1 三指流式控制
 
-每个手节点默认以 50 Hz 发布 `feedback/hand_joint_states`。动作组回放向同一
+每个手节点默认以 50 Hz 发布 `feedback/hand_joint_states`。外部控制器可向同一
 命名空间的 `control/joint_states` 发布 `finger_1`、`finger_2`、`finger_3`，
 位置范围为 0 到 1000；原有 Action 接口仍可继续使用。
 

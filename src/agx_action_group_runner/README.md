@@ -7,8 +7,7 @@ Nero 双臂示教录制与动作组回放。
 - 进入/退出 Nero 示教模式：`/left/set_teach_mode`、`/right/set_teach_mode`
 - 保存命名动作组：`/agx_action_group/start_teach`、`/agx_action_group/stop_teach`
 - 执行动作组：`/agx_action_group/run_action_group`
-- 示教默认按 50 Hz 同时记录机械臂和同侧 `hands_control` 三指；内置
-  `agx_gripper` / `Revo2` 关节随 `leader_joint_states` 一起记录
+- 示教默认按 50 Hz 记录机械臂关节；夹爪动作由独立动作编排控制
 - 动作组数据运行时生成，默认位置：
   - `config/action_groups.yaml`
   - `config/steps/`
@@ -74,16 +73,10 @@ ros2 launch agx_action_group_runner teach_action_group.launch.py \
   sample_rate_hz:=50.0
 ```
 
-回放时会自动识别持续静止的关节采样。机械臂先到达停顿姿态，再完整保持
-录制的停顿时间；停顿期间夹爪仍按原采样频率同步回放。默认识别持续 0.5 秒、
-关节范围不超过 0.002 rad 的静止段，可按需调整：
-
-```bash
-ros2 launch agx_action_group_runner teach_action_group.launch.py \
-  pause_min_duration_sec:=0.5 \
-  pause_joint_range_rad:=0.002 \
-  pause_reach_tolerance_rad:=0.02
-```
+示教录制中的静止帧会和运动帧一样按原始采样间隔回放，因此机械臂停顿的时长
+会保留。录制样本不会自动插入“等待到位”，避免驱动未报告到位时每个静止段
+额外阻塞 8 秒并影响多个动作连续编排。手工动作步显式设置的 `wait_reach` 仍会
+按原有规则等待机械臂状态。
 
 ## 完整流程测试
 

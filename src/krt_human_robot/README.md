@@ -59,7 +59,7 @@ ros2 run krt_human_robot web_app teach stop --arm left --group 挥手
 ros2 run krt_human_robot web_app play 挥手 --arm left --repeat 1
 ```
 
-示教动作组默认按 50 Hz 同时记录机械臂和同侧夹爪；可在
+示教动作组默认按 50 Hz 记录机械臂关节；夹爪动作由独立动作编排控制。可在
 `teach_action_group.launch.py` 中通过 `sample_rate_hz` 调整。
 
 默认仅监听 `127.0.0.1`；只有在受控机器人局域网中需要远程访问时才显式传入
