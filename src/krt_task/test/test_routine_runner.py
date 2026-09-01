@@ -1,11 +1,20 @@
+from threading import Lock
 from types import SimpleNamespace
 
 import cv2
 import numpy as np
 import pytest
 from sensor_msgs.msg import CompressedImage
+from rclpy.action import GoalResponse
 
 from krt_task.routine_runner import ParallelJob, RoutineCanceled, RoutineRunnerNode
+
+
+def test_busy_runner_accepts_goal_for_explicit_busy_result():
+    runner = SimpleNamespace(_active=True, _running=True, _lock=Lock())
+    goal = SimpleNamespace(routine_name="第二个流程")
+
+    assert RoutineRunnerNode._goal_callback(runner, goal) == GoalResponse.ACCEPT
 
 
 class FakeClient:

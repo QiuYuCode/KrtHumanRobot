@@ -816,7 +816,7 @@
             </div>
             <div class="table-responsive">
               <table class="table table-hover list-table mb-0">
-                <thead><tr><th>名称</th><th>步骤</th><th>更新时间</th><th class="text-right">操作</th></tr></thead>
+                <thead><tr><th>名称</th><th>语音触发词</th><th>步骤</th><th>更新时间</th><th class="text-right">操作</th></tr></thead>
                 <tbody id="routineList"></tbody>
               </table>
             </div>
@@ -1030,6 +1030,8 @@
           <div class="modal-header"><h2 class="modal-title h4">编辑 Routine</h2><button type="button" class="close" data-dismiss="modal" aria-label="关闭"><span aria-hidden="true">&times;</span></button></div>
           <div class="modal-body">
             <div class="field"><label>Routine 名称</label><input id="routineName" maxlength="80" /></div>
+            <div class="field"><label for="routineKeywords">语音触发关键词</label><textarea id="routineKeywords" maxlength="1639" rows="3" placeholder="每行一个关键词，也可用中文或英文逗号分隔；留空表示关闭语音触发"></textarea></div>
+            <div class="field"><label for="routineResponseText">执行成功播报</label><input id="routineResponseText" maxlength="500" placeholder="留空时播报默认完成提示" /></div>
             <div id="steps"></div>
             <div class="actions mt-3">
               <select id="addType">
@@ -1450,10 +1452,12 @@
       function renderRoutineList() {
         htmlTarget("routineList").content = routines
           .map(
-            (r) =>
-              `<tr data-routine="${esc(r.name)}"><td><button class="btn btn-link p-0" data-edit-routine="${esc(r.name)}">${esc(r.name)}</button></td><td>${r.spec?.steps?.length || 0}</td><td>${esc(r.updated_at || r.created_at || "")}</td><td class="actions"><button data-edit-routine="${esc(r.name)}">编辑</button><button data-run-routine="${esc(r.name)}">试运行</button><button class="danger" data-del-routine="${esc(r.name)}">删除</button></td></tr>`,
+            (r) => {
+              const keywords = r.voice_trigger?.keywords || [];
+              return `<tr data-routine="${esc(r.name)}"><td><button class="btn btn-link p-0" data-edit-routine="${esc(r.name)}">${esc(r.name)}</button></td><td>${keywords.length ? esc(keywords.join("、")) : '<span class="muted">未配置</span>'}</td><td>${r.spec?.steps?.length || 0}</td><td>${esc(r.updated_at || r.created_at || "")}</td><td class="actions"><button data-edit-routine="${esc(r.name)}">编辑</button><button data-run-routine="${esc(r.name)}">试运行</button><button class="danger" data-del-routine="${esc(r.name)}">删除</button></td></tr>`;
+            },
           )
-          .join("") || '<tr><td colspan="4" class="muted">暂无 Routine</td></tr>';
+          .join("") || '<tr><td colspan="5" class="muted">暂无 Routine</td></tr>';
         document.querySelectorAll("[data-edit-routine]").forEach(
           (x) => (x.onclick = () => selectRoutine(x.dataset.editRoutine)),
         );
@@ -1585,6 +1589,8 @@
         selected = name;
         $("routineName").value = name;
         $("routineName").disabled = true;
+        $("routineKeywords").value = (r.voice_trigger?.keywords || []).join("\n");
+        $("routineResponseText").value = r.voice_trigger?.response_text || "";
         model = structuredClone(r.spec);
         renderSteps();
         window.jQuery("#routineEditorModal").modal("show");
@@ -2226,6 +2232,8 @@
         selected = null;
         $("routineName").disabled = false;
         $("routineName").value = "";
+        $("routineKeywords").value = "";
+        $("routineResponseText").value = "";
         model = { type: "sequence", steps: [] };
         renderSteps();
         window.jQuery("#routineEditorModal").modal("show");
@@ -2236,11 +2244,23 @@
         model.steps.push(fresh($("addType").value));
         renderSteps();
       };
+      function parseRoutineKeywords() {
+        return $("routineKeywords")
+          .value.split(/[\n,，]+/)
+          .map((keyword) => keyword.trim())
+          .filter(Boolean);
+      }
       $("saveRoutine").onclick = () => {
         const n = $("routineName").value.trim();
         api(`/api/routines/${encodeURIComponent(n)}`, {
           method: "PUT",
-          json: model,
+          json: {
+            spec: model,
+            voice_trigger: {
+              keywords: parseRoutineKeywords(),
+              response_text: $("routineResponseText").value.trim(),
+            },
+          },
         })
           .then(() => window.jQuery("#routineEditorModal").modal("hide"))
           .then(refreshAll)

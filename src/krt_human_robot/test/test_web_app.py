@@ -361,6 +361,69 @@ def authenticated_app(tmp_path):
     return app, client, {"X-CSRF-Token": login.get_json()["csrf_token"]}
 
 
+def test_routine_api_saves_voice_trigger_atomically_and_keeps_legacy(
+    tmp_path,
+):
+    _app, client, headers = authenticated_app(tmp_path)
+    old_spec = {"type": "sequence", "steps": [{"type": "wait", "wait_ms": 10}]}
+    new_spec = {"type": "sequence", "steps": [{"type": "wait", "wait_ms": 20}]}
+
+    saved = client.put(
+        "/api/routines/%E8%BF%8E%E5%AE%BE",
+        headers=headers,
+        json={
+            "spec": old_spec,
+            "voice_trigger": {
+                "keywords": [" 开始迎宾 ", "开始迎宾", "迎接客人"],
+                "response_text": " 迎宾完成 ",
+            },
+        },
+    )
+    assert saved.status_code == 200
+    routine = client.get("/api/routines").get_json()[0]
+    assert routine["voice_trigger"] == {
+        "keywords": ["开始迎宾", "迎接客人"],
+        "response_text": "迎宾完成",
+    }
+
+    legacy_update = client.put(
+        "/api/routines/%E8%BF%8E%E5%AE%BE",
+        headers=headers,
+        json=new_spec,
+    )
+    assert legacy_update.status_code == 200
+    routine = client.get("/api/routines").get_json()[0]
+    assert routine["spec"] == new_spec
+    assert routine["voice_trigger"]["keywords"] == [
+        "开始迎宾",
+        "迎接客人",
+    ]
+
+    assert client.put(
+        "/api/routines/%E9%80%81%E5%AE%A2",
+        headers=headers,
+        json=old_spec,
+    ).status_code == 200
+    conflict = client.put(
+        "/api/routines/%E9%80%81%E5%AE%A2",
+        headers=headers,
+        json={
+            "spec": new_spec,
+            "voice_trigger": {
+                "keywords": ["开始迎宾"],
+                "response_text": "送客完成",
+            },
+        },
+    )
+    assert conflict.status_code == 400
+    routines = {
+        item["name"]: item
+        for item in client.get("/api/routines").get_json()
+    }
+    assert routines["送客"]["spec"] == old_spec
+    assert routines["送客"]["voice_trigger"]["keywords"] == []
+
+
 class FakeNavigationAdapter:
     def __init__(self, map_root, success=True):
         self.map_root = Path(map_root)
@@ -1179,6 +1242,7 @@ def test_monitor_watchdog_restores_parameters_through_executor(monkeypatch, tmp_
 def test_web_console_launch_passes_robot_config():
     package = Path(__file__).parents[1]
     web_launch = (package / "launch/web_console.launch.py").read_text(encoding="utf-8")
+    compact_web_launch = "".join(web_launch.split())
     assert "if certfile and keyfile:" in web_launch
     assert 'cmd.extend(["--certfile", certfile, "--keyfile", keyfile])' in web_launch
     assert (
@@ -1187,7 +1251,7 @@ def test_web_console_launch_passes_robot_config():
     )
     robot_launch = (package / "launch/robot.launch.py").read_text(encoding="utf-8")
 
-    assert '"config_file", default_value=' in web_launch
+    assert 'DeclareLaunchArgument("config_file",default_value=' in compact_web_launch
     assert '"KRT_HUMAN_ROBOT_CONFIG": LaunchConfiguration("config_file")' in web_launch
     assert '"config_file": config_file' in robot_launch
     assert (

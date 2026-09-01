@@ -114,11 +114,7 @@ class RoutineRunnerNode(LifecycleNode):
     def _goal_callback(self, goal: RunRoutine.Goal) -> GoalResponse:
         if not self._active or not goal.routine_name.strip():
             return GoalResponse.REJECT
-        with self._lock:
-            if self._running:
-                return GoalResponse.REJECT
-            self._running = True
-            return GoalResponse.ACCEPT
+        return GoalResponse.ACCEPT
 
     def _cancel_callback(self, _goal_handle) -> CancelResponse:
         return CancelResponse.ACCEPT
@@ -126,6 +122,13 @@ class RoutineRunnerNode(LifecycleNode):
     def _execute(self, goal_handle):
         result = RunRoutine.Result()
         name = goal_handle.request.routine_name.strip()
+        with self._lock:
+            if self._running:
+                result.success = False
+                result.message = "routine 正在执行"
+                goal_handle.abort()
+                return result
+            self._running = True
         try:
             task, args = self.load_routine(name)
             self.feedback(goal_handle, f"routine:{name}")

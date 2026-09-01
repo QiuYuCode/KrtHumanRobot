@@ -163,7 +163,159 @@ def test_gripper_action_storage_and_schema_migration(tmp_path):
     assert database.list_gripper_actions()[0]["name"] == "左手张开"
     assert "targets_json" not in database.list_gripper_actions()[0]
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 5
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+
+
+def test_routine_configuration_saves_normalized_voice_trigger(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    spec = {"type": "sequence", "steps": [{"type": "wait", "wait_ms": 10}]}
+
+    database.save_routine_configuration(
+        "迎宾",
+        spec,
+        {
+            "keywords": ["  开始迎宾  ", "开始迎宾", "迎接客人"],
+            "response_text": "  迎宾完成。  ",
+        },
+    )
+
+    routine = database.list_routines()[0]
+    assert routine["spec"] == spec
+    assert routine["voice_trigger"] == {
+        "keywords": ["开始迎宾", "迎接客人"],
+        "response_text": "迎宾完成。",
+    }
+
+
+def test_routine_voice_trigger_rejects_duplicate_without_partial_update(
+    tmp_path,
+):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    old_spec = {"type": "sequence", "steps": [{"type": "wait", "wait_ms": 10}]}
+    new_spec = {"type": "sequence", "steps": [{"type": "wait", "wait_ms": 20}]}
+    database.save_routine_configuration(
+        "迎宾",
+        old_spec,
+        {"keywords": ["开始表演"], "response_text": ""},
+    )
+    database.save_routine("送客", old_spec)
+
+    with pytest.raises(ValueError, match="已绑定到 routine.*迎宾"):
+        database.save_routine_configuration(
+            "送客",
+            new_spec,
+            {"keywords": ["开始表演"], "response_text": "完成"},
+        )
+
+    assert database.get_routine("送客") == old_spec
+    assert database.list_routines()[1]["voice_trigger"] == {
+        "keywords": [],
+        "response_text": "",
+    }
+
+
+def test_empty_voice_trigger_stays_disabled_and_cascades_on_delete(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    spec = {"type": "sequence", "steps": [{"type": "wait", "wait_ms": 10}]}
+    database.save_routine_configuration(
+        "迎宾",
+        spec,
+        {"keywords": [], "response_text": "不会播报"},
+    )
+
+    assert database.list_routine_voice_triggers() == [
+        {
+            "routine_name": "迎宾",
+            "keywords": [],
+            "response_text": "不会播报",
+        }
+    ]
+    database.delete_routine("迎宾")
+    assert database.list_routine_voice_triggers() == []
+
+
+def test_legacy_voice_import_retries_after_routine_is_created(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    entries = [
+        {
+            "routine_name": "稍后创建",
+            "keywords": ["开始稍后流程"],
+            "response_text": "流程完成",
+        }
+    ]
+
+    assert database.import_legacy_routine_voice_triggers(entries) == 0
+    database.save_routine(
+        "稍后创建",
+        {"type": "sequence", "steps": [{"type": "wait", "wait_ms": 10}]},
+    )
+
+    assert database.import_legacy_routine_voice_triggers(entries) == 1
+    assert database.list_routine_voice_triggers() == [
+        {
+            "routine_name": "稍后创建",
+            "keywords": ["开始稍后流程"],
+            "response_text": "流程完成",
+        }
+    ]
+
+
+def test_schema_v5_migrates_existing_routine_to_voice_trigger_tables(tmp_path):
+    path = tmp_path / "v5.db"
+    spec = '{"type":"sequence","steps":[{"type":"wait","wait_ms":10}]}'
+    with sqlite3.connect(path) as connection:
+        connection.executescript(
+            """
+            CREATE TABLE routines (
+              id INTEGER PRIMARY KEY,
+              name TEXT NOT NULL UNIQUE,
+              spec_json TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            );
+            PRAGMA user_version = 5;
+            """
+        )
+        connection.execute(
+            """INSERT INTO routines(name, spec_json, created_at, updated_at)
+               VALUES(?, ?, ?, ?)""",
+            ("旧流程", spec, "2026-01-01T00:00:00+00:00", "2026-01-01T00:00:00+00:00"),
+        )
+
+    database = RobotDatabase(str(path))
+
+    assert database.get_routine("旧流程")["steps"][0]["wait_ms"] == 10
+    with sqlite3.connect(path) as connection:
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        } >= {"routine_voice_triggers", "metadata"}
+
+
+def test_legacy_routine_voice_triggers_import_only_once(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    spec = {"type": "sequence", "steps": [{"type": "wait", "wait_ms": 10}]}
+    database.save_routine("唱跳表演", spec)
+    entries = [
+        {
+            "routine_name": "唱跳表演",
+            "keywords": ["唱跳表演", "开始表演"],
+            "response_text": "表演完成",
+        },
+        {"routine_name": "不存在", "keywords": ["不会导入"]},
+    ]
+
+    assert database.import_legacy_routine_voice_triggers(entries) == 1
+    database.save_routine_configuration(
+        "唱跳表演",
+        spec,
+        {"keywords": [], "response_text": ""},
+    )
+    assert database.import_legacy_routine_voice_triggers(entries) == 0
+    assert database.list_routines()[0]["voice_trigger"]["keywords"] == []
 
 
 def test_maps_are_selected_and_waypoints_are_scoped(tmp_path):

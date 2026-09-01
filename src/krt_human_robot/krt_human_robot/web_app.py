@@ -648,6 +648,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     media_dir = Path(app.config["MEDIA_DIR"]).expanduser().resolve()
     media_dir.mkdir(parents=True, exist_ok=True)
     robot_config = load_config(os.environ.get("KRT_HUMAN_ROBOT_CONFIG"))
+    database.import_legacy_routine_voice_triggers(
+        getattr(robot_config, "routine_keyword_actions", []) or []
+    )
     navigation_config = robot_config.adapters.setdefault("navigation", {})
     navigation_config["robot_db"] = app.config["ROBOT_DB"]
     map_root = app.config["MAP_ARCHIVE_DIR"] or navigation_config.get(
@@ -1259,9 +1262,18 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.put("/api/routines/<name>")
     @protected(auth)
     def save_routine(name: str):
-        spec = request.get_json() or {}
+        payload = request.get_json() or {}
+        is_configuration = "spec" in payload or "voice_trigger" in payload
+        if is_configuration:
+            spec = payload.get("spec", {})
+            voice_trigger = payload.get("voice_trigger", {})
+        else:
+            spec = payload
         validate_media_refs(spec, database)
-        database.save_routine(name, spec)
+        if is_configuration:
+            database.save_routine_configuration(name, spec, voice_trigger)
+        else:
+            database.save_routine(name, spec)
         return audited(auth, "save_routine", name, True)
 
     @app.delete("/api/routines/<name>")

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import py_trees
 from py_trees.behaviour import Behaviour
 from py_trees.common import Status
 
@@ -16,7 +17,11 @@ from krt_human_robot.behaviors.core.actions.gripper import GripperAction, execut
 from krt_human_robot.behaviors.core.actions.llm_dialog import LLMDialogAction
 from krt_human_robot.behaviors.core.actions.navigation import NavigationAction, execute_navigate
 from krt_human_robot.behaviors.core.actions.robot_arm import RobotArmAction, execute_robot_arm
-from krt_human_robot.behaviors.core.actions.routine import RoutineAction, execute_routine
+from krt_human_robot.behaviors.core.actions.routine import (
+    RoutineAction,
+    RoutineVoiceAction,
+    execute_routine,
+)
 from krt_human_robot.behaviors.core.actions.vision import execute_describe_scene
 from krt_human_robot.behaviors.voice import speak_blocking
 from voice_interfaces.srv import SynthesizeSpeech
@@ -125,4 +130,5 @@ __all__ = [
     "NavigationAction",
     "RobotArmAction",
     "RoutineAction",
+    "RoutineVoiceAction",
 ]

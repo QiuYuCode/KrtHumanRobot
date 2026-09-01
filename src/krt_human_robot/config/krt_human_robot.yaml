@@ -162,6 +162,7 @@ robot_arm_keyword_actions:
 
 routine_action: /krt_task/run_routine
 routine_action_timeout_s: 120.0
+# 仅用于数据库首次升级时导入；后续请在 Web“动作编排”中维护语音触发设置。
 routine_keyword_actions:
   - {keywords: [唱跳表演, 开始表演, 表演一下], routine_name: 唱跳表演, response_text: "", priority: 100}
   - {keywords: [左手比心, 左手笔芯], routine_name: 左手比心, response_text: "你好呀", priority: 100}

@@ -245,3 +245,14 @@ def test_routine_editor_uses_named_gripper_actions_and_keeps_legacy_fields():
     assert "step.action_name" in html
     assert "finger_id" in html
     assert "position" in html
+
+
+def test_routine_editor_manages_voice_keywords_and_success_response():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    source = compact(html)
+
+    assert 'id="routineKeywords"' in html
+    assert 'id="routineResponseText"' in html
+    assert "r.voice_trigger?.keywords" in html
+    assert "functionparseRoutineKeywords" in source
+    assert "voice_trigger:{keywords:parseRoutineKeywords()" in source

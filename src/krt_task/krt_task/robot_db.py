@@ -14,7 +14,8 @@ from typing import Any
 
 import yaml
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
+ROUTINE_VOICE_IMPORT_KEY = "routine_voice_yaml_import_v1"
 PARALLEL_TASKS = {"play_audio", "arm_group", "gripper", "wait"}
 TASKS = PARALLEL_TASKS | {"sequence", "parallel", "speak", "describe", "photo"}
 
@@ -153,7 +154,19 @@ class RobotDatabase:
                       realtime_response_enabled INTEGER NOT NULL,
                       updated_at TEXT NOT NULL
                     );
-                    PRAGMA user_version = 5;
+                    CREATE TABLE IF NOT EXISTS routine_voice_triggers (
+                      routine_id INTEGER PRIMARY KEY
+                        REFERENCES routines(id) ON DELETE CASCADE,
+                      keywords_json TEXT NOT NULL,
+                      response_text TEXT NOT NULL DEFAULT '',
+                      created_at TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS metadata (
+                      key TEXT PRIMARY KEY,
+                      value TEXT NOT NULL
+                    );
+                    PRAGMA user_version = 6;
                     """
                 )
                 connection.commit()
@@ -237,6 +250,26 @@ class RobotDatabase:
                            REFERENCES maps(id) ON DELETE RESTRICT"""
                     )
                 connection.execute("PRAGMA user_version = 5")
+                connection.commit()
+                version = 5
+            if version == 5:
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS routine_voice_triggers (
+                      routine_id INTEGER PRIMARY KEY
+                        REFERENCES routines(id) ON DELETE CASCADE,
+                      keywords_json TEXT NOT NULL,
+                      response_text TEXT NOT NULL DEFAULT '',
+                      created_at TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    CREATE TABLE IF NOT EXISTS metadata (
+                      key TEXT PRIMARY KEY,
+                      value TEXT NOT NULL
+                    );
+                    PRAGMA user_version = 6;
+                    """
+                )
                 connection.commit()
 
     def is_empty(self) -> bool:
@@ -792,7 +825,11 @@ class RobotDatabase:
     def list_routines(self) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute(
-                "SELECT name, spec_json, created_at, updated_at FROM routines ORDER BY name"
+                """SELECT r.name, r.spec_json, r.created_at, r.updated_at,
+                          t.keywords_json, t.response_text
+                     FROM routines r
+                     LEFT JOIN routine_voice_triggers t ON t.routine_id = r.id
+                    ORDER BY r.name"""
             ).fetchall()
         return [
             {
@@ -800,6 +837,32 @@ class RobotDatabase:
                 "spec": json.loads(row["spec_json"]),
                 "created_at": row["created_at"],
                 "updated_at": row["updated_at"],
+                "voice_trigger": {
+                    "keywords": (
+                        json.loads(row["keywords_json"])
+                        if row["keywords_json"] is not None
+                        else []
+                    ),
+                    "response_text": row["response_text"] or "",
+                },
+            }
+            for row in rows
+        ]
+
+    def list_routine_voice_triggers(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute(
+                """SELECT r.name AS routine_name,
+                          t.keywords_json, t.response_text
+                     FROM routine_voice_triggers t
+                     JOIN routines r ON r.id = t.routine_id
+                    ORDER BY r.name"""
+            ).fetchall()
+        return [
+            {
+                "routine_name": row["routine_name"],
+                "keywords": json.loads(row["keywords_json"]),
+                "response_text": row["response_text"],
             }
             for row in rows
         ]
@@ -829,6 +892,151 @@ class RobotDatabase:
                 (name, encoded, now, now),
             )
             connection.commit()
+
+    def save_routine_configuration(
+        self,
+        name: str,
+        spec: dict[str, Any],
+        voice_trigger: Any,
+    ) -> None:
+        name = validate_name(name, "routine")
+        validate_routine(spec)
+        trigger = normalize_routine_voice_trigger(voice_trigger)
+        encoded = json.dumps(spec, ensure_ascii=False, separators=(",", ":"))
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            self._validate_gripper_action_refs(spec, connection)
+            connection.execute(
+                """INSERT INTO routines(name, spec_json, created_at, updated_at)
+                   VALUES(?, ?, ?, ?)
+                   ON CONFLICT(name) DO UPDATE SET
+                     spec_json=excluded.spec_json, updated_at=excluded.updated_at""",
+                (name, encoded, now, now),
+            )
+            routine_id = self._routine_id(connection, name)
+            self._validate_voice_keyword_conflicts(
+                connection,
+                routine_id,
+                trigger["keywords"],
+            )
+            self._upsert_routine_voice_trigger(
+                connection,
+                routine_id,
+                trigger,
+                now,
+            )
+            connection.commit()
+
+    def import_legacy_routine_voice_triggers(self, entries: Any) -> int:
+        if not isinstance(entries, list):
+            raise ValueError("routine_keyword_actions 应为列表")
+        imported = 0
+        missing_routine = False
+        now = utc_now()
+        with self.connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            if connection.execute(
+                "SELECT 1 FROM metadata WHERE key = ?",
+                (ROUTINE_VOICE_IMPORT_KEY,),
+            ).fetchone():
+                connection.commit()
+                return 0
+            for entry in entries:
+                if not isinstance(entry, dict):
+                    continue
+                routine_name = str(entry.get("routine_name", "")).strip()
+                if not routine_name:
+                    continue
+                routine_id = self._routine_id_if_exists(
+                    connection, routine_name
+                )
+                if routine_id is None:
+                    missing_routine = True
+                    continue
+                if connection.execute(
+                    """SELECT 1 FROM routine_voice_triggers
+                        WHERE routine_id = ?""",
+                    (routine_id,),
+                ).fetchone():
+                    continue
+                trigger = normalize_routine_voice_trigger(entry)
+                self._validate_voice_keyword_conflicts(
+                    connection,
+                    routine_id,
+                    trigger["keywords"],
+                )
+                self._upsert_routine_voice_trigger(
+                    connection,
+                    routine_id,
+                    trigger,
+                    now,
+                )
+                imported += 1
+            if not missing_routine:
+                connection.execute(
+                    "INSERT INTO metadata(key, value) VALUES(?, ?)",
+                    (ROUTINE_VOICE_IMPORT_KEY, now),
+                )
+            connection.commit()
+        return imported
+
+    @staticmethod
+    def _validate_voice_keyword_conflicts(
+        connection: sqlite3.Connection,
+        routine_id: int,
+        keywords: list[str],
+    ) -> None:
+        requested = set(keywords)
+        if not requested:
+            return
+        rows = connection.execute(
+            """SELECT r.name, t.keywords_json
+                 FROM routine_voice_triggers t
+                 JOIN routines r ON r.id = t.routine_id
+                WHERE t.routine_id != ?""",
+            (routine_id,),
+        ).fetchall()
+        for row in rows:
+            duplicate = requested.intersection(
+                json.loads(row["keywords_json"])
+            )
+            if duplicate:
+                keyword = sorted(duplicate)[0]
+                owner = row["name"]
+                raise ValueError(
+                    f"关键词“{keyword}”已绑定到 routine“{owner}”"
+                )
+
+    @staticmethod
+    def _upsert_routine_voice_trigger(
+        connection: sqlite3.Connection,
+        routine_id: int,
+        trigger: dict[str, Any],
+        now: str,
+    ) -> None:
+        keywords_json = json.dumps(
+            trigger["keywords"],
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        connection.execute(
+            """INSERT INTO routine_voice_triggers(
+                   routine_id, keywords_json, response_text,
+                   created_at, updated_at)
+               VALUES(?, ?, ?, ?, ?)
+               ON CONFLICT(routine_id) DO UPDATE SET
+                 keywords_json=excluded.keywords_json,
+                 response_text=excluded.response_text,
+                 updated_at=excluded.updated_at""",
+            (
+                routine_id,
+                keywords_json,
+                trigger["response_text"],
+                now,
+                now,
+            ),
+        )
 
     def _validate_gripper_action_refs(
         self, spec: Any, connection: sqlite3.Connection | None = None
@@ -1015,12 +1223,53 @@ class RobotDatabase:
             raise KeyError(f"routine 不存在: {routine}")
         return int(row["id"])
 
+    @staticmethod
+    def _routine_id_if_exists(
+        connection: sqlite3.Connection,
+        routine: str,
+    ) -> int | None:
+        row = connection.execute(
+            "SELECT id FROM routines WHERE name = ?", (routine,)
+        ).fetchone()
+        return int(row["id"]) if row is not None else None
+
 
 def validate_name(value: str, label: str) -> str:
     value = str(value).strip()
     if not value or len(value) > 80 or any(char in value for char in "/\\\0"):
         raise ValueError(f"{label}名称无效")
     return value
+
+
+def normalize_routine_voice_trigger(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("voice_trigger 必须是 object")
+    keywords_value = value.get("keywords", [])
+    if isinstance(keywords_value, str):
+        keywords_value = [keywords_value]
+    if not isinstance(keywords_value, list):
+        raise ValueError("voice_trigger.keywords 必须是字符串列表")
+
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for raw_keyword in keywords_value:
+        if not isinstance(raw_keyword, str):
+            raise ValueError("voice_trigger.keywords 必须是字符串列表")
+        keyword = raw_keyword.strip()
+        if not keyword:
+            continue
+        if len(keyword) > 80 or "\0" in keyword:
+            raise ValueError("单个语音关键词不能超过 80 个字符")
+        if keyword not in seen:
+            seen.add(keyword)
+            keywords.append(keyword)
+    if len(keywords) > 20:
+        raise ValueError("每个 routine 最多配置 20 个语音关键词")
+
+    response_text = str(value.get("response_text", "")).strip()
+    if len(response_text) > 500 or "\0" in response_text:
+        raise ValueError("成功播报不能超过 500 个字符")
+    return {"keywords": keywords, "response_text": response_text}
 
 
 def _rename_action_group_refs(spec: Any, name: str, new_name: str) -> bool:

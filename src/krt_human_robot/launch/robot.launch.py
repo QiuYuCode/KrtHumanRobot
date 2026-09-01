@@ -76,6 +76,7 @@ def _launch_setup(context, *args, **kwargs):
         output="screen",
         additional_env={
             "KRT_HUMAN_ROBOT_CONFIG": config_file,
+            "KRT_ROBOT_DB": robot_db,
             "KRT_HUMAN_ROBOT_TICK_INTERVAL_MS": tick_interval_ms,
             "KRT_HUMAN_ROBOT_ENABLE_MONITOR": enable_monitor,
             "KRT_HUMAN_ROBOT_SNAPSHOT_PERIOD_S": snapshot_period_s,
@@ -184,8 +185,9 @@ def _launch_setup(context, *args, **kwargs):
             "auto_enable": LaunchConfiguration("arm_auto_enable").perform(context),
             "speed_percent": LaunchConfiguration("arm_speed_percent").perform(context),
         }
+        arm_actions = []
         for side in ("left", "right"):
-            actions.append(IncludeLaunchDescription(
+            arm_actions.append(IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(arm_launch_path),
                 launch_arguments={
                     **common_args,
@@ -193,6 +195,8 @@ def _launch_setup(context, *args, **kwargs):
                     "can_port": LaunchConfiguration(f"{side}_arm_can_port").perform(context),
                 }.items(),
             ))
+        actions.append(TimerAction(
+            period=LaunchConfiguration("arm_start_delay_s"), actions=arm_actions))
 
     if enable_web_console:
         actions.append(IncludeLaunchDescription(
@@ -250,6 +254,7 @@ def generate_launch_description() -> LaunchDescription:
         DeclareLaunchArgument("right_arm_can_port", default_value="can_right"),
         DeclareLaunchArgument("arm_type", default_value="nero"),
         DeclareLaunchArgument("arm_effector_type", default_value="none"),
+        DeclareLaunchArgument("arm_start_delay_s", default_value="15.0"),
         DeclareLaunchArgument("arm_auto_enable", default_value="true"),
         DeclareLaunchArgument("arm_speed_percent", default_value="30"),
         DeclareLaunchArgument("robot_db", default_value="~/maps/krt_robot.db"),

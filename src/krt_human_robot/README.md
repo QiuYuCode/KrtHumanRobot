@@ -83,6 +83,21 @@ RViz 开启；结束建图后，`map.yaml`、`map.pgm`、`cloud.pcd` 和元数�
 ros2 launch ranger_nav navigation.launch.py map:=$HOME/maps/map.yaml
 ```
 
+## Web 语音触发动作编排
+
+“动作编排”页面的 Routine 编辑弹窗支持配置多个语音触发关键词和执行成功播报。
+关键词可按行填写，也可使用中文或英文逗号分隔；全部留空表示关闭该 Routine 的
+语音触发。保存后从下一轮语音识别开始生效，无需重启核心节点。
+
+语音触发设置与 Routine 一起保存在 `KRT_ROBOT_DB` 指向的 SQLite 数据库中。
+`robot.launch.py` 会将同一数据库路径传给核心节点、Web 控制台和编排服务；分别
+启动这些进程时也必须确保 `KRT_ROBOT_DB`/`robot_db` 指向同一个文件。
+
+旧版 `routine_keyword_actions` 仅在数据库升级后首次启动时导入一次，之后数据库
+为唯一运行时来源。自定义 Routine 关键词优先于普通意图和 LLM；匹配采用包含
+关系并优先最长关键词。同一个完整关键词不能绑定多个 Routine，同时命中多个
+同等长度的 Routine 时不会执行动作，而是提示用户说得更明确。
+
 ## 验证
 
 ```bash

@@ -15,10 +15,25 @@ from rclpy.node import Node
 from rclpy.parameter import Parameter
 from voice_interfaces.action import PlayAudio
 from voice_interfaces.srv import DescribeScene, SynthesizeSpeech
+from krt_task.robot_db import RobotDatabase
 
 from krt_human_robot.tree_factory import create_tree
 from krt_human_robot.config import load_config
 from krt_human_robot.behaviors.core.actions.vision import execute_describe_scene
+
+
+def create_routine_database(config) -> RobotDatabase:
+    navigation_config = getattr(config, "adapters", {}).get("navigation", {})
+    database_path = os.environ.get("KRT_ROBOT_DB", "").strip()
+    if not database_path:
+        database_path = str(
+            navigation_config.get("robot_db", "~/maps/krt_robot.db")
+        )
+    database = RobotDatabase(database_path)
+    database.import_legacy_routine_voice_triggers(
+        getattr(config, "routine_keyword_actions", []) or []
+    )
+    return database
 
 
 class KrtHumanRobotNode(Node):
@@ -85,6 +100,7 @@ class KrtHumanRobotNode(Node):
 
         self._config = load_config(config_path) if config_path else load_config()
         self._config.enable_monitor = monitor_enabled
+        self._routine_database = create_routine_database(self._config)
 
         self._tts_client = self.create_client(
             SynthesizeSpeech, "/voice/tts/synthesize"
@@ -94,7 +110,10 @@ class KrtHumanRobotNode(Node):
             "/krt_human_robot/vision/describe_scene",
             self._handle_describe_scene,
         )
-        root = create_tree(self._config)
+        root = create_tree(
+            self._config,
+            routine_database=self._routine_database,
+        )
         self._tree = BehaviourTree(root, unicode_tree_debug=False)
         self._tree.setup(node=self, timeout=30.0)
         self.set_parameters([

@@ -216,7 +216,26 @@ test -f ~/.config/krt/jetson.env || \
 systemctl --user daemon-reload
 ```
 
-检查私有环境文件中的路径和密钥后启用：
+检查私有环境文件中的路径和密钥后启用。x86 的
+`KRT_DDS_BIND_ADDRESS` 必须与 `deploy/cyclonedds/x86.xml` 的
+`NetworkInterface` 地址一致；两个服务默认最多等待 90 秒设备就绪，
+可通过 `KRT_STARTUP_TIMEOUT_S` 调整。
+
+`network-online.target` 对用户级服务不保证网卡 IP 或 USB 设备已经可用。因此
+`krt-x86.service` 会先确认 DDS 绑定 IP 和 NetworkManager 的 `CONNECTED_GLOBAL`
+状态；如设置 `KRT_CAN_REQUIRED_CHANNELS`，还会检查每条总线是否为 `ERROR-ACTIVE`
+且已收到报文。默认留空，避免单侧机械臂故障阻塞语音等无关组件。`krt-jetson.service`
+会先确认两路手部相机别名和 D435 可由
+`rs-enumerate-devices -s` 枚举。前置检查超时会退出非零，并由 systemd 每 5 秒
+自动重试，无需人工重启服务。
+
+更新 unit 或脚本后先重载用户服务：
+
+```bash
+systemctl --user daemon-reload
+```
+
+随后启用：
 
 ```bash
 # x86

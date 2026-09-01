@@ -395,6 +395,8 @@ class RobotConfig:
     ])
 
     # --- 命名流程 ---
+    # routine_keyword_actions 仅用于数据库首次升级时
+    # 的兼容导入。
     routine_action: str = "/krt_task/run_routine"
     routine_action_timeout_s: float = 120.0
     routine_keyword_actions: list[dict[str, Any]] = field(default_factory=lambda: [

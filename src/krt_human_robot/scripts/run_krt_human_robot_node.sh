@@ -42,4 +42,4 @@ if [[ ! -d "$UV_PKG_DIR/.venv" ]]; then
 fi
 
 cd "$UV_PKG_DIR"
-exec uv run python -m "${KRT_HUMAN_ROBOT_MODULE:-krt_human_robot.robot_node}" "$@"
+exec uv run --no-sync python -m "${KRT_HUMAN_ROBOT_MODULE:-krt_human_robot.robot_node}" "$@"
