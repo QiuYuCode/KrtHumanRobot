@@ -1,0 +1,13 @@
+[Unit]
+Description=Start Robot 5GHz Wi-Fi hotspot
+After=NetworkManager.service
+Wants=NetworkManager.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/start-robot5g-hotspot.sh
+ExecStop=/usr/bin/nmcli con down Robot5G
+
+[Install]
+WantedBy=multi-user.target

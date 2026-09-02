@@ -98,12 +98,37 @@ def test_console_has_map_catalog_and_map_scoped_waypoints():
 def test_console_supports_offline_waypoint_initialization_for_3d_navigation():
     html = TEMPLATE.read_text(encoding="utf-8")
 
-    for element_id in ("mapCanvas", "mapWaypointName", "initialWaypoint"):
+    for element_id in ("mapCanvas", "initialWaypointMenu", "initialWaypointSummary"):
         assert f'id="{element_id}"' in html
     assert "/api/waypoints/map-position" in html
     assert "initial_waypoint" in html
     assert "pointerdown" in html
     assert "rviz" not in html.lower() or "RViz" in html
+
+
+def test_console_prompts_for_map_waypoint_name_and_allows_menu_deletion():
+    html = TEMPLATE.read_text(encoding="utf-8")
+
+    for element_id in (
+        "mapWaypointSaveModal",
+        "mapWaypointModalName",
+        "initialWaypointMenu",
+    ):
+        assert f'id="{element_id}"' in html
+    assert "data-delete-map-waypoint" in html
+    assert "pendingMapWaypoint" in html
+
+
+def test_console_draws_compact_circle_and_open_arrow_waypoints():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    start = html.index("const drawWaypoint")
+    drawing = html[start:html.index("mapWaypoints.filter", start)]
+
+    assert "ctx.arc(" in drawing
+    assert "const arrowShaftLength = 8" in drawing
+    assert "const arrowWingLength = 3" in drawing
+    assert "ctx.closePath()" not in drawing
+    assert "ctx.fill()" not in drawing
 
 
 def test_console_keeps_map_preview_proportional_and_offers_large_view():

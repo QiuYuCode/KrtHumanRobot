@@ -306,6 +306,56 @@
         border-top: 1px solid var(--line);
         padding-top: 16px;
       }
+      .waypoint-picker {
+        position: relative;
+      }
+      .waypoint-picker summary {
+        min-height: 40px;
+        border: 1px solid #aeb1b7;
+        border-radius: 4px;
+        padding: 8px 12px;
+        background: #fff;
+        cursor: pointer;
+        list-style: none;
+      }
+      .waypoint-picker summary::-webkit-details-marker {
+        display: none;
+      }
+      .waypoint-picker-menu {
+        position: absolute;
+        z-index: 2;
+        width: 100%;
+        max-height: 220px;
+        overflow-y: auto;
+        border: 1px solid var(--line);
+        border-radius: 4px;
+        background: #fff;
+      }
+      .waypoint-picker-row {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        padding: 7px 10px;
+      }
+      .waypoint-picker-row:hover {
+        background: #f7f7f8;
+      }
+      .waypoint-picker-select {
+        flex: 1;
+        min-width: 0;
+        border: 0;
+        border-radius: 0;
+        padding: 0;
+        text-align: left;
+        background: transparent;
+      }
+      .waypoint-picker-delete {
+        min-height: 28px;
+        width: 28px;
+        padding: 0;
+        border-radius: 50%;
+        color: #b3261e;
+      }
       .map-picker canvas {
         display: block;
         max-width: 100%;
@@ -779,7 +829,7 @@
               </div>
               <div class="field">
                 <label>3D 定位初始点</label
-                ><select id="initialWaypoint"><option value="">请先在地图上创建点位</option></select>
+                ><details id="initialWaypointPicker" class="waypoint-picker"><summary id="initialWaypointSummary">请先在地图上创建点位</summary><div id="initialWaypointMenu" class="waypoint-picker-menu"></div></details>
               </div>
               <div class="actions">
                 <button id="startNavigation" class="primary">启动导航</button
@@ -787,8 +837,7 @@
               </div>
               <div id="mapRuntimeStatus" class="map-status">空闲</div>
               <div class="map-picker">
-                <label for="mapWaypointName">离线地图点位（拖拽箭头设置朝向）</label>
-                <input id="mapWaypointName" maxlength="80" placeholder="例如：入口" />
+                <label>离线地图点位（拖拽箭头设置朝向）</label>
                 <button id="expandMapPreview" type="button">放大地图</button>
                 <div class="map-preview-inline"><canvas id="mapCanvas" aria-label="当前地图点位编辑区"></canvas></div>
                 <p class="muted">在地图上按住并拖拽，松开后保存点位。选择点位后可作为 3D 定位初始位姿。</p>
@@ -1113,6 +1162,15 @@
         </div>
       </div>
     </div>
+    <div id="mapWaypointSaveModal" class="modal fade editor-modal" tabindex="-1" role="dialog" aria-labelledby="mapWaypointSaveModalTitle" aria-hidden="true">
+      <div class="modal-dialog" role="document">
+        <div class="modal-content">
+          <div class="modal-header"><h2 id="mapWaypointSaveModalTitle" class="modal-title h4">保存地图点位</h2><button type="button" class="close" data-dismiss="modal" aria-label="关闭"><span aria-hidden="true">&times;</span></button></div>
+          <div class="modal-body"><div class="field"><label for="mapWaypointModalName">点位名称</label><input id="mapWaypointModalName" maxlength="80" placeholder="例如：入口" /></div></div>
+          <div class="modal-footer"><button type="button" data-dismiss="modal">取消</button><button id="saveMapWaypoint" type="button" class="primary">保存点位</button></div>
+        </div>
+      </div>
+    </div>
     <div id="login" class="auth-modal">
       <form id="loginForm">
         <h2 id="loginTitle">登录机器人控制台</h2>
@@ -1168,7 +1226,9 @@
         robotSystems = null,
         robotSystemPolling = false,
         mapPreview = null,
-        mapWaypoints = [];
+        mapWaypoints = [],
+        initialWaypointName = "",
+        pendingMapWaypoint = null;
       const TELEMETRY_WINDOW_MS = 30000;
       const $ = (id) => document.getElementById(id);
       const esc = (s) =>
@@ -1425,7 +1485,7 @@
             await api(`/api/maps/${mapId}/select`, { method: "POST" });
             await loadMaps();
           }
-          const initialWaypoint = $("initialWaypoint").value;
+          const initialWaypoint = initialWaypointName;
           if ($("navigationMode").value === "3dloc" && !initialWaypoint)
             return msg("请选择地图点位作为 3D 定位初始位姿");
           const result = await api("/api/navigation/start", {
@@ -1477,12 +1537,7 @@
             : "/api/waypoints";
         const rows = await api(path);
         mapWaypoints = rows;
-        htmlTarget("initialWaypoint").content =
-          '<option value="">请选择初始点位</option>' +
-          rows
-            .filter((waypoint) => waypoint.frame_id === "map")
-            .map((waypoint) => `<option value="${esc(waypoint.name)}">${esc(waypoint.name)} (${waypoint.x.toFixed(2)}, ${waypoint.y.toFixed(2)})</option>`)
-            .join("");
+        renderInitialWaypointPicker();
         redrawMapPreviews();
         htmlTarget("waypointRoutine").content =
           '<option value="">不绑定动作</option>' +
@@ -1523,6 +1578,40 @@
               })
               .then(loadWaypoints)
                 .catch((e) => msg(e.message))),
+        );
+      }
+      function renderInitialWaypointPicker() {
+        const points = mapWaypoints.filter((waypoint) => waypoint.frame_id === "map");
+        if (!points.some((waypoint) => waypoint.name === initialWaypointName))
+          initialWaypointName = "";
+        $("initialWaypointSummary").textContent = initialWaypointName
+          ? points.find((waypoint) => waypoint.name === initialWaypointName).name
+          : "请选择初始点位";
+        htmlTarget("initialWaypointMenu").content = points.length
+          ? points.map((waypoint) => `<div class="waypoint-picker-row"><button class="waypoint-picker-select" data-select-map-waypoint="${esc(waypoint.name)}">${esc(waypoint.name)} (${waypoint.x.toFixed(2)}, ${waypoint.y.toFixed(2)})</button><button class="waypoint-picker-delete" data-delete-map-waypoint="${esc(waypoint.name)}" aria-label="删除 ${esc(waypoint.name)}">×</button></div>`).join("")
+          : '<div class="waypoint-picker-row muted">暂无地图点位</div>';
+        document.querySelectorAll("[data-select-map-waypoint]").forEach(
+          (button) => (button.onclick = () => {
+            initialWaypointName = button.dataset.selectMapWaypoint;
+            $("initialWaypointPicker").open = false;
+            renderInitialWaypointPicker();
+          }),
+        );
+        document.querySelectorAll("[data-delete-map-waypoint]").forEach(
+          (button) => (button.onclick = async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const name = button.dataset.deleteMapWaypoint;
+            if (!confirm(`删除点位“${name}”？`)) return;
+            try {
+              await api(`/api/waypoints/${encodeURIComponent(name)}`, { method: "DELETE" });
+              if (initialWaypointName === name) initialWaypointName = "";
+              await loadMaps();
+              msg("地图点位已删除");
+            } catch (error) {
+              msg(error.message);
+            }
+          }),
         );
       }
       function pgmToken(bytes, state) {
@@ -1631,14 +1720,32 @@
           const y = mapPreview.height - (waypoint.y - mapPreview.origin[1]) / mapPreview.resolution;
           const yaw = Math.atan2(2 * waypoint.qw * waypoint.qz, 1 - 2 * waypoint.qz * waypoint.qz);
           ctx.strokeStyle = color;
-          ctx.fillStyle = color;
-          ctx.lineWidth = Math.max(1, mapPreview.width / 250);
+          ctx.lineWidth = 1;
+          const pointRadius = 2;
+          const arrowShaftLength = 8;
+          const arrowWingLength = 3;
+          const directionX = Math.cos(yaw);
+          const directionY = -Math.sin(yaw);
+          const perpendicularX = -directionY;
+          const perpendicularY = directionX;
+          const tipX = x + directionX * arrowShaftLength;
+          const tipY = y + directionY * arrowShaftLength;
+          const wingBaseX = tipX - directionX * arrowWingLength;
+          const wingBaseY = tipY - directionY * arrowWingLength;
           ctx.beginPath();
-          ctx.arc(x, y, 5, 0, Math.PI * 2);
-          ctx.fill();
-          ctx.beginPath();
-          ctx.moveTo(x, y);
-          ctx.lineTo(x + Math.cos(yaw) * 18, y - Math.sin(yaw) * 18);
+          ctx.arc(x, y, pointRadius, 0, Math.PI * 2);
+          ctx.moveTo(x + directionX * pointRadius, y + directionY * pointRadius);
+          ctx.lineTo(tipX, tipY);
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(
+            wingBaseX + perpendicularX * arrowWingLength,
+            wingBaseY + perpendicularY * arrowWingLength,
+          );
+          ctx.moveTo(tipX, tipY);
+          ctx.lineTo(
+            wingBaseX - perpendicularX * arrowWingLength,
+            wingBaseY - perpendicularY * arrowWingLength,
+          );
           ctx.stroke();
         };
         mapWaypoints.filter((waypoint) => waypoint.frame_id === "map").forEach((waypoint) => drawWaypoint(waypoint, "#0347b8"));
@@ -1659,25 +1766,33 @@
           y: (event.clientY - rect.top) * canvas.height / rect.height,
         };
       }
-      async function saveMapWaypoint(start, end) {
-        const current = selectedMap(), name = $("mapWaypointName").value.trim();
+      function openMapWaypointSaveDialog(start, end) {
+        const current = selectedMap();
         if (!current) return msg("请先选择地图");
-        if (!name) return msg("请输入点位名称");
         const distance = Math.hypot(end.x - start.x, end.y - start.y);
         if (distance < 8) return msg("请拖拽箭头以设置点位朝向");
-        const waypoint = {
+        pendingMapWaypoint = {
           x: mapPreview.origin[0] + start.x * mapPreview.resolution,
           y: mapPreview.origin[1] + (mapPreview.height - start.y) * mapPreview.resolution,
           yaw: Math.atan2(start.y - end.y, end.x - start.x),
         };
+        $("mapWaypointModalName").value = "";
+        window.jQuery("#mapWaypointSaveModal").modal("show");
+      }
+      async function saveMapWaypoint() {
+        const current = selectedMap(), name = $("mapWaypointModalName").value.trim();
+        if (!current || !pendingMapWaypoint) return;
+        if (!name) return msg("请输入点位名称");
         try {
           await api("/api/waypoints/map-position", {
             method: "POST",
-            json: { map_id: current.id, name, ...waypoint },
+            json: { map_id: current.id, name, ...pendingMapWaypoint },
           });
-          $("mapWaypointName").value = "";
+          pendingMapWaypoint = null;
+          window.jQuery("#mapWaypointSaveModal").modal("hide");
           await loadMaps();
-          $("initialWaypoint").value = name;
+          initialWaypointName = name;
+          renderInitialWaypointPicker();
           msg("地图点位已保存");
         } catch (error) {
           msg(error.message);
@@ -2486,7 +2601,7 @@
           const start = mapDrag.start;
           mapDrag = null;
           if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
-          await saveMapWaypoint(start, mapCanvasPoint(event, canvas));
+          openMapWaypointSaveDialog(start, mapCanvasPoint(event, canvas));
         });
       }
       bindMapCanvas($("mapCanvas"));
@@ -2496,6 +2611,14 @@
         window.jQuery("#mapPreviewModal").modal("show");
       };
       window.jQuery("#mapPreviewModal").on("shown.bs.modal", redrawMapPreviews);
+      $("saveMapWaypoint").onclick = saveMapWaypoint;
+      window.jQuery("#mapWaypointSaveModal").on("hidden.bs.modal", () => {
+        pendingMapWaypoint = null;
+        if (mapPreview) {
+          mapPreview.draft = null;
+          redrawMapPreviews();
+        }
+      });
       $("newRoutine").onclick = () => {
         selected = null;
         $("routineName").disabled = false;
