@@ -76,6 +76,18 @@ RViz 开启；结束建图后，`map.yaml`、`map.pgm`、`cloud.pcd` 和元数�
 - 编辑保存会原子覆盖当前时间戳目录中的 `map.yaml`/`map.pgm`，不会修改
   `cloud.pcd`，也不会创建 revision。
 
+Web 启动 **3D Localization** 前，先在“加载地图”卡片中输入点位名称，并在
+PGM 预览上按住、拖拽出朝向箭头。该点位会绑定当前地图；从“3D 定位初始点”
+选择它后再启动导航。控制台将该点的 `x/y/yaw` 传给定位器，并在
+`map → odom → camera_init → body → base_footprint` 全链可用前保持启动失败。
+若报 TF 或定位超时，请检查 `/livox/lidar`、FAST-LIO 和底盘 CAN 反馈；不要开启
+`agx_bringup.pub_odom_tf`，否则会与 FAST-LIO/URDF 的 3D 定位 TF 链冲突。
+
+地图预览始终按 PGM 原始像素比例显示；“放大地图”只进行浏览器等比例缩放，
+不会修改 PGM 或点位坐标。Web 启动导航会在 x86 本机桌面打开 RViz。若控制台由
+systemd 用户服务运行，在 `~/.config/krt/x86.env` 设置 `KRT_RVIZ_DISPLAY=:0` 和
+`KRT_RVIZ_XAUTHORITY=/home/create/.Xauthority` 后重启服务；RViz 不会显示在远程浏览器中。
+
 编辑前必须先停止导航，建图或保存期间不能切换、编辑地图。当前不提供 Keepout
 编辑。原命令行入口保持兼容：
 

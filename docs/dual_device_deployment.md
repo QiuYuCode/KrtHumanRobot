@@ -221,6 +221,12 @@ systemctl --user daemon-reload
 `NetworkInterface` 地址一致；两个服务默认最多等待 90 秒设备就绪，
 可通过 `KRT_STARTUP_TIMEOUT_S` 调整。
 
+若要让 Web 启动导航时在 x86 本机桌面显示 RViz，在
+`~/.config/krt/x86.env` 设置图形会话变量，例如
+`KRT_RVIZ_DISPLAY=:0` 和 `KRT_RVIZ_XAUTHORITY=/home/create/.Xauthority`，
+然后执行 `systemctl --user daemon-reload && systemctl --user restart krt-x86`。
+这只适用于本机已登录的 X11 桌面；RViz 不会嵌入远程浏览器。
+
 `network-online.target` 对用户级服务不保证网卡 IP 或 USB 设备已经可用。因此
 `krt-x86.service` 会先确认 DDS 绑定 IP 和 NetworkManager 的 `CONNECTED_GLOBAL`
 状态；如设置 `KRT_CAN_REQUIRED_CHANNELS`，还会检查每条总线是否为 `ERROR-ACTIVE`

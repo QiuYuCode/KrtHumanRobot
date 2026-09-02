@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import signal
@@ -15,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from krt_task.robot_db import WaypointRecord
 
 try:
     from loguru import logger
@@ -181,6 +183,7 @@ class RangerNavAdapter:
         pcd_map_path: str | None = None,
         mode: str | None = None,
         *,
+        initial_pose: WaypointRecord | None = None,
         rviz: bool = True,
     ) -> NavigationResult:
         if not self._enabled():
@@ -220,6 +223,17 @@ class RangerNavAdapter:
                 return NavigationResult(False, f"未找到 3D PCD 地图：{pcd_map_path}。")
             launch_args.append(f"pcd_map_path:={pcd_map_path}")
         launch_args.append(f"rviz:={'true' if rviz else 'false'}")
+        if mode == "3dloc" and initial_pose is not None:
+            yaw = math.atan2(
+                2.0 * (initial_pose.qw * initial_pose.qz + initial_pose.qx * initial_pose.qy),
+                1.0 - 2.0 * (initial_pose.qy ** 2 + initial_pose.qz ** 2),
+            )
+            launch_args.extend([
+                "set_initial_pose:=true",
+                f"initial_pose_x:={initial_pose.x}",
+                f"initial_pose_y:={initial_pose.y}",
+                f"initial_pose_yaw:={yaw}",
+            ])
         if self._running(self._navigation_process):
             return NavigationResult(True, "导航已经启动。")
 
@@ -237,6 +251,11 @@ class RangerNavAdapter:
         logger.info(
             f"已启动导航 launch: mode={mode}, launch={launch_file}, pid={process.pid}"
         )
+        if mode == "3dloc" and initial_pose is not None:
+            ready = self._wait_for_navigation_ready(process)
+            if not ready.success:
+                self._stop_navigation()
+                return ready
         return NavigationResult(True, "已开始导航。")
 
     def mapping_running(self) -> bool:
@@ -554,6 +573,30 @@ class RangerNavAdapter:
             timeout=60,
             check=False,
         )
+
+    def _wait_for_navigation_ready(self, process: Any) -> NavigationResult:
+        timeout_s = self._config_float("navigation_ready_timeout_s", 30.0)
+        if timeout_s <= 0:
+            return NavigationResult(True, "导航就绪检查已跳过。")
+        attempts = max(1, math.ceil(timeout_s))
+        last_error = "导航 TF/话题尚未就绪。"
+        diagnostic_cmd = ["ros2", "run", self._package(), "nav_tf_diagnostics"]
+        for attempt in range(attempts):
+            if not self._running(process):
+                return NavigationResult(False, "导航 launch 在就绪前已退出。")
+            try:
+                completed = self._call_completed(diagnostic_cmd)
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                last_error = f"导航诊断执行失败：{exc}"
+            else:
+                if completed.returncode == 0:
+                    return NavigationResult(True, "导航 TF/话题已就绪。")
+                detail = (completed.stderr or completed.stdout or "").strip()
+                if detail:
+                    last_error = detail.splitlines()[-1]
+            if attempt < attempts - 1:
+                self._sleep(1.0)
+        return NavigationResult(False, f"导航启动超时：{last_error}")
 
     @staticmethod
     def _completed_to_result(

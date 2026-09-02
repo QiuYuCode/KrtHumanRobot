@@ -93,7 +93,32 @@ def test_console_has_map_catalog_and_map_scoped_waypoints():
         "/map-editor?map_id=",
     ):
         assert path in html
+
+
+def test_console_supports_offline_waypoint_initialization_for_3d_navigation():
+    html = TEMPLATE.read_text(encoding="utf-8")
+
+    for element_id in ("mapCanvas", "mapWaypointName", "initialWaypoint"):
+        assert f'id="{element_id}"' in html
+    assert "/api/waypoints/map-position" in html
+    assert "initial_waypoint" in html
+    assert "pointerdown" in html
     assert "rviz" not in html.lower() or "RViz" in html
+
+
+def test_console_keeps_map_preview_proportional_and_offers_large_view():
+    html = TEMPLATE.read_text(encoding="utf-8")
+
+    assert 'id="mapPreviewModal"' in html
+    assert 'id="mapCanvasModal"' in html
+    assert "fitMapCanvas" in html
+    assert "\n        width: 100%;" not in html[html.index(".map-picker canvas"):html.index("table {")]
+
+
+def test_console_map_metadata_parser_accepts_block_style_origin():
+    html = TEMPLATE.read_text(encoding="utf-8")
+
+    assert "originBlock" in html
 
 
 def test_local_map_editor_overwrites_selected_map_without_keepout():

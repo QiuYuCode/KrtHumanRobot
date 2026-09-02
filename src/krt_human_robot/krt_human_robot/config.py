@@ -551,6 +551,7 @@ class RobotConfig:
             "waypoint_routine_action": "/krt_task/run_routine",
             "waypoint_input_topic": "/input_at_waypoint/input",
             "default_waypoint_wait_ms": 200,
+            "navigation_ready_timeout_s": 30.0,
             "auto_convert_pcd": True,
             "mapping_stop_delay_s": 3.0,
         },

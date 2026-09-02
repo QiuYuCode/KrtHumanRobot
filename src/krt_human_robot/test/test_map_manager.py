@@ -56,9 +56,9 @@ class FakeAdapter:
         )
 
     def start_navigation(
-        self, map_yaml=None, pcd_map_path=None, mode=None, *, rviz=True
+        self, map_yaml=None, pcd_map_path=None, mode=None, *, initial_pose=None, rviz=True
     ):
-        self.navigation_calls.append((map_yaml, pcd_map_path, mode, rviz))
+        self.navigation_calls.append((map_yaml, pcd_map_path, mode, initial_pose, rviz))
         self.navigation = True
         return NavigationResult(True, "已开始导航。")
 
@@ -94,12 +94,19 @@ def test_navigation_uses_selected_map_paths(tmp_path):
     manager.finish_mapping()
     selected = database.get_selected_map()
     assert selected is not None
+    initial_pose = WaypointRecord(
+        "入口", "map", 1.2, -0.8, 0.0, 0.0, 0.0, 0.0, 1.0,
+        map_id=selected.id,
+    )
+    database.save_waypoint(initial_pose)
 
-    result = manager.start_navigation(selected.id, "3dloc", rviz=True)
+    result = manager.start_navigation(
+        selected.id, "3dloc", initial_waypoint="入口", rviz=True
+    )
 
     assert result.success is True
     assert adapter.navigation_calls == [
-        (selected.yaml_path, selected.pcd_path, "3dloc", True)
+        (selected.yaml_path, selected.pcd_path, "3dloc", initial_pose, True)
     ]
     assert manager.status()["navigation_map_id"] == selected.id
 

@@ -1,6 +1,9 @@
 from subprocess import CompletedProcess
 from types import SimpleNamespace
 
+import pytest
+from krt_task.robot_db import WaypointRecord
+
 from krt_human_robot.adapters.navigation import RangerNavAdapter
 
 
@@ -35,6 +38,7 @@ def config(tmp_path, **changes):
         "navigation_launch_3d": "navigation_3dloc.launch.py",
         "map_yaml": str(tmp_path / "default.yaml"),
         "pcd_map_path": str(tmp_path / "default.pcd"),
+        "navigation_ready_timeout_s": 0,
     }
     navigation.update(changes)
     return SimpleNamespace(adapters={"navigation": navigation})
@@ -125,3 +129,66 @@ def test_navigation_uses_explicit_map_paths_without_changing_cli_launch(tmp_path
         "ros2", "launch", "ranger_nav", "navigation_3dloc.launch.py",
         f"map:={yaml_path}", f"pcd_map_path:={pcd_path}", "rviz:=true",
     ]
+
+
+def test_3d_navigation_passes_selected_waypoint_and_waits_for_diagnostics(tmp_path):
+    yaml_path = tmp_path / "dated" / "map.yaml"
+    pcd_path = tmp_path / "dated" / "cloud.pcd"
+    yaml_path.parent.mkdir()
+    yaml_path.write_text("image: map.pgm\n", encoding="utf-8")
+    pcd_path.write_bytes(b"pcd")
+    launches = []
+    diagnostics = []
+    initial_pose = WaypointRecord(
+        "入口", "map", 1.5, -2.0, 0.0, 0.0, 0.0, 0.70710678, 0.70710678
+    )
+
+    def run(command, **_kwargs):
+        diagnostics.append(command)
+        return CompletedProcess(command, 0, "TF graph ready", "")
+
+    adapter = RangerNavAdapter(
+        config(tmp_path, navigation_ready_timeout_s=5),
+        popen=lambda command, **_kwargs: launches.append(command) or FakeProcess(),
+        run=run,
+        sleep=lambda _seconds: None,
+    )
+
+    result = adapter.start_navigation(
+        str(yaml_path), str(pcd_path), "3dloc", initial_pose=initial_pose, rviz=False
+    )
+
+    assert result.success is True
+    assert launches[0][-5:-1] == [
+        "rviz:=false",
+        "set_initial_pose:=true",
+        "initial_pose_x:=1.5",
+        "initial_pose_y:=-2.0",
+    ]
+    assert float(launches[0][-1].removeprefix("initial_pose_yaw:=")) == pytest.approx(1.5707963268)
+    assert diagnostics == [["ros2", "run", "ranger_nav", "nav_tf_diagnostics"]]
+
+
+def test_3d_navigation_stops_launch_when_diagnostics_timeout(tmp_path):
+    yaml_path = tmp_path / "dated" / "map.yaml"
+    pcd_path = tmp_path / "dated" / "cloud.pcd"
+    yaml_path.parent.mkdir()
+    yaml_path.write_text("image: map.pgm\n", encoding="utf-8")
+    pcd_path.write_bytes(b"pcd")
+    process = FakeProcess()
+    initial_pose = WaypointRecord("入口", "map", 0, 0, 0, 0, 0, 0, 1)
+
+    adapter = RangerNavAdapter(
+        config(tmp_path, navigation_ready_timeout_s=1),
+        popen=lambda *_args, **_kwargs: process,
+        run=lambda command, **_kwargs: CompletedProcess(command, 1, "", "missing TF odom -> base_footprint"),
+        sleep=lambda _seconds: None,
+    )
+
+    result = adapter.start_navigation(
+        str(yaml_path), str(pcd_path), "3dloc", initial_pose=initial_pose, rviz=False
+    )
+
+    assert result.success is False
+    assert "missing TF odom -> base_footprint" in result.message
+    assert process.returncode == 0

@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Any, Protocol
 
 import yaml
-from krt_task.robot_db import MapRecord, RobotDatabase
+
+from krt_task.robot_db import MapRecord, RobotDatabase, WaypointRecord
 
 from krt_human_robot.adapters.navigation import NavigationResult
 
@@ -35,6 +36,7 @@ class NavigationAdapter(Protocol):
         pcd_map_path: str | None = None,
         mode: str | None = None,
         *,
+        initial_pose: WaypointRecord | None = None,
         rviz: bool = True,
     ) -> NavigationResult: ...
 
@@ -161,7 +163,12 @@ class MapManager:
             self.database.delete_map(record.id)
 
     def start_navigation(
-        self, map_id: str | None = None, mode: str | None = None, *, rviz: bool = True
+        self,
+        map_id: str | None = None,
+        mode: str | None = None,
+        *,
+        initial_waypoint: str | None = None,
+        rviz: bool = True,
     ) -> NavigationResult:
         with self._lock:
             if self._mapping_map_id is not None or self._saving:
@@ -175,6 +182,11 @@ class MapManager:
                 return NavigationResult(False, "请先选择地图。")
             effective_mode = mode or self.adapter.default_navigation_mode()
             self._validate_map_record(record, require_pcd=effective_mode == "3dloc")
+            initial_pose: WaypointRecord | None = None
+            if effective_mode == "3dloc":
+                initial_pose = self._initial_waypoint(record.id, initial_waypoint)
+                if initial_pose is None:
+                    return NavigationResult(False, "请选择当前地图的点位作为 3D 定位初始位姿。")
             if self.adapter.navigation_running():
                 if self._navigation_map_id == record.id:
                     return NavigationResult(True, "当前地图的导航已经启动。")
@@ -185,6 +197,7 @@ class MapManager:
                 map_yaml=record.yaml_path,
                 pcd_map_path=record.pcd_path,
                 mode=mode,
+                initial_pose=initial_pose,
                 rviz=rviz,
             )
             if result.success:
@@ -194,6 +207,17 @@ class MapManager:
                 )
             self._last_error = result.message
             return result
+
+    def _initial_waypoint(
+        self, map_id: str, waypoint_name: str | None
+    ) -> WaypointRecord | None:
+        name = str(waypoint_name or "").strip()
+        if not name:
+            return None
+        for waypoint in self.database.list_waypoints(map_id):
+            if waypoint.name == name and waypoint.frame_id == "map":
+                return waypoint
+        return None
 
     def stop_navigation(self) -> NavigationResult:
         with self._lock:

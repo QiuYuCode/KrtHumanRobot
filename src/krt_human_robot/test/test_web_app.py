@@ -431,6 +431,7 @@ class FakeNavigationAdapter:
         self.calls = []
         self.mapping = False
         self.navigation = False
+        self.navigation_rviz = []
 
     def _result(self, name, data=None):
         self.calls.append(name)
@@ -471,8 +472,10 @@ class FakeNavigationAdapter:
         return self._result("save_mapping", paths)
 
     def start_navigation(
-        self, map_yaml=None, pcd_map_path=None, mode=None, *, rviz=True
+        self, map_yaml=None, pcd_map_path=None, mode=None, *, initial_pose=None, rviz=True
     ):
+        del map_yaml, pcd_map_path, mode, initial_pose
+        self.navigation_rviz.append(rviz)
         self.navigation = self.success
         return self._result("start_navigation")
 
@@ -511,11 +514,26 @@ def test_navigation_control_api_dispatches_all_commands(tmp_path):
     )
     maps = client.get("/api/maps", headers=headers).get_json()
     assert maps[0]["selected"] is True
+    assert client.post(
+        "/api/waypoints/map-position",
+        headers=headers,
+        json={
+            "map_id": maps[0]["id"],
+            "name": "入口",
+            "x": 0.0,
+            "y": 0.0,
+            "yaw": 0.0,
+        },
+    ).status_code == 200
     assert (
         client.post(
             "/api/navigation/start",
             headers=headers,
-            json={"map_id": maps[0]["id"], "mode": "3dloc"},
+            json={
+                "map_id": maps[0]["id"],
+                "mode": "3dloc",
+                "initial_waypoint": "入口",
+            },
         ).status_code
         == 200
     )
@@ -537,6 +555,7 @@ def test_navigation_control_api_dispatches_all_commands(tmp_path):
         "stop_cruise",
         "continue_waypoint_input",
     ]
+    assert adapter.navigation_rviz == [True]
 
 
 def test_navigation_control_api_requires_selected_map(tmp_path):
@@ -548,6 +567,37 @@ def test_navigation_control_api_requires_selected_map(tmp_path):
 
     assert response.status_code == 400
     assert response.get_json()["error"] == "请先选择地图"
+
+
+def test_offline_map_waypoint_is_saved_with_drag_heading(tmp_path):
+    app, client, headers = authenticated_app(tmp_path)
+    adapter = FakeNavigationAdapter(tmp_path / "maps")
+    manager = app.extensions["map_manager"]
+    manager.adapter = adapter
+    manager.map_root = (tmp_path / "maps").resolve()
+    assert client.post(
+        "/api/navigation/mapping/start",
+        headers=headers,
+        json={"name": "大厅", "backend": "fast_lio"},
+    ).status_code == 200
+    assert client.post(
+        "/api/navigation/mapping/finish", headers=headers, json={}
+    ).status_code == 200
+    map_id = client.get("/api/maps", headers=headers).get_json()[0]["id"]
+
+    response = client.post(
+        "/api/waypoints/map-position",
+        headers=headers,
+        json={"map_id": map_id, "name": "入口", "x": 1.5, "y": -2.0, "yaw": 1.5707963268},
+    )
+
+    assert response.status_code == 200
+    waypoint = client.get(f"/api/waypoints?map_id={map_id}", headers=headers).get_json()[0]
+    assert waypoint["frame_id"] == "map"
+    assert waypoint["x"] == 1.5
+    assert waypoint["y"] == -2.0
+    assert waypoint["qz"] == pytest.approx(0.70710678)
+    assert waypoint["qw"] == pytest.approx(0.70710678)
 
 
 def test_map_editor_loads_and_overwrites_selected_map(tmp_path):

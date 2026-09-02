@@ -50,8 +50,11 @@ colcon test-result --verbose
 单个 Python 测试可直接运行：
 
 ```bash
-pytest -q src/<package_name>/test/test_<name>.py
+src/voice_assistant/.venv/bin/python -m pytest -q src/<package_name>/test/test_<name>.py
 ```
+
+仓库的 Python 测试环境位于 `src/voice_assistant/.venv`，由 uv 创建且已就绪；
+不要依赖系统全局的 `pytest`，测试时优先使用该虚拟环境。
 
 仅运行 ament lint：
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import atexit
 import argparse
 import copy
+import math
 import os
 import secrets
 import threading
@@ -25,7 +26,7 @@ from hands_control_interfaces.srv import (
     GetNormalPressure,
     GetTangentPressure,
 )
-from krt_task.robot_db import RobotDatabase, validate_gripper_targets
+from krt_task.robot_db import RobotDatabase, WaypointRecord, validate_gripper_targets
 from krt_task_interfaces.action import RunRoutine
 from rcl_interfaces.msg import Parameter, ParameterType, ParameterValue
 from rcl_interfaces.srv import GetParameters, SetParameters
@@ -848,6 +849,48 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             data={"map_id": selected_map.id},
         )
 
+    @app.post("/api/waypoints/map-position")
+    @protected(auth)
+    def create_map_waypoint():
+        payload = request.get_json() or {}
+        selected_map = map_manager.selected_map(required=True)
+        map_id = str(payload.get("map_id", "")).strip()
+        if selected_map is None or map_id != selected_map.id:
+            raise ValueError("点位必须属于当前选择的地图")
+        name = str(payload.get("name", "")).strip()
+        if not name:
+            raise ValueError("请输入点位名称")
+        try:
+            x = float(payload.get("x"))
+            y = float(payload.get("y"))
+            yaw = float(payload.get("yaw"))
+        except (TypeError, ValueError) as exc:
+            raise ValueError("点位坐标或朝向无效") from exc
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            raise ValueError("点位坐标或朝向无效")
+        waypoint = WaypointRecord(
+            name=name,
+            frame_id="map",
+            x=x,
+            y=y,
+            z=0.0,
+            qx=0.0,
+            qy=0.0,
+            qz=math.sin(yaw * 0.5),
+            qw=math.cos(yaw * 0.5),
+            routine=str(payload.get("routine", "")),
+            map_id=map_id,
+        )
+        database.save_waypoint(waypoint)
+        return audited(
+            auth,
+            "create_map_waypoint",
+            name,
+            True,
+            "已保存地图点位。",
+            data={"map_id": map_id},
+        )
+
     @app.patch("/api/waypoints/<name>")
     @protected(auth)
     def bind_waypoint(name: str):
@@ -1056,7 +1099,13 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         payload = request.get_json(silent=True) or {}
         map_id = str(payload.get("map_id", "")).strip() or None
         mode = str(payload.get("mode", "")).strip() or None
-        result = map_manager.start_navigation(map_id, mode, rviz=True)
+        initial_waypoint = str(payload.get("initial_waypoint", "")).strip() or None
+        result = map_manager.start_navigation(
+            map_id,
+            mode,
+            initial_waypoint=initial_waypoint,
+            rviz=True,
+        )
         return navigation_response("start_navigation", map_id or "selected", result)
 
     @app.post("/api/navigation/stop")

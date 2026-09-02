@@ -23,6 +23,13 @@ def test_x86_unit_omits_empty_optional_tls_arguments():
     assert '"$${args[@]}"' in source
 
 
+def test_x86_unit_forwards_optional_rviz_display_environment():
+    source = X86_UNIT.read_text(encoding="utf-8")
+
+    assert "KRT_RVIZ_DISPLAY" in source
+    assert "KRT_RVIZ_XAUTHORITY" in source
+
+
 def test_x86_readiness_accepts_the_configured_dds_bind_address(tmp_path):
     """A ready x86 starts only after its Cyclone DDS address is present."""
     fake_ip = tmp_path / "ip"

@@ -301,6 +301,40 @@
         color: var(--muted);
         font-size: 12px;
       }
+      .map-picker {
+        margin-top: 16px;
+        border-top: 1px solid var(--line);
+        padding-top: 16px;
+      }
+      .map-picker canvas {
+        display: block;
+        max-width: 100%;
+        max-height: 320px;
+        margin-top: 10px;
+        border: 1px solid var(--line);
+        background: #f7f7f8;
+        cursor: crosshair;
+        image-rendering: pixelated;
+      }
+      .map-preview-inline {
+        display: flex;
+        justify-content: center;
+        overflow: auto;
+      }
+      .map-preview-modal .modal-dialog {
+        max-width: min(92vw, 1400px);
+      }
+      .map-preview-modal .modal-body {
+        display: flex;
+        justify-content: center;
+        max-height: 78vh;
+        overflow: auto;
+      }
+      .map-preview-modal canvas {
+        display: block;
+        image-rendering: pixelated;
+        cursor: crosshair;
+      }
       table {
         width: 100%;
         border-collapse: separate;
@@ -743,11 +777,22 @@
                   <option value="amcl">2D AMCL</option>
                 </select>
               </div>
+              <div class="field">
+                <label>3D 定位初始点</label
+                ><select id="initialWaypoint"><option value="">请先在地图上创建点位</option></select>
+              </div>
               <div class="actions">
                 <button id="startNavigation" class="primary">启动导航</button
                 ><button id="stopNavigation" class="danger">关闭导航</button>
               </div>
               <div id="mapRuntimeStatus" class="map-status">空闲</div>
+              <div class="map-picker">
+                <label for="mapWaypointName">离线地图点位（拖拽箭头设置朝向）</label>
+                <input id="mapWaypointName" maxlength="80" placeholder="例如：入口" />
+                <button id="expandMapPreview" type="button">放大地图</button>
+                <div class="map-preview-inline"><canvas id="mapCanvas" aria-label="当前地图点位编辑区"></canvas></div>
+                <p class="muted">在地图上按住并拖拽，松开后保存点位。选择点位后可作为 3D 定位初始位姿。</p>
+              </div>
             </div>
           </div>
           <div class="panel" style="margin-top: 20px">
@@ -1060,6 +1105,14 @@
         </div>
       </div>
     </div>
+    <div id="mapPreviewModal" class="modal fade editor-modal map-preview-modal" tabindex="-1" role="dialog" aria-labelledby="mapPreviewModalTitle" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-scrollable" role="document">
+        <div class="modal-content">
+          <div class="modal-header"><h2 id="mapPreviewModalTitle" class="modal-title h4">地图预览</h2><button type="button" class="close" data-dismiss="modal" aria-label="关闭"><span aria-hidden="true">&times;</span></button></div>
+          <div class="modal-body"><canvas id="mapCanvasModal" aria-label="放大地图点位编辑区"></canvas></div>
+        </div>
+      </div>
+    </div>
     <div id="login" class="auth-modal">
       <form id="loginForm">
         <h2 id="loginTitle">登录机器人控制台</h2>
@@ -1113,7 +1166,9 @@
         gripperSystemState = null,
         gripperSystemPolling = false,
         robotSystems = null,
-        robotSystemPolling = false;
+        robotSystemPolling = false,
+        mapPreview = null,
+        mapWaypoints = [];
       const TELEMETRY_WINDOW_MS = 30000;
       const $ = (id) => document.getElementById(id);
       const esc = (s) =>
@@ -1293,6 +1348,7 @@
           loadGripperSystem(),
           loadRobotSystems(),
         ]);
+        await loadMapPreview();
       }
       function selectedMap() {
         return maps.find((map) => map.selected) || null;
@@ -1352,6 +1408,7 @@
         maps = await api("/api/maps");
         renderMaps();
         await loadWaypoints();
+        await loadMapPreview();
       }
       async function selectMapById(mapId) {
         try {
@@ -1364,9 +1421,20 @@
       }
       async function startNavigationForMap(mapId) {
         try {
+          if (selectedMap()?.id !== mapId) {
+            await api(`/api/maps/${mapId}/select`, { method: "POST" });
+            await loadMaps();
+          }
+          const initialWaypoint = $("initialWaypoint").value;
+          if ($("navigationMode").value === "3dloc" && !initialWaypoint)
+            return msg("请选择地图点位作为 3D 定位初始位姿");
           const result = await api("/api/navigation/start", {
             method: "POST",
-            json: { map_id: mapId, mode: $("navigationMode").value },
+            json: {
+              map_id: mapId,
+              mode: $("navigationMode").value,
+              initial_waypoint: initialWaypoint,
+            },
           });
           msg(result.message);
           await loadMaps();
@@ -1408,6 +1476,14 @@
             ? `/api/waypoints?map_id=${encodeURIComponent(current.id)}`
             : "/api/waypoints";
         const rows = await api(path);
+        mapWaypoints = rows;
+        htmlTarget("initialWaypoint").content =
+          '<option value="">请选择初始点位</option>' +
+          rows
+            .filter((waypoint) => waypoint.frame_id === "map")
+            .map((waypoint) => `<option value="${esc(waypoint.name)}">${esc(waypoint.name)} (${waypoint.x.toFixed(2)}, ${waypoint.y.toFixed(2)})</option>`)
+            .join("");
+        redrawMapPreviews();
         htmlTarget("waypointRoutine").content =
           '<option value="">不绑定动作</option>' +
           routines.map((r) => `<option>${esc(r.name)}</option>`).join("");
@@ -1445,9 +1521,167 @@
               api(`/api/waypoints/${encodeURIComponent(x.dataset.delwp)}`, {
                 method: "DELETE",
               })
-                .then(loadWaypoints)
+              .then(loadWaypoints)
                 .catch((e) => msg(e.message))),
         );
+      }
+      function pgmToken(bytes, state) {
+        while (state.index < bytes.length) {
+          const value = bytes[state.index];
+          if (value === 35) {
+            while (state.index < bytes.length && bytes[state.index] !== 10)
+              state.index += 1;
+          } else if (value === 9 || value === 10 || value === 13 || value === 32) {
+            state.index += 1;
+          } else break;
+        }
+        const start = state.index;
+        while (state.index < bytes.length && ![9, 10, 13, 32].includes(bytes[state.index]))
+          state.index += 1;
+        return new TextDecoder().decode(bytes.slice(start, state.index));
+      }
+      function parsePgm(bytes) {
+        const state = { index: 0 };
+        if (pgmToken(bytes, state) !== "P5") throw Error("仅支持二进制 PGM 地图");
+        const width = Number(pgmToken(bytes, state));
+        const height = Number(pgmToken(bytes, state));
+        const maxValue = Number(pgmToken(bytes, state));
+        if (![9, 10, 13, 32].includes(bytes[state.index]))
+          throw Error("PGM 文件头缺少像素分隔符");
+        state.index += bytes[state.index] === 13 && bytes[state.index + 1] === 10 ? 2 : 1;
+        if (!width || !height || maxValue !== 255 || bytes.length - state.index !== width * height)
+          throw Error("PGM 地图格式无效");
+        return { width, height, pixels: bytes.slice(state.index) };
+      }
+      function parseMapMetadata(text) {
+        const resolution = Number((text.match(/^\s*resolution:\s*([^\s#]+)/m) || [])[1]);
+        const inlineOrigin = (text.match(/^\s*origin:[ \t]*\[([^\]]+)\]/m) || [])[1];
+        const originBlock = text.match(
+          /^\s*origin:[ \t]*\r?\n\s*-\s*([^\r\n#]+)\r?\n\s*-\s*([^\r\n#]+)(?:\r?\n\s*-\s*([^\r\n#]+))?/m,
+        );
+        const origin = inlineOrigin
+          ? inlineOrigin.split(",").map((value) => Number(value.trim()))
+          : originBlock?.slice(1).filter((value) => value !== undefined)
+            .map((value) => Number(value.trim()));
+        if (!Number.isFinite(resolution) || !origin || origin.length < 2 || !origin.every(Number.isFinite))
+          throw Error("地图 YAML 缺少 resolution 或 origin");
+        return { resolution, origin };
+      }
+      function showMapPreviewError(message) {
+        const canvas = $("mapCanvas"), ctx = canvas.getContext("2d");
+        canvas.width = 800;
+        canvas.height = 180;
+        canvas.style.width = "min(100%, 800px)";
+        canvas.style.height = "auto";
+        ctx.fillStyle = "#f7f7f8";
+        ctx.fillRect(0, 0, canvas.width, canvas.height);
+        ctx.fillStyle = "#b3261e";
+        ctx.font = "16px sans-serif";
+        ctx.fillText(`地图预览加载失败：${message}`, 24, 48);
+      }
+      async function loadMapPreview() {
+        const current = selectedMap();
+        const canvas = $("mapCanvas");
+        if (!current) {
+          mapPreview = null;
+          canvas.width = 1;
+          canvas.height = 1;
+          return;
+        }
+        try {
+          const headers = { "X-CSRF-Token": csrf };
+          const [yamlResponse, pgmResponse] = await Promise.all([
+            fetch(`/api/maps/${encodeURIComponent(current.id)}/editor/yaml`, { headers }),
+            fetch(`/api/maps/${encodeURIComponent(current.id)}/editor/pgm`, { headers }),
+          ]);
+          if (!yamlResponse.ok || !pgmResponse.ok) throw Error("无法加载地图预览");
+          const metadata = parseMapMetadata(await yamlResponse.text());
+          const pgm = parsePgm(new Uint8Array(await pgmResponse.arrayBuffer()));
+          if (selectedMap()?.id !== current.id) return;
+          const image = new ImageData(pgm.width, pgm.height);
+          for (let index = 0; index < pgm.pixels.length; index += 1) {
+            const value = pgm.pixels[index];
+            image.data.set([value, value, value, 255], index * 4);
+          }
+          mapPreview = { ...metadata, ...pgm, image, draft: null };
+          redrawMapPreviews();
+        } catch (error) {
+          mapPreview = null;
+          showMapPreviewError(error.message);
+          msg(error.message);
+        }
+      }
+      function fitMapCanvas(canvas, maxWidth, maxHeight) {
+        if (!mapPreview) return;
+        const scale = Math.max(0.01, Math.min(
+          maxWidth / mapPreview.width,
+          maxHeight / mapPreview.height,
+        ));
+        canvas.style.width = `${Math.floor(mapPreview.width * scale)}px`;
+        canvas.style.height = `${Math.floor(mapPreview.height * scale)}px`;
+      }
+      function redrawMapPreview(canvas) {
+        if (!mapPreview) return;
+        const ctx = canvas.getContext("2d");
+        canvas.width = mapPreview.width;
+        canvas.height = mapPreview.height;
+        ctx.putImageData(mapPreview.image, 0, 0);
+        const drawWaypoint = (waypoint, color) => {
+          const x = (waypoint.x - mapPreview.origin[0]) / mapPreview.resolution;
+          const y = mapPreview.height - (waypoint.y - mapPreview.origin[1]) / mapPreview.resolution;
+          const yaw = Math.atan2(2 * waypoint.qw * waypoint.qz, 1 - 2 * waypoint.qz * waypoint.qz);
+          ctx.strokeStyle = color;
+          ctx.fillStyle = color;
+          ctx.lineWidth = Math.max(1, mapPreview.width / 250);
+          ctx.beginPath();
+          ctx.arc(x, y, 5, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.moveTo(x, y);
+          ctx.lineTo(x + Math.cos(yaw) * 18, y - Math.sin(yaw) * 18);
+          ctx.stroke();
+        };
+        mapWaypoints.filter((waypoint) => waypoint.frame_id === "map").forEach((waypoint) => drawWaypoint(waypoint, "#0347b8"));
+        if (mapPreview.draft) drawWaypoint(mapPreview.draft, "#d97706");
+      }
+      function redrawMapPreviews() {
+        const inlineCanvas = $("mapCanvas");
+        redrawMapPreview(inlineCanvas);
+        fitMapCanvas(inlineCanvas, inlineCanvas.parentElement.clientWidth, 320);
+        const modalCanvas = $("mapCanvasModal");
+        redrawMapPreview(modalCanvas);
+        fitMapCanvas(modalCanvas, window.innerWidth * 0.84, window.innerHeight * 0.7);
+      }
+      function mapCanvasPoint(event, canvas) {
+        const rect = canvas.getBoundingClientRect();
+        return {
+          x: (event.clientX - rect.left) * canvas.width / rect.width,
+          y: (event.clientY - rect.top) * canvas.height / rect.height,
+        };
+      }
+      async function saveMapWaypoint(start, end) {
+        const current = selectedMap(), name = $("mapWaypointName").value.trim();
+        if (!current) return msg("请先选择地图");
+        if (!name) return msg("请输入点位名称");
+        const distance = Math.hypot(end.x - start.x, end.y - start.y);
+        if (distance < 8) return msg("请拖拽箭头以设置点位朝向");
+        const waypoint = {
+          x: mapPreview.origin[0] + start.x * mapPreview.resolution,
+          y: mapPreview.origin[1] + (mapPreview.height - start.y) * mapPreview.resolution,
+          yaw: Math.atan2(start.y - end.y, end.x - start.x),
+        };
+        try {
+          await api("/api/waypoints/map-position", {
+            method: "POST",
+            json: { map_id: current.id, name, ...waypoint },
+          });
+          $("mapWaypointName").value = "";
+          await loadMaps();
+          $("initialWaypoint").value = name;
+          msg("地图点位已保存");
+        } catch (error) {
+          msg(error.message);
+        }
       }
       function renderRoutineList() {
         htmlTarget("routineList").content = routines
@@ -2228,6 +2462,40 @@
         })
           .then(loadWaypoints)
           .catch((e) => msg(e.message));
+      let mapDrag = null;
+      function bindMapCanvas(canvas) {
+        canvas.addEventListener("pointerdown", (event) => {
+          if (!mapPreview) return;
+          mapDrag = { canvas, start: mapCanvasPoint(event, canvas) };
+          canvas.setPointerCapture(event.pointerId);
+        });
+        canvas.addEventListener("pointermove", (event) => {
+          if (!mapPreview || mapDrag?.canvas !== canvas) return;
+          const end = mapCanvasPoint(event, canvas);
+          const yaw = Math.atan2(mapDrag.start.y - end.y, end.x - mapDrag.start.x);
+          mapPreview.draft = {
+            x: mapPreview.origin[0] + mapDrag.start.x * mapPreview.resolution,
+            y: mapPreview.origin[1] + (mapPreview.height - mapDrag.start.y) * mapPreview.resolution,
+            qz: Math.sin(yaw * 0.5),
+            qw: Math.cos(yaw * 0.5),
+          };
+          redrawMapPreviews();
+        });
+        canvas.addEventListener("pointerup", async (event) => {
+          if (mapDrag?.canvas !== canvas) return;
+          const start = mapDrag.start;
+          mapDrag = null;
+          if (canvas.hasPointerCapture(event.pointerId)) canvas.releasePointerCapture(event.pointerId);
+          await saveMapWaypoint(start, mapCanvasPoint(event, canvas));
+        });
+      }
+      bindMapCanvas($("mapCanvas"));
+      bindMapCanvas($("mapCanvasModal"));
+      $("expandMapPreview").onclick = () => {
+        if (!mapPreview) return msg("请先选择并加载地图");
+        window.jQuery("#mapPreviewModal").modal("show");
+      };
+      window.jQuery("#mapPreviewModal").on("shown.bs.modal", redrawMapPreviews);
       $("newRoutine").onclick = () => {
         selected = null;
         $("routineName").disabled = false;

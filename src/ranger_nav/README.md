@@ -130,6 +130,11 @@ ros2 launch ranger_nav navigation_3dloc.launch.py \
 该模式由 `pcl_localization_ros2` 发布 `map -> odom`，不要同时启动
 AMCL `navigation.launch.py`。
 
+`pcl_localization_ros2` 必须先获得初始位姿才会开始配准并发布 `map -> odom`。
+命令行可通过 `set_initial_pose:=true initial_pose_x:=... initial_pose_y:=...`
+`initial_pose_yaw:=...` 传入，或在 `set_initial_pose:=false` 时发布 `/initialpose`。
+Web 控制台使用地图点位提供该初始位姿。
+
 默认语音“开始导航”通过 `krt_human_robot` 启动 3D Localization 模式。
 
 ```bash
