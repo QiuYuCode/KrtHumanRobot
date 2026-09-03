@@ -223,7 +223,7 @@ class RangerNavAdapter:
                 return NavigationResult(False, f"未找到 3D PCD 地图：{pcd_map_path}。")
             launch_args.append(f"pcd_map_path:={pcd_map_path}")
         launch_args.append(f"rviz:={'true' if rviz else 'false'}")
-        if mode == "3dloc" and initial_pose is not None:
+        if initial_pose is not None:
             yaw = math.atan2(
                 2.0 * (initial_pose.qw * initial_pose.qz + initial_pose.qx * initial_pose.qy),
                 1.0 - 2.0 * (initial_pose.qy ** 2 + initial_pose.qz ** 2),

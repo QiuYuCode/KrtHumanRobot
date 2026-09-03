@@ -182,11 +182,9 @@ class MapManager:
                 return NavigationResult(False, "请先选择地图。")
             effective_mode = mode or self.adapter.default_navigation_mode()
             self._validate_map_record(record, require_pcd=effective_mode == "3dloc")
-            initial_pose: WaypointRecord | None = None
-            if effective_mode == "3dloc":
-                initial_pose = self._initial_waypoint(record.id, initial_waypoint)
-                if initial_pose is None:
-                    return NavigationResult(False, "请选择当前地图的点位作为 3D 定位初始位姿。")
+            initial_pose = self._initial_waypoint(record.id, initial_waypoint)
+            if initial_pose is None:
+                return NavigationResult(False, "请选择当前地图的点位作为导航初始位姿。")
             if self.adapter.navigation_running():
                 if self._navigation_map_id == record.id:
                     return NavigationResult(True, "当前地图的导航已经启动。")

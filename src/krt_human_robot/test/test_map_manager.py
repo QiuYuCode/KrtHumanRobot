@@ -111,6 +111,30 @@ def test_navigation_uses_selected_map_paths(tmp_path):
     assert manager.status()["navigation_map_id"] == selected.id
 
 
+def test_2d_navigation_uses_selected_initial_waypoint(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    adapter = FakeAdapter(tmp_path / "maps")
+    manager = MapManager(adapter, database, str(adapter.map_root))
+    manager.start_mapping("仓库", "fast_lio")
+    manager.finish_mapping()
+    selected = database.get_selected_map()
+    assert selected is not None
+    initial_pose = WaypointRecord(
+        "入口", "map", 1.2, -0.8, 0.0, 0.0, 0.0, 0.0, 1.0,
+        map_id=selected.id,
+    )
+    database.save_waypoint(initial_pose)
+
+    result = manager.start_navigation(
+        selected.id, "amcl", initial_waypoint="入口", rviz=True
+    )
+
+    assert result.success is True
+    assert adapter.navigation_calls == [
+        (selected.yaml_path, selected.pcd_path, "amcl", initial_pose, True)
+    ]
+
+
 def test_editor_atomically_overwrites_selected_yaml_and_pgm(tmp_path):
     database = RobotDatabase(str(tmp_path / "robot.db"))
     adapter = FakeAdapter(tmp_path / "maps")

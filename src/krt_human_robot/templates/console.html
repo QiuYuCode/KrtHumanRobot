@@ -828,7 +828,7 @@
                 </select>
               </div>
               <div class="field">
-                <label>3D 定位初始点</label
+                <label>导航初始点</label
                 ><details id="initialWaypointPicker" class="waypoint-picker"><summary id="initialWaypointSummary">请先在地图上创建点位</summary><div id="initialWaypointMenu" class="waypoint-picker-menu"></div></details>
               </div>
               <div class="actions">
@@ -840,7 +840,7 @@
                 <label>离线地图点位（拖拽箭头设置朝向）</label>
                 <button id="expandMapPreview" type="button">放大地图</button>
                 <div class="map-preview-inline"><canvas id="mapCanvas" aria-label="当前地图点位编辑区"></canvas></div>
-                <p class="muted">在地图上按住并拖拽，松开后保存点位。选择点位后可作为 3D 定位初始位姿。</p>
+                <p class="muted">在地图上按住并拖拽，松开后保存点位。选择点位后可作为导航初始位姿。</p>
               </div>
             </div>
           </div>
@@ -1228,7 +1228,10 @@
         mapPreview = null,
         mapWaypoints = [],
         initialWaypointName = "",
-        pendingMapWaypoint = null;
+        pendingMapWaypoint = null,
+        terminalExecutionNotified = false,
+        executionStatusPolling = false,
+        executionEpoch = 0;
       const TELEMETRY_WINDOW_MS = 30000;
       const $ = (id) => document.getElementById(id);
       const esc = (s) =>
@@ -1486,8 +1489,8 @@
             await loadMaps();
           }
           const initialWaypoint = initialWaypointName;
-          if ($("navigationMode").value === "3dloc" && !initialWaypoint)
-            return msg("请选择地图点位作为 3D 定位初始位姿");
+          if (!initialWaypoint)
+            return msg("请选择地图点位作为导航初始位姿");
           const result = await api("/api/navigation/start", {
             method: "POST",
             json: {
@@ -1813,9 +1816,11 @@
         document.querySelectorAll("[data-run-routine]").forEach(
           (x) =>
             (x.onclick = () =>
-              api(`/api/routines/${encodeURIComponent(x.dataset.runRoutine)}/run`, {
-                method: "POST",
-              }).catch((e) => msg(e.message))),
+              startExecution(() =>
+                api(`/api/routines/${encodeURIComponent(x.dataset.runRoutine)}/run`, {
+                  method: "POST",
+                }),
+              ).catch((e) => msg(e.message))),
         );
         document.querySelectorAll("[data-del-routine]").forEach(
           (x) =>
@@ -1868,9 +1873,11 @@
               if (side === "unknown")
                 side = prompt("请选择机械臂：left / right", "left");
               if (!side) return;
-              api(
-                `/api/action-groups/${encodeURIComponent(x.dataset.rungroup)}/run`,
-                { method: "POST", json: { arm_target: side, repeat_count: 1 } },
+              startExecution(() =>
+                api(
+                  `/api/action-groups/${encodeURIComponent(x.dataset.rungroup)}/run`,
+                  { method: "POST", json: { arm_target: side, repeat_count: 1 } },
+                ),
               ).catch((e) => msg(e.message));
             }),
         );
@@ -2210,9 +2217,12 @@
                 (item) => item.name === x.dataset.runGripper,
               );
               if (action)
-                api("/api/gripper/run", { method: "POST", json: { targets: action.targets } }).catch(
-                  (e) => msg(e.message),
-                );
+                startExecution(() =>
+                  api("/api/gripper/run", {
+                    method: "POST",
+                    json: { targets: action.targets },
+                  }),
+                ).catch((e) => msg(e.message));
             }),
         );
         document.querySelectorAll("[data-del-gripper]").forEach(
@@ -2466,33 +2476,60 @@
           )
           .join("");
       }
-      async function status() {
-        if (!user) return;
-        const s = await api("/api/execution");
+      function renderExecutionStatus(s) {
+        const running = s.status === "running";
         $("execStatus").textContent =
-          s.status === "running"
+          running
             ? `${s.mode} · ${s.current_step || "执行中"}`
-            : s.status;
-        $("cancelBtn").disabled = s.status !== "running";
-        if (s.status === "failed" && s.message) msg(s.message);
-        if (s.mode === "gripper" && s.hands)
-          $("gripperExecution").textContent = Object.entries(s.hands)
-            .map(
-              ([side, hand]) =>
-                `${side === "left" ? "左手" : "右手"} ${Math.round((hand.progress || 0) * 100)}% ${hand.current_positions?.join(", ") || ""} ${hand.message || ""}`,
-            )
-            .join(" | ");
-        loadNavigationStatus();
+            : "空闲";
+        $("cancelBtn").disabled = !running;
+        if (running) {
+          terminalExecutionNotified = false;
+          return;
+        }
         if (
-          $("grippers").classList.contains("active") &&
-          !document.querySelector("#gripperSystem details[open]")
-        )
-          loadGripperSystem();
-        if (
-          $("actionGroups").classList.contains("active") ||
-          $("routines").classList.contains("active")
-        )
-          loadRobotSystems();
+          !terminalExecutionNotified &&
+          ["failed", "canceled", "cancelled"].includes(s.status) &&
+          s.message
+        ) {
+          terminalExecutionNotified = true;
+          msg(s.message);
+        }
+      }
+      async function startExecution(request) {
+        await request();
+        executionEpoch += 1;
+        terminalExecutionNotified = false;
+      }
+      async function status() {
+        if (!user || executionStatusPolling) return;
+        executionStatusPolling = true;
+        try {
+          const epoch = executionEpoch;
+          const s = await api("/api/execution");
+          if (epoch !== executionEpoch) return;
+          renderExecutionStatus(s);
+          if (s.mode === "gripper" && s.hands)
+            $("gripperExecution").textContent = Object.entries(s.hands)
+              .map(
+                ([side, hand]) =>
+                  `${side === "left" ? "左手" : "右手"} ${Math.round((hand.progress || 0) * 100)}% ${hand.current_positions?.join(", ") || ""} ${hand.message || ""}`,
+              )
+              .join(" | ");
+          loadNavigationStatus();
+          if (
+            $("grippers").classList.contains("active") &&
+            !document.querySelector("#gripperSystem details[open]")
+          )
+            loadGripperSystem();
+          if (
+            $("actionGroups").classList.contains("active") ||
+            $("routines").classList.contains("active")
+          )
+            loadRobotSystems();
+        } finally {
+          executionStatusPolling = false;
+        }
       }
       document.querySelectorAll("[data-robot-control]").forEach(
         (button) =>
@@ -2659,9 +2696,11 @@
           .catch((e) => msg(e.message));
       };
       $("runRoutine").onclick = () =>
-        api(`/api/routines/${encodeURIComponent($("routineName").value)}/run`, {
-          method: "POST",
-        }).catch((e) => msg(e.message));
+        startExecution(() =>
+          api(`/api/routines/${encodeURIComponent($("routineName").value)}/run`, {
+            method: "POST",
+          }),
+        ).catch((e) => msg(e.message));
       $("deleteRoutine").onclick = () =>
         selected &&
         confirm("删除 routine？") &&
@@ -2686,9 +2725,9 @@
           .catch((e) => msg(e.message));
       };
       $("runGripper").onclick = () =>
-        api("/api/gripper/run", { method: "POST", json: gripperDraft }).catch(
-          (e) => msg(e.message),
-        );
+        startExecution(() =>
+          api("/api/gripper/run", { method: "POST", json: gripperDraft }),
+        ).catch((e) => msg(e.message));
       $("deleteGripper").onclick = () =>
         selectedGripper &&
         confirm("删除夹爪动作？") &&

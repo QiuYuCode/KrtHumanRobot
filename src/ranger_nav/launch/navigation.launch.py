@@ -16,6 +16,7 @@ from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import Command, LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
+from nav2_common.launch import RewrittenYaml
 
 # 点云转激光的切片高度（相对地面，米）。
 # 地面不平、地面毛刺被误判为障碍时调大 SCAN_MIN_HEIGHT（如 0.20）
@@ -32,6 +33,16 @@ def generate_launch_description():
 
     map_yaml = LaunchConfiguration('map')
     use_rviz = LaunchConfiguration('rviz')
+    params_file = RewrittenYaml(
+        source_file=os.path.join(ranger_nav_share, 'config', 'nav2_params.yaml'),
+        param_rewrites={
+            'set_initial_pose': LaunchConfiguration('set_initial_pose'),
+            'initial_pose_x': LaunchConfiguration('initial_pose_x'),
+            'initial_pose_y': LaunchConfiguration('initial_pose_y'),
+            'initial_pose_yaw': LaunchConfiguration('initial_pose_yaw'),
+        },
+        convert_types=True,
+    )
 
     declare_map = DeclareLaunchArgument(
         'map',
@@ -120,8 +131,7 @@ def generate_launch_description():
             os.path.join(nav2_share, 'launch', 'bringup_launch.py')),
         launch_arguments={
             'map': map_yaml,
-            'params_file': os.path.join(
-                ranger_nav_share, 'config', 'nav2_params.yaml'),
+            'params_file': params_file,
             'use_sim_time': 'false',
             'autostart': 'true',
         }.items(),
@@ -138,6 +148,10 @@ def generate_launch_description():
     return LaunchDescription([
         declare_map,
         declare_rviz,
+        DeclareLaunchArgument('set_initial_pose', default_value='false'),
+        DeclareLaunchArgument('initial_pose_x', default_value='0.0'),
+        DeclareLaunchArgument('initial_pose_y', default_value='0.0'),
+        DeclareLaunchArgument('initial_pose_yaw', default_value='0.0'),
         livox_driver,
         fast_lio_node,
         chassis_node,

@@ -169,6 +169,33 @@ def test_3d_navigation_passes_selected_waypoint_and_waits_for_diagnostics(tmp_pa
     assert diagnostics == [["ros2", "run", "ranger_nav", "nav_tf_diagnostics"]]
 
 
+def test_2d_navigation_passes_selected_waypoint(tmp_path):
+    yaml_path = tmp_path / "map.yaml"
+    yaml_path.write_text("image: map.pgm\n", encoding="utf-8")
+    launches = []
+    initial_pose = WaypointRecord(
+        "入口", "map", 1.5, -2.0, 0.0, 0.0, 0.0, 0.70710678, 0.70710678
+    )
+    adapter = RangerNavAdapter(
+        config(tmp_path, navigation_mode="amcl"),
+        popen=lambda command, **_kwargs: launches.append(command) or FakeProcess(),
+    )
+
+    result = adapter.start_navigation(
+        str(yaml_path), mode="amcl", initial_pose=initial_pose, rviz=False
+    )
+
+    assert result.success is True
+    assert launches[0][:-1] == [
+        "ros2", "launch", "ranger_nav", "navigation.launch.py",
+        f"map:={yaml_path}", "rviz:=false", "set_initial_pose:=true",
+        "initial_pose_x:=1.5", "initial_pose_y:=-2.0",
+    ]
+    assert float(launches[0][-1].removeprefix("initial_pose_yaw:=")) == pytest.approx(
+        1.5707963268
+    )
+
+
 def test_3d_navigation_stops_launch_when_diagnostics_timeout(tmp_path):
     yaml_path = tmp_path / "dated" / "map.yaml"
     pcd_path = tmp_path / "dated" / "cloud.pcd"
