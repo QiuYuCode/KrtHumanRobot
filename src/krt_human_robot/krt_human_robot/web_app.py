@@ -13,6 +13,7 @@ import time
 import uuid
 import wave
 from collections.abc import Callable
+from datetime import datetime, timedelta
 from functools import wraps
 from pathlib import Path
 from typing import Any
@@ -604,6 +605,112 @@ class WebRuntime:
             raise RuntimeError("没有正在执行的任务")
 
 
+class CruiseScheduler:
+    """Persistent daily cruise plans with conservative navigation ownership."""
+
+    def __init__(self, database, map_manager, adapter):
+        self.database, self.map_manager, self.adapter = database, map_manager, adapter
+        self.lock = threading.RLock()
+        self.running: dict[int, threading.Event] = {}
+        self.thread = threading.Thread(target=self._loop, daemon=True)
+        self.thread.start()
+
+    def close(self):
+        with self.lock:
+            events = list(self.running.values())
+        for event in events:
+            event.set()
+
+    def start(self, schedule_id: int):
+        with self.lock:
+            if schedule_id in self.running:
+                raise RuntimeError("巡航计划正在执行")
+            event = threading.Event()
+            self.running[schedule_id] = event
+        threading.Thread(target=self._execute, args=(schedule_id, event), daemon=True).start()
+
+    def cancel(self, schedule_id: int):
+        with self.lock:
+            event = self.running.get(schedule_id)
+        if event is None:
+            raise RuntimeError("巡航计划未执行")
+        event.set()
+
+    def status(self, schedule_id: int) -> str:
+        with self.lock:
+            return "running" if schedule_id in self.running else "idle"
+
+    def _loop(self):
+        while True:
+            now = datetime.now().astimezone()
+            for schedule in self.database.list_cruise_schedules():
+                if schedule["enabled"] and schedule["next_run_at"] <= now.isoformat(timespec="seconds"):
+                    try:
+                        self.start(int(schedule["id"]))
+                    except RuntimeError:
+                        continue
+                    next_run = (now + timedelta(days=1)).replace(
+                        hour=int(schedule["daily_time"][:2]), minute=int(schedule["daily_time"][3:]), second=0, microsecond=0
+                    )
+                    self.database.update_cruise_schedule_result(int(schedule["id"]), next_run_at=next_run.isoformat(timespec="seconds"), result="已触发")
+            time.sleep(15)
+
+    def _execute(self, schedule_id: int, cancel: threading.Event):
+        owned_navigation = False
+        owned_cruise = False
+        result_text = "执行失败"
+        try:
+            schedule = self.database.get_cruise_schedule(schedule_id)
+            map_id = str(schedule["map_id"])
+            nav_status = self.map_manager.status()
+            if self.adapter.navigation_running():
+                if nav_status.get("navigation_map_id") != map_id:
+                    result_text = "其他地图导航正在运行，已跳过"
+                    return
+            else:
+                result = self.map_manager.start_navigation(map_id, "3dloc", initial_waypoint=schedule["initial_waypoint"], rviz=True)
+                if not result.success:
+                    result_text = result.message
+                    return
+                owned_navigation = True
+            if cancel.is_set():
+                result_text = "已取消"
+                return
+            result = self.adapter.start_cruise(schedule["waypoint_names"], repeat=int(schedule["repeat_count"]), map_id=map_id)
+            if not result.success:
+                result_text = result.message
+                return
+            owned_cruise = True
+            while self.adapter._running(self.adapter._cruise_process):
+                if cancel.wait(1.0):
+                    self.adapter.stop_cruise()
+                    result_text = "已取消"
+                    return
+            result_text = "执行成功" if self.adapter._cruise_process.poll() == 0 else "巡航进程失败"
+        except Exception as exc:
+            result_text = str(exc)
+        finally:
+            if owned_cruise:
+                try:
+                    self.adapter.stop_cruise()
+                except Exception:
+                    pass
+            if owned_navigation:
+                try:
+                    self.map_manager.stop_navigation()
+                except Exception:
+                    pass
+            with self.lock:
+                self.running.pop(schedule_id, None)
+            try:
+                schedule = self.database.get_cruise_schedule(schedule_id)
+                now = datetime.now().astimezone()
+                next_run = (now + timedelta(days=1)).replace(hour=int(schedule["daily_time"][:2]), minute=int(schedule["daily_time"][3:]), second=0, microsecond=0)
+                self.database.update_cruise_schedule_result(schedule_id, next_run_at=next_run.isoformat(timespec="seconds"), result=result_text)
+            except Exception:
+                pass
+
+
 def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     _load_flask()
     package_source = Path(__file__).resolve().parent.parent
@@ -720,6 +827,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         atexit.register(gripper_system.shutdown_owned_processes)
     runtime = WebRuntime(adapter, bridge)
     map_manager = MapManager(adapter, database, str(map_root))
+    cruise_scheduler = CruiseScheduler(database, map_manager, adapter)
+    atexit.register(cruise_scheduler.close)
     app.extensions.update(
         robot_db=database,
         auth_db=auth,
@@ -727,6 +836,7 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         map_manager=map_manager,
         gripper_system=gripper_system,
         robot_system=robot_system,
+        cruise_scheduler=cruise_scheduler,
     )
     # ponytail: one-worker in-memory limiter; move to shared storage for multi-worker use.
     failures: dict[str, list[float]] = {}
@@ -754,6 +864,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.get("/")
     def index():
         return render_template("console.html")
+
+    @app.get("/maps/<map_id>")
+    @protected(auth, csrf=False)
+    def map_detail(map_id: str):
+        database.get_map(map_id)
+        return render_template("console.html", detail_map_id=map_id)
 
     @app.get("/api/session")
     def session_info():
@@ -1029,6 +1145,11 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             return send_file(pgm_path, mimetype="image/x-portable-graymap")
         raise ValueError("地图编辑器文件类型无效")
 
+    @app.get("/api/maps/<map_id>/preview")
+    @protected(auth, csrf=False)
+    def map_preview(map_id: str):
+        return send_file(map_manager.preview_path(map_id), mimetype="image/x-portable-graymap")
+
     @app.put("/api/maps/<map_id>/editor")
     @protected(auth)
     def save_map_editor(map_id: str):
@@ -1117,7 +1238,21 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.post("/api/navigation/cruise/start")
     @protected(auth)
     def start_cruise():
-        return run_navigation_command("start_cruise", "cruise")
+        payload = request.get_json(silent=True) or {}
+        names = payload.get("waypoint_names")
+        names = [str(name).strip() for name in names] if isinstance(names, list) else None
+        map_id = str(payload.get("map_id", "")).strip() or None
+        if map_id:
+            nav_status = map_manager.status()
+            if not runtime.adapter.navigation_running() or nav_status.get("navigation_map_id") != map_id:
+                raise ValueError("请先启动当前地图导航，再开始巡航")
+        result = runtime.adapter.start_cruise(
+            names,
+            repeat=int(payload["repeat"]) if payload.get("repeat") is not None else None,
+            loop=bool(payload.get("loop", False)),
+            map_id=map_id,
+        )
+        return navigation_response("start_cruise", "cruise", result)
 
     @app.post("/api/navigation/cruise/stop")
     @protected(auth)
@@ -1128,6 +1263,50 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @protected(auth)
     def resume_cruise():
         return run_navigation_command("continue_waypoint_input", "cruise")
+
+    @app.get("/api/navigation/cruise/schedules")
+    @protected(auth, csrf=False)
+    def cruise_schedules():
+        return jsonify(database.list_cruise_schedules(request.args.get("map_id")))
+
+    @app.post("/api/navigation/cruise/schedules")
+    @protected(auth)
+    def create_cruise_schedule():
+        payload = request.get_json(silent=True) or {}
+        schedule = _validate_schedule_payload(database, payload)
+        saved = database.save_cruise_schedule(schedule)
+        return audited(auth, "create_cruise_schedule", str(saved["id"]), True, data={"schedule": saved})
+
+    @app.patch("/api/navigation/cruise/schedules/<int:schedule_id>")
+    @protected(auth)
+    def update_cruise_schedule(schedule_id: int):
+        current = database.get_cruise_schedule(schedule_id)
+        changes = request.get_json(silent=True) or {}
+        payload = {**current, **changes}
+        if "daily_time" in changes and str(changes["daily_time"]).strip() != current["daily_time"]:
+            payload["next_run_at"] = None
+        schedule = _validate_schedule_payload(database, payload)
+        saved = database.save_cruise_schedule(schedule, schedule_id)
+        return audited(auth, "update_cruise_schedule", str(schedule_id), True, data={"schedule": saved})
+
+    @app.delete("/api/navigation/cruise/schedules/<int:schedule_id>")
+    @protected(auth)
+    def delete_cruise_schedule(schedule_id: int):
+        database.delete_cruise_schedule(schedule_id)
+        return audited(auth, "delete_cruise_schedule", str(schedule_id), True)
+
+    @app.post("/api/navigation/cruise/schedules/<int:schedule_id>/run")
+    @protected(auth)
+    def run_cruise_schedule(schedule_id: int):
+        database.get_cruise_schedule(schedule_id)
+        cruise_scheduler.start(schedule_id)
+        return audited(auth, "run_cruise_schedule", str(schedule_id), True, "计划已启动")
+
+    @app.post("/api/navigation/cruise/schedules/<int:schedule_id>/cancel")
+    @protected(auth)
+    def cancel_cruise_schedule(schedule_id: int):
+        cruise_scheduler.cancel(schedule_id)
+        return audited(auth, "cancel_cruise_schedule", str(schedule_id), True, "正在安全停止计划")
 
     @app.get("/api/robot-systems")
     @protected(auth, csrf=False)
@@ -1435,6 +1614,39 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
         return jsonify(auth.list_audit())
 
     return app
+
+
+def _validate_schedule_payload(database, payload: dict[str, Any]) -> dict[str, Any]:
+    map_id = str(payload.get("map_id", "")).strip()
+    initial = str(payload.get("initial_waypoint", "")).strip()
+    names = payload.get("waypoint_names", [])
+    if not map_id or not initial or not isinstance(names, list):
+        raise ValueError("地图、导航初始点位和巡航点位不能为空")
+    record = database.get_map(map_id)
+    if record.status != "ready":
+        raise ValueError("只能为已就绪地图创建巡航计划")
+    waypoints = {row.name for row in database.list_waypoints(map_id)}
+    cleaned = [str(name).strip() for name in names if str(name).strip()]
+    if initial not in waypoints or not cleaned or any(name not in waypoints for name in cleaned):
+        raise ValueError("计划点位必须属于当前地图")
+    daily_time = str(payload.get("daily_time", "")).strip()
+    try:
+        parsed = datetime.strptime(daily_time, "%H:%M")
+    except ValueError as exc:
+        raise ValueError("计划时间必须是 HH:MM") from exc
+    now = datetime.now().astimezone()
+    next_run = now.replace(hour=parsed.hour, minute=parsed.minute, second=0, microsecond=0)
+    if next_run <= now:
+        next_run += timedelta(days=1)
+    return {
+        "map_id": map_id,
+        "initial_waypoint": initial,
+        "waypoint_names": cleaned,
+        "repeat_count": int(payload.get("repeat_count", 1)),
+        "daily_time": daily_time,
+        "enabled": bool(payload.get("enabled", True)),
+        "next_run_at": str(payload.get("next_run_at") or next_run.isoformat(timespec="seconds")),
+    }
 
 
 def protected(auth: AuthDatabase, *, role: str | None = None, csrf: bool = True):

@@ -8,6 +8,7 @@ import os
 import shutil
 import signal
 import subprocess
+import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -49,6 +50,7 @@ class RangerNavAdapter:
         self._mapping_process: Any | None = None
         self._navigation_process: Any | None = None
         self._cruise_process: Any | None = None
+        self._cruise_lock = threading.Lock()
         self._mapping_backend: str | None = None
 
     def start_mapping(
@@ -234,6 +236,14 @@ class RangerNavAdapter:
                 f"initial_pose_y:={initial_pose.y}",
                 f"initial_pose_yaw:={yaw}",
             ])
+        if rviz:
+            launch_args = [
+                "/bin/bash",
+                "-lc",
+                'source "$KRT_WORKSPACE/deploy/systemd/krt-rviz-env.sh"; exec "$@"',
+                "bash",
+                *launch_args,
+            ]
         if self._running(self._navigation_process):
             return NavigationResult(True, "导航已经启动。")
 
@@ -338,23 +348,24 @@ class RangerNavAdapter:
     ) -> NavigationResult:
         if not self._enabled():
             return NavigationResult(False, "导航功能未启用，无法开始巡航。")
-        if self._running(self._cruise_process):
-            return NavigationResult(True, "巡航已经在执行。")
-        cmd = self._waypoint_cmd(["cruise"], map_id=map_id)
-        if repeat is not None:
-            cmd.extend(["--repeat", str(repeat)])
-        if loop:
-            cmd.append("--loop")
-        cmd.extend(names or [])
-        try:
-            self._cruise_process = self._popen(cmd, start_new_session=True)
-        except OSError as exc:
-            return NavigationResult(False, f"启动巡航失败：{exc}。")
-        process = self._cruise_process
-        if process is None:
-            return NavigationResult(False, "巡航进程未创建。")
-        logger.info(f"已启动 waypoint 巡航: pid={process.pid}")
-        return NavigationResult(True, "已开始巡航。")
+        with self._cruise_lock:
+            if self._running(self._cruise_process):
+                return NavigationResult(False, "巡航已经在执行。")
+            cmd = self._waypoint_cmd(["cruise"], map_id=map_id)
+            if repeat is not None:
+                cmd.extend(["--repeat", str(repeat)])
+            if loop:
+                cmd.append("--loop")
+            cmd.extend(names or [])
+            try:
+                self._cruise_process = self._popen(cmd, start_new_session=True)
+            except OSError as exc:
+                return NavigationResult(False, f"启动巡航失败：{exc}。")
+            process = self._cruise_process
+            if process is None:
+                return NavigationResult(False, "巡航进程未创建。")
+            logger.info(f"已启动 waypoint 巡航: pid={process.pid}")
+            return NavigationResult(True, "已开始巡航。")
 
     def stop_cruise(self) -> NavigationResult:
         process = self._cruise_process

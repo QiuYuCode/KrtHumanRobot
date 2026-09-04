@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import threading
 import time
 import uuid
 import wave
@@ -18,9 +19,32 @@ import sherpa_onnx
 import websocket  # type: ignore[import-not-found]
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    stop_after_attempt,
+    stop_after_delay,
+    wait_chain,
+    wait_fixed,
+)
 from voice_interfaces.action import PlayAudio
 from voice_interfaces.msg import VoiceAudioFrame
 from voice_interfaces.srv import SynthesizeSpeech
+
+
+CLOUD_ATTEMPT_TIMEOUT_SEC = 4.0
+CLOUD_REQUEST_TIMEOUT_SEC = 18.0
+CLOUD_TRANSPORT_EXCEPTIONS = (
+    websocket.WebSocketAddressException,
+    websocket.WebSocketConnectionClosedException,
+    websocket.WebSocketTimeoutException,
+    TimeoutError,
+    OSError,
+)
+
+
+class SynthesisDeadlineExceeded(RuntimeError):
+    """Raised when synthesis can no longer safely submit playback."""
 
 
 class VoiceTtsNode(Node):
@@ -250,7 +274,67 @@ class VoiceTtsNode(Node):
                 chunks.append("".join(buf))
         return chunks
 
-    def _generate_iflytek_tts(self, text: str) -> tuple[bytes, int]:
+    @staticmethod
+    def _remaining_timeout(deadline: float) -> float:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0.0:
+            raise SynthesisDeadlineExceeded("TTS 合成超时")
+        return remaining
+
+    def _close_iflytek_connection(self, ws, attempt_deadline: float) -> None:
+        """Close without allowing cleanup to obscure synthesis outcomes."""
+        remaining = attempt_deadline - time.monotonic()
+        try:
+            if remaining <= 0.0:
+                sock = getattr(ws, "sock", None)
+                if sock is not None:
+                    sock.close()
+                return
+            ws.close(timeout=remaining)
+        except Exception as exc:
+            self.get_logger().warning(f"讯飞 TTS WebSocket 清理失败: {exc}")
+
+    def _run_until_deadline(self, deadline: float, operation):
+        """Return an operation result before deadline without late audio."""
+        result: dict[str, object] = {}
+        completed = threading.Event()
+
+        def run_operation() -> None:
+            try:
+                result["value"] = operation()
+            except BaseException as exc:
+                result["error"] = exc
+            finally:
+                completed.set()
+
+        worker = threading.Thread(
+            target=run_operation,
+            name="voice_tts_deadline_worker",
+            daemon=True,
+        )
+        worker.start()
+        completed.wait(self._remaining_timeout(deadline))
+        if not completed.is_set():
+            raise SynthesisDeadlineExceeded("TTS 合成超时")
+        self._remaining_timeout(deadline)
+        if "error" in result:
+            raise result["error"]
+        return result["value"]
+
+    @retry(
+        retry=retry_if_exception_type(CLOUD_TRANSPORT_EXCEPTIONS),
+        stop=(
+            stop_after_attempt(3)
+            | stop_after_delay(CLOUD_REQUEST_TIMEOUT_SEC)
+        ),
+        wait=wait_chain(wait_fixed(1.0), wait_fixed(2.0)),
+        reraise=True,
+    )
+    def _generate_iflytek_tts_once(
+        self,
+        text: str,
+        deadline: float,
+    ) -> tuple[bytes, int]:
         app_id = str(self.get_parameter("iflytek_tts_app_id").value)
         api_key = str(self.get_parameter("iflytek_tts_api_key").value)
         api_secret = str(self.get_parameter("iflytek_tts_api_secret").value)
@@ -266,13 +350,18 @@ class VoiceTtsNode(Node):
         if not text_chunks:
             return b"", sample_rate
 
+        attempt_deadline = min(
+            deadline,
+            time.monotonic() + CLOUD_ATTEMPT_TIMEOUT_SEC,
+        )
         for text_chunk in text_chunks:
             ws = websocket.create_connection(
                 self._build_ws_url(api_key, api_secret),
-                timeout=10,
+                timeout=self._remaining_timeout(attempt_deadline),
                 http_no_proxy=["tts-api.xfyun.cn"],
             )
             try:
+                ws.settimeout(self._remaining_timeout(attempt_deadline))
                 ws.send(
                     json.dumps(
                         {
@@ -298,6 +387,7 @@ class VoiceTtsNode(Node):
                 )
                 audio_parts: list[bytes] = []
                 while True:
+                    ws.settimeout(self._remaining_timeout(attempt_deadline))
                     resp = json.loads(ws.recv())
                     if int(resp.get("code", -1)) != 0:
                         raise RuntimeError(f"讯飞 TTS 错误: {resp}")
@@ -317,10 +407,21 @@ class VoiceTtsNode(Node):
                     sample_rate = wav_rate
                     pcm_chunks.append(pcm_bytes)
             finally:
-                ws.close()
-            time.sleep(0.02)
+                self._close_iflytek_connection(ws, attempt_deadline)
+            self._remaining_timeout(attempt_deadline)
 
         return b"".join(pcm_chunks), sample_rate
+
+    def _generate_iflytek_tts(
+        self,
+        text: str,
+        deadline: float | None = None,
+    ) -> tuple[bytes, int]:
+        request_deadline = deadline or (
+            time.monotonic() + CLOUD_REQUEST_TIMEOUT_SEC
+        )
+        self._remaining_timeout(request_deadline)
+        return self._generate_iflytek_tts_once(text, request_deadline)
 
     def _build_play_goal_from_pcm(
         self,
@@ -351,28 +452,56 @@ class VoiceTtsNode(Node):
             priority,
         )
 
-    def _synthesize_pcm16(self, text: str) -> tuple[bytes, int, str]:
+    def _synthesize_pcm16(
+        self,
+        text: str,
+        deadline: float | None = None,
+    ) -> tuple[bytes, int, str]:
         backend = (
             str(self.get_parameter("tts_backend").value).strip()
             or "iflytek_cloud"
         )
         if backend == "iflytek_cloud":
             try:
-                pcm_bytes, sample_rate = self._generate_iflytek_tts(text)
+                pcm_bytes, sample_rate = self._generate_iflytek_tts(
+                    text,
+                    deadline,
+                )
                 return pcm_bytes, sample_rate, "iflytek_cloud"
+            except SynthesisDeadlineExceeded:
+                if not bool(
+                    self.get_parameter("cloud_tts_fallback_to_local").value
+                ):
+                    raise
+                self.get_logger().warning("讯飞云 TTS 超时，回退本地 TTS")
             except Exception as exc:
-                if not bool(self.get_parameter("cloud_tts_fallback_to_local").value):
+                if not bool(
+                    self.get_parameter("cloud_tts_fallback_to_local").value
+                ):
                     raise
                 self.get_logger().warning(f"讯飞云 TTS 失败，回退本地 TTS: {exc}")
         elif backend != "local":
-            if not bool(self.get_parameter("cloud_tts_fallback_to_local").value):
+            if not bool(
+                self.get_parameter("cloud_tts_fallback_to_local").value
+            ):
                 raise RuntimeError(f"不支持的 TTS 后端: {backend}")
             self.get_logger().warning(f"不支持的 TTS 后端 {backend!r}，回退本地 TTS")
 
         if not self._ensure_tts_ready():
             raise RuntimeError("本地 TTS 未初始化")
-        samples, sample_rate = self._generate_local_tts(text)
-        return self._float32_to_pcm16(samples), sample_rate, "local"
+        if deadline is None:
+            samples, sample_rate = self._generate_local_tts(text)
+            pcm_bytes = self._float32_to_pcm16(samples)
+        else:
+            def generate_local_pcm() -> tuple[bytes, int]:
+                samples, sample_rate = self._generate_local_tts(text)
+                return self._float32_to_pcm16(samples), sample_rate
+
+            pcm_bytes, sample_rate = self._run_until_deadline(
+                deadline,
+                generate_local_pcm,
+            )
+        return pcm_bytes, sample_rate, "local"
 
     def _handle_synthesize(
         self,
@@ -380,14 +509,28 @@ class VoiceTtsNode(Node):
         response: SynthesizeSpeech.Response,
     ):
         try:
-            pcm_bytes, sample_rate, backend_used = self._synthesize_pcm16(request.text)
+            deadline = time.monotonic() + CLOUD_REQUEST_TIMEOUT_SEC
+            pcm_bytes, sample_rate, backend_used = self._synthesize_pcm16(
+                request.text,
+                deadline,
+            )
             if len(pcm_bytes) == 0:
                 raise RuntimeError("TTS 未生成有效音频")
-            if not self._play_client.wait_for_server(timeout_sec=1.0):
+            remaining_timeout = self._remaining_timeout(deadline)
+            if not self._play_client.wait_for_server(
+                timeout_sec=min(1.0, remaining_timeout)
+            ):
                 raise RuntimeError("playback action 不可用")
-            goal = self._build_play_goal_from_pcm(
-                pcm_bytes, sample_rate, int(request.priority)
+            self._remaining_timeout(deadline)
+            goal = self._run_until_deadline(
+                deadline,
+                lambda: self._build_play_goal_from_pcm(
+                    pcm_bytes,
+                    sample_rate,
+                    int(request.priority),
+                ),
             )
+            self._remaining_timeout(deadline)
             self._play_client.send_goal_async(goal)
             response.accepted = True
             response.request_id = str(uuid.uuid4())

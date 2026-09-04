@@ -14,7 +14,7 @@ from typing import Any
 
 import yaml
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 ROUTINE_VOICE_IMPORT_KEY = "routine_voice_yaml_import_v1"
 PARALLEL_TASKS = {"play_audio", "arm_group", "gripper", "wait"}
 TASKS = PARALLEL_TASKS | {"sequence", "parallel", "speak", "describe", "photo"}
@@ -166,7 +166,21 @@ class RobotDatabase:
                       key TEXT PRIMARY KEY,
                       value TEXT NOT NULL
                     );
-                    PRAGMA user_version = 6;
+                    CREATE TABLE IF NOT EXISTS cruise_schedules (
+                      id INTEGER PRIMARY KEY,
+                      map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE RESTRICT,
+                      initial_waypoint TEXT NOT NULL,
+                      waypoint_names_json TEXT NOT NULL,
+                      repeat_count INTEGER NOT NULL CHECK(repeat_count > 0),
+                      daily_time TEXT NOT NULL,
+                      enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+                      next_run_at TEXT NOT NULL,
+                      last_run_at TEXT NOT NULL DEFAULT '',
+                      last_result TEXT NOT NULL DEFAULT '',
+                      created_at TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    PRAGMA user_version = 7;
                     """
                 )
                 connection.commit()
@@ -271,6 +285,29 @@ class RobotDatabase:
                     """
                 )
                 connection.commit()
+                version = 6
+            if version == 6:
+                connection.executescript(
+                    """
+                    CREATE TABLE IF NOT EXISTS cruise_schedules (
+                      id INTEGER PRIMARY KEY,
+                      map_id TEXT NOT NULL REFERENCES maps(id) ON DELETE RESTRICT,
+                      initial_waypoint TEXT NOT NULL,
+                      waypoint_names_json TEXT NOT NULL,
+                      repeat_count INTEGER NOT NULL CHECK(repeat_count > 0),
+                      daily_time TEXT NOT NULL,
+                      enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0, 1)),
+                      next_run_at TEXT NOT NULL,
+                      last_run_at TEXT NOT NULL DEFAULT '',
+                      last_result TEXT NOT NULL DEFAULT '',
+                      created_at TEXT NOT NULL,
+                      updated_at TEXT NOT NULL
+                    );
+                    PRAGMA user_version = 7;
+                    """
+                )
+                connection.commit()
+                version = 7
 
     def is_empty(self) -> bool:
         with self.connect() as connection:
@@ -436,6 +473,85 @@ class RobotDatabase:
                 raise KeyError(f"地图不存在: {map_id}")
             connection.execute("DELETE FROM waypoints WHERE map_id=?", (map_id,))
             connection.execute("DELETE FROM maps WHERE id=?", (map_id,))
+            connection.commit()
+
+    def list_cruise_schedules(self, map_id: str | None = None) -> list[dict[str, Any]]:
+        query = "SELECT * FROM cruise_schedules"
+        args: tuple[Any, ...] = ()
+        if map_id is not None:
+            query += " WHERE map_id=?"
+            args = (str(map_id),)
+        query += " ORDER BY daily_time, id"
+        with self.connect() as connection:
+            rows = connection.execute(query, args).fetchall()
+        result = []
+        for row in rows:
+            item = dict(row)
+            item["waypoint_names"] = json.loads(item.pop("waypoint_names_json"))
+            item["enabled"] = bool(item["enabled"])
+            result.append(item)
+        return result
+
+    def get_cruise_schedule(self, schedule_id: int) -> dict[str, Any]:
+        rows = self.list_cruise_schedules()
+        for row in rows:
+            if int(row["id"]) == int(schedule_id):
+                return row
+        raise KeyError(f"巡航计划不存在: {schedule_id}")
+
+    def save_cruise_schedule(self, values: dict[str, Any], schedule_id: int | None = None) -> dict[str, Any]:
+        required = {"map_id", "initial_waypoint", "waypoint_names", "repeat_count", "daily_time", "next_run_at"}
+        missing = required - set(values)
+        if missing:
+            raise ValueError(f"巡航计划字段缺少: {', '.join(sorted(missing))}")
+        names = [str(name).strip() for name in values["waypoint_names"] if str(name).strip()]
+        if not names:
+            raise ValueError("至少选择一个巡航点位")
+        repeat = int(values["repeat_count"])
+        if repeat < 1 or repeat > 100:
+            raise ValueError("巡航次数必须是 1 到 100")
+        daily_time = str(values["daily_time"]).strip()
+        try:
+            datetime.strptime(daily_time, "%H:%M")
+        except ValueError as exc:
+            raise ValueError("计划时间必须是 HH:MM") from exc
+        now = utc_now()
+        enabled = 1 if bool(values.get("enabled", True)) else 0
+        with self.connect() as connection:
+            if schedule_id is None:
+                cursor = connection.execute(
+                    """INSERT INTO cruise_schedules(
+                       map_id, initial_waypoint, waypoint_names_json, repeat_count,
+                       daily_time, enabled, next_run_at, last_run_at, last_result,
+                       created_at, updated_at) VALUES(?,?,?,?,?,?,?, '', '', ?, ?)""",
+                    (str(values["map_id"]), str(values["initial_waypoint"]).strip(), json.dumps(names, ensure_ascii=False), repeat, daily_time, enabled, str(values["next_run_at"]), now, now),
+                )
+                schedule_id = cursor.lastrowid
+            else:
+                connection.execute(
+                    """UPDATE cruise_schedules SET map_id=?, initial_waypoint=?,
+                       waypoint_names_json=?, repeat_count=?, daily_time=?, enabled=?,
+                       next_run_at=?, updated_at=? WHERE id=?""",
+                    (str(values["map_id"]), str(values["initial_waypoint"]).strip(), json.dumps(names, ensure_ascii=False), repeat, daily_time, enabled, str(values["next_run_at"]), now, int(schedule_id)),
+                )
+                if connection.execute("SELECT changes()").fetchone()[0] == 0:
+                    raise KeyError(f"巡航计划不存在: {schedule_id}")
+            connection.commit()
+        return self.get_cruise_schedule(int(schedule_id))
+
+    def update_cruise_schedule_result(self, schedule_id: int, *, next_run_at: str, result: str) -> None:
+        with self.connect() as connection:
+            connection.execute(
+                "UPDATE cruise_schedules SET last_run_at=?, last_result=?, next_run_at=?, updated_at=? WHERE id=?",
+                (utc_now(), str(result), str(next_run_at), utc_now(), int(schedule_id)),
+            )
+            connection.commit()
+
+    def delete_cruise_schedule(self, schedule_id: int) -> None:
+        with self.connect() as connection:
+            cursor = connection.execute("DELETE FROM cruise_schedules WHERE id=?", (int(schedule_id),))
+            if cursor.rowcount == 0:
+                raise KeyError(f"巡航计划不存在: {schedule_id}")
             connection.commit()
 
     @staticmethod

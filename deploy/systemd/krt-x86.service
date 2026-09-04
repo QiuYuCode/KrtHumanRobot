@@ -9,7 +9,7 @@ Type=simple
 EnvironmentFile=%h/.config/krt/x86.env
 WorkingDirectory=%h/WorkSpace/KrtHumanRobot
 ExecStartPre=/bin/bash -lc 'exec /bin/bash "$KRT_WORKSPACE/deploy/systemd/krt-wait-ready.sh" x86'
-ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source "$KRT_WORKSPACE/install/setup.bash" && [[ -n "$${KRT_RVIZ_DISPLAY:-}" ]] && export DISPLAY="$${KRT_RVIZ_DISPLAY}"; [[ -n "$${KRT_RVIZ_XAUTHORITY:-}" ]] && export XAUTHORITY="$${KRT_RVIZ_XAUTHORITY}"; args=(map:="$KRT_MAP" pcd_map_path:="$KRT_PCD_MAP" web_host:="$KRT_WEB_HOST" web_port:="$KRT_WEB_PORT"); [[ -n "$${KRT_WEB_CERTFILE:-}" ]] && args+=(web_certfile:="$KRT_WEB_CERTFILE"); [[ -n "$${KRT_WEB_KEYFILE:-}" ]] && args+=(web_keyfile:="$KRT_WEB_KEYFILE"); exec ros2 launch krt_human_robot x86_bringup.launch.py "$${args[@]}"'
+ExecStart=/bin/bash -lc 'source /opt/ros/humble/setup.bash && source "$KRT_WORKSPACE/install/setup.bash" && args=(map:="$KRT_MAP" pcd_map_path:="$KRT_PCD_MAP" web_host:="$KRT_WEB_HOST" web_port:="$KRT_WEB_PORT"); [[ -n "$${KRT_WEB_CERTFILE:-}" ]] && args+=(web_certfile:="$KRT_WEB_CERTFILE"); [[ -n "$${KRT_WEB_KEYFILE:-}" ]] && args+=(web_keyfile:="$KRT_WEB_KEYFILE"); exec ros2 launch krt_human_robot x86_bringup.launch.py "$${args[@]}"'
 Restart=on-failure
 RestartSec=5
 KillSignal=SIGINT

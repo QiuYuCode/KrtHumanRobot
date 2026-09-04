@@ -84,9 +84,10 @@ PGM 预览上按住、拖拽出朝向箭头。该点位会绑定当前地图；�
 `agx_bringup.pub_odom_tf`，否则会与 FAST-LIO/URDF 的 3D 定位 TF 链冲突。
 
 地图预览始终按 PGM 原始像素比例显示；“放大地图”只进行浏览器等比例缩放，
-不会修改 PGM 或点位坐标。Web 启动导航会在 x86 本机桌面打开 RViz。若控制台由
-systemd 用户服务运行，在 `~/.config/krt/x86.env` 设置 `KRT_RVIZ_DISPLAY=:0` 和
-`KRT_RVIZ_XAUTHORITY=/home/create/.Xauthority` 后重启服务；RViz 不会显示在远程浏览器中。
+不会修改 PGM 或点位坐标。Web 启动导航会在 x86 本机桌面打开 RViz。systemd
+用户服务会自动选择活动的本地 X11 会话；若自动选择失败，可在
+`~/.config/krt/x86.env` 设置 `KRT_RVIZ_DISPLAY` 和 `KRT_RVIZ_XAUTHORITY` 后重启服务。
+RViz 不会显示在远程浏览器中。
 
 编辑前必须先停止导航，建图或保存期间不能切换、编辑地图。当前不提供 Keepout
 编辑。原命令行入口保持兼容：

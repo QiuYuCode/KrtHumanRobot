@@ -159,6 +159,7 @@
       nav button.active::before {
         background: var(--blue);
       }
+      nav button[data-view="waypoints"] { display: none; }
       nav svg {
         width: 22px;
         height: 22px;
@@ -366,6 +367,31 @@
         cursor: crosshair;
         image-rendering: pixelated;
       }
+      .nav-workbench { display: grid; gap: 20px; }
+      .nav-hero { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; padding: 24px 28px; background: #10233f; color: #fff; border-radius: 8px; }
+      .nav-hero h2 { margin: 0 0 8px; font-size: 30px; letter-spacing: 0; }
+      .nav-hero p { margin: 0; color: #b8c7db; }
+      .nav-hero .state-badge { background: #1e3a5f; color: #dbeafe; }
+      .nav-actions { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+      .nav-actions button { border-radius: 4px; }
+      .map-card-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(270px, 1fr)); gap: 14px; }
+      .map-card { border: 1px solid var(--line); border-radius: 6px; background: #fff; padding: 16px; transition: border-color .16s, box-shadow .16s; }
+      .map-card:hover, .map-card.selected { border-color: var(--blue); box-shadow: 0 4px 14px #10233f1c; }
+      .map-card-head { display:flex; align-items:center; gap:10px; margin-bottom: 12px; }
+      .map-card-head h3 { margin:0; font-size:17px; }
+      .map-card-meta { display:grid; grid-template-columns:1fr 1fr; gap:8px; color:var(--muted); font-size:12px; margin-bottom:14px; }
+      .map-card .actions { justify-content:flex-start; }
+      .map-card .actions button { min-height:32px; padding:5px 10px; border-radius:4px; font-size:12px; }
+      .detail-grid { display:grid; grid-template-columns:minmax(320px, 1fr) minmax(360px, 1.2fr); gap:20px; }
+      .detail-panel { background:#fff; border:1px solid var(--line); border-radius:6px; padding:20px; }
+      .detail-panel h3 { margin:0 0 16px; font-size:18px; }
+      .control-strip { display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:12px 0 0; border-top:1px solid var(--line); }
+      .control-strip select[multiple] { min-width:240px; flex:1; }
+      .schedule-form { display:grid; grid-template-columns:140px 1fr auto; gap:10px; align-items:center; margin:14px 0; }
+      .schedule-form input, .schedule-form select { min-width:0; }
+      .schedule-table { font-size:12px; }
+      @media (max-width: 900px) { .detail-grid { grid-template-columns: 1fr; } .nav-hero { padding:20px; } }
+      @media (max-width: 600px) { .nav-hero { flex-direction:column; } .schedule-form { grid-template-columns:1fr; } }
       .map-preview-inline {
         display: flex;
         justify-content: center;
@@ -756,9 +782,68 @@
           transition: none !important;
         }
       }
+      /* navigation workbench visual system */
+      :root { font-family:"Noto Sans SC","PingFang SC","Microsoft YaHei",sans-serif; --blue:#1455d9; --ink:#172033; --muted:#687386; --line:#d9e0ea; --paper:#fff; --canvas:#f3f5f8; }
+      body { background:var(--canvas); color:var(--ink); }
+      .sidebar { width:184px; background:#fff; border-right:1px solid var(--line); color:var(--ink); }
+      .brand { height:82px; padding:0 20px; border-bottom:1px solid var(--line); }
+      .brand h1 { color:var(--ink); font-size:16px; letter-spacing:.02em; }
+      .brand span { color:var(--muted); }
+      nav { padding:18px 10px; gap:3px; }
+      nav button { height:44px; color:#526075; grid-template-columns:20px 1fr; gap:11px; padding:0 12px; border-radius:5px; }
+      nav button:hover { background:#f1f5fb; color:var(--blue); }
+      nav button.active { background:#e8f0ff; color:var(--blue); }
+      nav button::before { left:-10px; width:3px; background:transparent; }
+      nav button.active::before { background:#62a0ff; }
+      .shell { margin-left:184px; }
+      .topbar { height:62px; padding:0 30px; background:#fff; border-bottom:1px solid var(--line); }
+      .topbar-title { color:#526075; font-size:13px; }
+      .status { font-size:12px; color:#526075; }
+      main { max-width:1540px; padding:26px 30px 48px; }
+      .view.nav-workbench { display:none; }
+      .view.nav-workbench.active { display:grid; }
+      body.home-mode .detail-only { display:none !important; }
+      body.detail-mode .home-only { display:none !important; }
+      body.detail-mode .map-directory { display:none !important; }
+      body.detail-mode .nav-hero { border-bottom:1px solid var(--line); padding-bottom:16px; }
+      body.detail-mode .nav-hero p::after { content:" / 地图详情"; color:var(--blue); font-weight:600; }
+      .nav-workbench { gap:16px; }
+      .nav-hero { background:transparent; color:var(--ink); padding:0 0 4px; border-radius:0; align-items:center; }
+      .nav-hero h2 { font-size:26px; margin:0 0 5px; font-weight:700; }
+      .nav-hero p { color:var(--muted); font-size:13px; }
+      .nav-hero .state-badge { background:#e8f0ff; color:#1455d9; border:1px solid #c8d9ff; }
+      .nav-actions button, .control-strip button, .schedule-form button { border-radius:4px; min-height:34px; padding:7px 13px; font-size:13px; }
+      .panel, .detail-panel { background:var(--paper); border:1px solid var(--line); border-radius:6px; box-shadow:0 2px 8px #1b2b4610; }
+      .panel { padding:18px; }
+      .map-directory { padding:18px 20px 20px; }
+      .toolbar { margin-bottom:14px; }
+      .toolbar h3, .detail-panel h3 { color:var(--ink); font-size:16px; }
+      .map-card-grid { grid-template-columns:repeat(auto-fill,minmax(280px,1fr)); gap:12px; }
+      .map-card { border-radius:5px; padding:14px; box-shadow:none; }
+      .map-thumb-link { display:block; margin:-14px -14px 13px; background:#eef2f6; border-bottom:1px solid var(--line); }
+      .map-thumb { display:block; width:100%; height:150px; image-rendering:pixelated; }
+      .map-card.selected { border-color:#7fa6ed; background:#f7faff; }
+      .map-card-head h3 { font-size:15px; }
+      .map-card-meta { margin-bottom:12px; }
+      .detail-grid { gap:16px; }
+      .detail-panel { padding:18px; }
+      .detail-panel h3 { margin-bottom:13px; }
+      .map-picker { border-top:1px solid var(--line); padding-top:14px; }
+      .map-picker canvas { max-height:300px; border-color:#cbd4e1; background:#eef2f6; }
+      .control-strip { gap:8px; }
+      .control-strip select[multiple] { min-height:94px; border-radius:4px; }
+      .schedule-form { margin:12px 0; }
+      input, select, textarea { border-color:#c4cedc; border-radius:4px; min-height:36px; font-size:13px; }
+      button { border-radius:4px; min-height:34px; font-size:13px; }
+      button.primary { background:var(--blue); border-color:var(--blue); }
+      table { border-color:var(--line); border-radius:5px; }
+      th, td { padding:10px 12px; font-size:13px; }
+      th { background:#f5f7fa; color:#536175; font-size:11px; }
+      .muted { color:var(--muted); }
+      @media (max-width:800px) { .sidebar { width:184px; } .shell { margin-left:0; } main { padding:18px 14px 36px; } .nav-hero { align-items:flex-start; } }
     </style>
   </head>
-  <body>
+  <body class="{{ 'detail-mode' if detail_map_id else 'home-mode' }}">
     <aside class="sidebar" id="sidebar" aria-label="主导航">
       <div class="brand">
         <h1>KRT Robot Console<span>机器人控制台</span></h1>
@@ -786,115 +871,42 @@
         </div>
       </header>
       <main>
-        <section id="navigation" class="view">
-          <div class="toolbar">
-            <h2>导航与地图</h2>
-            <span id="navigationState" class="state-badge">空闲</span>
+        <section id="navigation" class="view nav-workbench">
+          <div class="nav-hero">
+            <div><h2>{{ '地图详情' if detail_map_id else '导航工作台' }}</h2><p>管理地图、点位与巡航任务</p></div>
+            <div class="nav-actions"><span id="navigationState" class="state-badge">空闲</span><button id="refreshMaps" class="home-only">刷新地图</button><button id="openMapCreate" class="primary home-only">新建地图</button>{% if detail_map_id %}<a href="/" class="home-link">返回地图目录</a>{% endif %}</div>
           </div>
-          <div class="grid">
-            <div class="panel">
-              <h3>新建地图</h3>
-              <div class="field">
-                <label>地图名称</label
-                ><input
-                  id="mapName"
-                  maxlength="80"
-                  placeholder="例如：一楼大厅"
-                />
-              </div>
-              <div class="field">
-                <label>建图方式</label
-                ><select id="mappingBackend">
-                  <option value="fast_lio">FAST-LIO</option>
-                  <option value="spark_sam">Spark + SAM</option>
-                </select>
-              </div>
-              <div class="actions">
-                <button id="startMapping" class="primary">开始建图</button
-                ><button id="finishMapping">结束并保存</button>
-              </div>
-              <p class="muted">
-                建图时保持 RViz 开启，用于查看扫描和回环状态。
-              </p>
-            </div>
-            <div class="panel">
-              <h3>加载地图</h3>
+          <div class="map-directory panel home-only">
+            <div class="toolbar"><h3 style="margin:0 auto 0 0">地图目录</h3><span class="muted">选择地图后进入详情工作区</span></div>
+            <div id="mapCards" class="map-card-grid"></div>
+            <table class="table table-hover mb-0 hidden"><tbody id="mapRows"></tbody></table>
+          </div>
+          <div class="detail-grid detail-only">
+            <div class="detail-panel">
+              <h3>地图详情</h3>
               <p id="selectedMapSummary" class="muted">尚未选择地图</p>
-              <div class="field">
-                <label>定位模式</label
-                ><select id="navigationMode">
-                  <option value="3dloc">3D Localization</option>
-                  <option value="amcl">2D AMCL</option>
-                </select>
-              </div>
-              <div class="field">
-                <label>导航初始点</label
-                ><details id="initialWaypointPicker" class="waypoint-picker"><summary id="initialWaypointSummary">请先在地图上创建点位</summary><div id="initialWaypointMenu" class="waypoint-picker-menu"></div></details>
-              </div>
-              <div class="actions">
-                <button id="startNavigation" class="primary">启动导航</button
-                ><button id="stopNavigation" class="danger">关闭导航</button>
-              </div>
-              <div id="mapRuntimeStatus" class="map-status">空闲</div>
-              <div class="map-picker">
-                <label>离线地图点位（拖拽箭头设置朝向）</label>
-                <button id="expandMapPreview" type="button">放大地图</button>
-                <div class="map-preview-inline"><canvas id="mapCanvas" aria-label="当前地图点位编辑区"></canvas></div>
-                <p class="muted">在地图上按住并拖拽，松开后保存点位。选择点位后可作为导航初始位姿。</p>
-              </div>
+              <div class="map-picker"><div class="nav-actions"><strong>PGM 地图预览</strong><button id="expandMapPreview" type="button">放大预览</button><button id="openMapEditor" type="button">编辑地图</button></div><div class="map-preview-inline"><canvas id="mapCanvas" aria-label="当前地图点位编辑区"></canvas></div><p class="muted">拖拽地图设置点位朝向，松开后保存。</p></div>
+            </div>
+            <div class="detail-panel">
+              <h3>导航控制</h3>
+              <div class="field"><label>定位模式</label><select id="navigationMode"><option value="3dloc">3D Localization</option><option value="amcl">2D AMCL</option></select></div>
+              <div class="field"><label>导航初始点</label><details id="initialWaypointPicker" class="waypoint-picker"><summary id="initialWaypointSummary">请先在地图上创建点位</summary><div id="initialWaypointMenu" class="waypoint-picker-menu"></div></details></div>
+              <div class="control-strip"><button id="startNavigation" class="primary">启动导航</button><button id="stopNavigation" class="danger">关闭导航</button><span id="mapRuntimeStatus" class="map-status">空闲</span></div>
             </div>
           </div>
-          <div class="panel" style="margin-top: 20px">
-            <div class="toolbar">
-              <h3 style="margin: 0 auto 0 0">地图目录</h3>
-              <button id="refreshMaps">刷新</button>
-            </div>
-            <table class="table table-hover mb-0">
-              <thead>
-                <tr>
-                  <th>名称</th>
-                  <th>来源</th>
-                  <th>创建时间</th>
-                  <th>点位</th>
-                  <th>状态</th>
-                  <th>地图文件</th>
-                  <th>操作</th>
-                </tr>
-              </thead>
-              <tbody id="mapRows"></tbody>
-            </table>
+          <div class="detail-panel detail-only">
+            <div class="toolbar"><h3 style="margin:0 auto 0 0">点位与巡航</h3><span id="waypointMap" class="state-badge">未选择地图</span></div>
+            <div class="control-strip"><input id="waypointName" placeholder="点位名称" /><select id="waypointRoutine"></select><button id="markBtn" class="primary">记录当前位置</button></div>
+            <table class="table table-hover mb-0" style="margin-top:14px"><thead><tr><th>名称</th><th>坐标</th><th>编排动作</th><th>操作</th></tr></thead><tbody id="waypointRows"></tbody></table>
           </div>
-          <div class="panel" style="margin-top: 20px">
-            <h3>巡航</h3>
-            <div class="actions">
-              <button id="startCruise" class="primary">巡航开始</button
-              ><button id="stopCruise" class="danger">巡航停止</button
-              ><button id="resumeCruise">巡航恢复</button>
-            </div>
+          <div class="detail-panel detail-only">
+            <div class="toolbar"><h3 style="margin:0 auto 0 0">巡航计划</h3><span class="muted">执行前必须启动当前地图导航</span></div>
+            <div class="control-strip"><select id="cruiseWaypoints" multiple size="4" aria-label="巡航点位"></select><label>重复次数<input id="cruiseRepeat" type="number" min="1" max="100" value="1" aria-label="巡航次数" /></label><button id="startCruise" class="primary">立即巡航</button><button id="stopCruise" class="danger">停止</button><button id="resumeCruise">恢复</button></div>
+            <div class="schedule-form"><input id="scheduleTime" type="time" aria-label="每日执行时间" /><select id="scheduleInitialWaypoint" aria-label="导航初始点位"></select><button id="saveCruiseSchedule" class="primary">新增每日计划</button></div>
+            <table class="table table-hover mb-0 schedule-table"><thead><tr><th>时间</th><th>初始点位</th><th>巡航点位</th><th>次数</th><th>状态</th><th>操作</th></tr></thead><tbody id="cruiseScheduleRows"></tbody></table>
           </div>
         </section>
-        <section id="waypoints" class="view">
-          <div class="toolbar">
-            <h2>点位</h2>
-            <span id="waypointMap" class="state-badge">未选择地图</span
-            ><input id="waypointName" placeholder="点位名称" /><select
-              id="waypointRoutine"
-            ></select
-            ><button id="markBtn" class="primary">记录当前位置</button>
-          </div>
-          <table class="table table-hover mb-0">
-            <thead>
-              <tr>
-                <th>名称</th>
-                <th>所属地图</th>
-                <th>位置</th>
-                <th>Routine</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody id="waypointRows"></tbody>
-          </table>
-        </section>
+        <section id="waypoints" class="view hidden" aria-hidden="true"></section>
         <section id="routines" class="view">
           <div class="toolbar">
             <h2>动作编排</h2>
@@ -1118,6 +1130,14 @@
         </section>
       </main>
     </div>
+    <div id="mapCreatePanel" class="modal fade" tabindex="-1" role="dialog" aria-labelledby="mapCreateTitle" aria-hidden="true">
+      <div class="modal-dialog modal-dialog-centered" role="document"><div class="modal-content"><div class="modal-header"><h3 id="mapCreateTitle" class="modal-title">新建地图</h3><button type="button" class="close" data-dismiss="modal" aria-label="关闭">&times;</button></div><div class="modal-body">
+        <div class="field"><label for="mapName">地图名称</label><input id="mapName" maxlength="80" placeholder="例如：一楼大厅" /></div>
+        <div class="field"><label for="mappingBackend">建图方式</label><select id="mappingBackend"><option value="fast_lio">FAST-LIO</option><option value="spark_sam">Spark + SAM</option></select></div>
+        <div class="actions"><button id="startMapping" class="primary">开始建图</button><button id="finishMapping">结束并保存</button></div>
+        <p class="muted">建图时保持 RViz 开启，用于查看扫描和回环状态。</p>
+      </div></div></div>
+    </div>
     <div id="routineEditorModal" class="modal fade editor-modal" tabindex="-1" role="dialog" aria-hidden="true">
       <div class="modal-dialog modal-xl modal-dialog-scrollable" role="document">
         <div class="modal-content">
@@ -1204,6 +1224,7 @@
     <script src="/static/vendor/jquery-3.4.1.min.js"></script>
     <script src="/static/vendor/bootstrap-4.4.1.bundle.min.js"></script>
     <script>
+      const detailMapId = {{ detail_map_id|default('', true)|tojson }};
       let csrf = "",
         user = null,
         needsSetup = false,
@@ -1387,6 +1408,7 @@
         $("who").textContent = `${user.username} · ${user.role}`;
         tabs();
         await refreshAll();
+        if (detailMapId && selectedMap()?.id !== detailMapId) await selectMapById(detailMapId);
         setInterval(status, 1000);
       }
       async function refreshAll() {
@@ -1423,11 +1445,15 @@
           : "尚未选择地图";
         $("waypointMap").textContent = current ? current.name : "未选择地图";
         $("markBtn").disabled = !current;
+        htmlTarget("mapCards").content = maps.map((map) => `<article class="map-card ${map.selected ? "selected" : ""}" data-map-detail="${esc(map.id)}"><a class="map-thumb-link" href="/maps/${encodeURIComponent(map.id)}" aria-label="打开 ${esc(map.name)} 详情"><canvas class="map-thumb" data-map-thumb="${esc(map.id)}" width="320" height="150"></canvas></a><div class="map-card-head"><h3>${esc(map.name)}</h3><span class="state-badge ${map.status === "ready" ? "active" : map.status === "failed" ? "error" : ""}">${map.status}</span></div><div class="map-card-meta"><span>${map.backend === "spark_sam" ? "Spark + SAM" : "FAST-LIO"}</span><span>${map.waypoint_count} 个点位</span><span>${esc(map.created_at)}</span><span>${map.selected ? "当前使用" : ""}</span></div><div class="actions"><a href="/maps/${encodeURIComponent(map.id)}"><button type="button">地图详情</button></a><button data-selectmap="${map.id}" ${map.selected || map.status !== "ready" ? "disabled" : ""}>选择</button><button data-navmap="${map.id}" ${map.status !== "ready" ? "disabled" : ""}>加载导航</button><button class="danger" data-delmap="${map.id}" ${map.selected || map.status === "saving" ? "disabled" : ""}>删除</button></div></article>`).join("") || '<p class="muted">暂无地图，请先新建地图。<br><button type="button" data-open-map-create>新建地图</button></p>';
+        document.querySelectorAll("[data-map-detail]").forEach((card) => card.onclick = (event) => { if (!event.target.closest("a,button")) window.location.href = `/maps/${encodeURIComponent(card.dataset.mapDetail)}`; });
+        document.querySelectorAll("[data-open-map-create]").forEach((button) => button.onclick = () => window.jQuery("#mapCreatePanel").modal("show"));
+        loadMapThumbnails();
         htmlTarget("mapRows").content =
           maps
             .map(
               (map) =>
-                `<tr><td><span class="map-name">${esc(map.name)}</span>${map.selected ? '<div class="map-current">当前地图</div>' : ""}</td><td>${map.backend === "spark_sam" ? "Spark + SAM" : "FAST-LIO"}</td><td>${esc(map.created_at)}</td><td>${map.waypoint_count}</td><td><span class="state-badge ${map.status === "ready" ? "active" : map.status === "failed" ? "error" : ""}">${map.status}</span></td><td><div class="map-path" title="${esc(map.yaml_path)}">${esc(map.yaml_path || "-")}</div></td><td class="actions"><button data-selectmap="${map.id}" ${map.selected || map.status !== "ready" ? "disabled" : ""}>选择</button><button data-navmap="${map.id}" ${map.status !== "ready" ? "disabled" : ""}>加载导航</button><button data-editmap="${map.id}" ${!map.selected || map.status !== "ready" ? "disabled" : ""}>编辑</button><button class="danger" data-delmap="${map.id}" ${map.selected || map.status === "saving" ? "disabled" : ""}>删除</button></td></tr>`,
+                `<tr><td><a href="/maps/${encodeURIComponent(map.id)}"><span class="map-name">${esc(map.name)}</span></a>${map.selected ? '<div class="map-current">当前地图</div>' : ""}</td><td>${map.backend === "spark_sam" ? "Spark + SAM" : "FAST-LIO"}</td><td>${esc(map.created_at)}</td><td>${map.waypoint_count}</td><td><span class="state-badge ${map.status === "ready" ? "active" : map.status === "failed" ? "error" : ""}">${map.status}</span></td><td><div class="map-path" title="${esc(map.yaml_path)}">${esc(map.yaml_path || "-")}</div></td><td class="actions"><button data-selectmap="${map.id}" ${map.selected || map.status !== "ready" ? "disabled" : ""}>选择</button><button data-navmap="${map.id}" ${map.status !== "ready" ? "disabled" : ""}>加载导航</button><button data-editmap="${map.id}" ${!map.selected || map.status !== "ready" ? "disabled" : ""}>编辑</button><button class="danger" data-delmap="${map.id}" ${map.selected || map.status === "saving" ? "disabled" : ""}>删除</button></td></tr>`,
             )
             .join("") ||
           '<tr><td colspan="7" class="muted">暂无地图，请先开始建图。</td></tr>';
@@ -1435,18 +1461,18 @@
           .querySelectorAll("[data-selectmap]")
           .forEach(
             (button) =>
-              (button.onclick = () => selectMapById(button.dataset.selectmap)),
+              (button.onclick = (event) => { event.stopPropagation(); return selectMapById(button.dataset.selectmap); }),
           );
         document
           .querySelectorAll("[data-navmap]")
           .forEach(
             (button) =>
-              (button.onclick = () =>
-                startNavigationForMap(button.dataset.navmap)),
+              (button.onclick = (event) => { event.stopPropagation(); return startNavigationForMap(button.dataset.navmap); }),
           );
         document.querySelectorAll("[data-editmap]").forEach(
           (button) =>
-            (button.onclick = () => {
+            (button.onclick = (event) => {
+              event.stopPropagation();
               const link = document.createElement("a");
               link.href = `/map-editor?map_id=${encodeURIComponent(button.dataset.editmap)}`;
               link.target = "_blank";
@@ -1455,7 +1481,8 @@
             }),
         );
         document.querySelectorAll("[data-delmap]").forEach((button) => {
-          button.onclick = async () => {
+          button.onclick = async (event) => {
+            event.stopPropagation();
             if (!confirm("删除地图及其绑定点位？")) return;
             try {
               await api(`/api/maps/${button.dataset.delmap}`, { method: "DELETE" });
@@ -1466,6 +1493,22 @@
             }
           };
         });
+      }
+      async function loadMapThumbnails() {
+        for (const canvas of document.querySelectorAll("[data-map-thumb]")) {
+          try {
+            const response = await fetch(`/api/maps/${encodeURIComponent(canvas.dataset.mapThumb)}/preview`, { headers: { "X-CSRF-Token": csrf } });
+            if (!response.ok) continue;
+            const pgm = parsePgm(new Uint8Array(await response.arrayBuffer()));
+            const ctx = canvas.getContext("2d");
+            const scale = Math.min(canvas.width / pgm.width, canvas.height / pgm.height);
+            const image = new ImageData(pgm.width, pgm.height);
+            for (let i = 0; i < pgm.pixels.length; i += 1) image.data.set([pgm.pixels[i], pgm.pixels[i], pgm.pixels[i], 255], i * 4);
+            const source = document.createElement("canvas"); source.width = pgm.width; source.height = pgm.height; source.getContext("2d").putImageData(image, 0, 0);
+            ctx.fillStyle = "#eef2f6"; ctx.fillRect(0, 0, canvas.width, canvas.height);
+            ctx.drawImage(source, (canvas.width - pgm.width * scale) / 2, (canvas.height - pgm.height * scale) / 2, pgm.width * scale, pgm.height * scale);
+          } catch (_) { /* unavailable map preview stays neutral */ }
+        }
       }
       async function loadMaps() {
         maps = await api("/api/maps");
@@ -1540,6 +1583,10 @@
             : "/api/waypoints";
         const rows = await api(path);
         mapWaypoints = rows;
+        const pointOptions = rows.filter((w) => w.frame_id === "map").map((w) => `<option value="${esc(w.name)}">${esc(w.name)} (${w.x.toFixed(2)}, ${w.y.toFixed(2)})</option>`).join("");
+        htmlTarget("cruiseWaypoints").content = pointOptions;
+        htmlTarget("scheduleInitialWaypoint").content = '<option value="">导航初始点位</option>' + pointOptions;
+        loadCruiseSchedules();
         renderInitialWaypointPicker();
         redrawMapPreviews();
         htmlTarget("waypointRoutine").content =
@@ -1549,10 +1596,10 @@
           rows
             .map(
               (w) =>
-                `<tr><td>${esc(w.name)}</td><td>${esc(maps.find((map) => map.id === w.map_id)?.name || "未绑定")}</td><td>${w.x.toFixed(2)}, ${w.y.toFixed(2)}</td><td><select data-bind="${esc(w.name)}"><option value="">-</option>${routines.map((r) => `<option ${r.name === w.routine ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></td><td class="actions"><button data-runwp="${esc(w.name)}">执行</button><button class="danger" data-delwp="${esc(w.name)}">删除</button></td></tr>`,
+                `<tr><td>${esc(w.name)}</td><td>${w.x.toFixed(2)}, ${w.y.toFixed(2)}</td><td><select data-bind="${esc(w.name)}"><option value="">-</option>${routines.map((r) => `<option ${r.name === w.routine ? "selected" : ""}>${esc(r.name)}</option>`).join("")}</select></td><td class="actions"><button data-runwp="${esc(w.name)}">执行</button><button class="danger" data-delwp="${esc(w.name)}">删除</button></td></tr>`,
             )
             .join("") ||
-          '<tr><td colspan="5" class="muted">当前地图暂无点位。</td></tr>';
+          '<tr><td colspan="4" class="muted">当前地图暂无点位。</td></tr>';
         document.querySelectorAll("[data-bind]").forEach(
           (x) =>
             (x.onchange = () =>
@@ -1582,6 +1629,15 @@
               .then(loadWaypoints)
                 .catch((e) => msg(e.message))),
         );
+      }
+      async function loadCruiseSchedules() {
+        const current = selectedMap();
+        if (!current) return;
+        const rows = await api(`/api/navigation/cruise/schedules?map_id=${encodeURIComponent(current.id)}`);
+        htmlTarget("cruiseScheduleRows").content = rows.map((s) => `<tr><td>${esc(s.daily_time)}</td><td>${esc(s.initial_waypoint)}</td><td>${esc(s.waypoint_names.join(" → "))}</td><td>${s.repeat_count}</td><td>${s.enabled ? (s.last_result || "已启用") : "已停用"}</td><td class="actions"><button data-runschedule="${s.id}">立即执行</button><button data-toggleschedule="${s.id}" data-enabled="${s.enabled}">${s.enabled ? "停用" : "启用"}</button><button class="danger" data-delschedule="${s.id}">删除</button></td></tr>`).join("") || '<tr><td colspan="6" class="muted">暂无每日巡航计划</td></tr>';
+        document.querySelectorAll("[data-runschedule]").forEach((b) => b.onclick = () => api(`/api/navigation/cruise/schedules/${b.dataset.runschedule}/run`, {method:"POST"}).then(loadCruiseSchedules).catch((e) => msg(e.message)));
+        document.querySelectorAll("[data-toggleschedule]").forEach((b) => b.onclick = () => api(`/api/navigation/cruise/schedules/${b.dataset.toggleschedule}`, {method:"PATCH", json:{enabled: b.dataset.enabled !== "true"}}).then(loadCruiseSchedules).catch((e) => msg(e.message)));
+        document.querySelectorAll("[data-delschedule]").forEach((b) => b.onclick = () => confirm("删除巡航计划？") && api(`/api/navigation/cruise/schedules/${b.dataset.delschedule}`, {method:"DELETE"}).then(loadCruiseSchedules).catch((e) => msg(e.message)));
       }
       function renderInitialWaypointPicker() {
         const points = mapWaypoints.filter((waypoint) => waypoint.frame_id === "map");
@@ -2563,8 +2619,18 @@
           backend: $("mappingBackend").value,
         });
       };
+      $("openMapCreate").onclick = () => {
+        window.jQuery("#mapCreatePanel").modal("show");
+      };
+      $("openMapEditor").onclick = () => {
+        const map = selectedMap();
+        if (!map) return msg("请先选择地图");
+        window.open(`/map-editor?map_id=${encodeURIComponent(map.id)}`, "_blank", "noopener");
+      };
       $("finishMapping").onclick = () =>
-        navigationAction("/api/navigation/mapping/finish", {});
+        navigationAction("/api/navigation/mapping/finish", {}).then((result) => {
+          if (result) window.jQuery("#mapCreatePanel").modal("hide");
+        });
       $("startNavigation").onclick = () => {
         const map = selectedMap();
         if (!map) return msg("请先选择地图");
@@ -2573,11 +2639,20 @@
       $("stopNavigation").onclick = () =>
         navigationAction("/api/navigation/stop", {});
       $("startCruise").onclick = () =>
-        navigationAction("/api/navigation/cruise/start", {});
+        navigationAction("/api/navigation/cruise/start", {map_id: selectedMap()?.id, waypoint_names: [...$("cruiseWaypoints").selectedOptions].map((x) => x.value), repeat: Number($("cruiseRepeat").value || 1)});
       $("stopCruise").onclick = () =>
         navigationAction("/api/navigation/cruise/stop", {});
       $("resumeCruise").onclick = () =>
         navigationAction("/api/navigation/cruise/resume", {});
+      $("saveCruiseSchedule").onclick = async () => {
+        const current = selectedMap();
+        const names = [...$("cruiseWaypoints").selectedOptions].map((x) => x.value);
+        try {
+          if (!current || !names.length || !$("scheduleInitialWaypoint").value || !$("scheduleTime").value) throw Error("请选择地图、初始点位、巡航点位和每日时间");
+          await api("/api/navigation/cruise/schedules", {method:"POST", json:{map_id:current.id, initial_waypoint:$("scheduleInitialWaypoint").value, waypoint_names:names, repeat_count:Number($("cruiseRepeat").value || 1), daily_time:$("scheduleTime").value, enabled:true}});
+          await loadCruiseSchedules(); msg("每日巡航计划已保存");
+        } catch (e) { msg(e.message); }
+      };
       $("refreshMaps").onclick = loadMaps;
       $("loginForm").onsubmit = (e) => {
         e.preventDefault();

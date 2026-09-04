@@ -108,7 +108,7 @@ def test_sam_mapping_saves_pcd_in_timestamp_directory(tmp_path):
     assert calls[0][4] == "/km_sam/save_dir"
 
 
-def test_navigation_uses_explicit_map_paths_without_changing_cli_launch(tmp_path):
+def test_navigation_resolves_rviz_environment_when_web_launches_it(tmp_path):
     yaml_path = tmp_path / "dated" / "map.yaml"
     pcd_path = tmp_path / "dated" / "cloud.pcd"
     yaml_path.parent.mkdir()
@@ -126,7 +126,9 @@ def test_navigation_uses_explicit_map_paths_without_changing_cli_launch(tmp_path
 
     assert result.success is True
     assert calls[0] == [
-        "ros2", "launch", "ranger_nav", "navigation_3dloc.launch.py",
+        "/bin/bash", "-lc",
+        'source "$KRT_WORKSPACE/deploy/systemd/krt-rviz-env.sh"; exec "$@"',
+        "bash", "ros2", "launch", "ranger_nav", "navigation_3dloc.launch.py",
         f"map:={yaml_path}", f"pcd_map_path:={pcd_path}", "rviz:=true",
     ]
 
@@ -219,3 +221,14 @@ def test_3d_navigation_stops_launch_when_diagnostics_timeout(tmp_path):
     assert result.success is False
     assert "missing TF odom -> base_footprint" in result.message
     assert process.returncode == 0
+
+
+def test_start_cruise_rejects_existing_process(tmp_path):
+    process = FakeProcess()
+    adapter = RangerNavAdapter(config(tmp_path), popen=lambda *_args, **_kwargs: process)
+    adapter._cruise_process = process
+
+    result = adapter.start_cruise(["入口"])
+
+    assert result.success is False
+    assert "已经在执行" in result.message

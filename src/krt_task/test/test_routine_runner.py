@@ -4,6 +4,7 @@ from types import SimpleNamespace
 import cv2
 import numpy as np
 import pytest
+import rclpy
 from sensor_msgs.msg import CompressedImage
 from rclpy.action import GoalResponse
 
@@ -45,6 +46,33 @@ class FakeRunner:
         return True
 
 
+class FakeTtsFailureRunner:
+    skip_speech = RoutineRunnerNode.skip_speech
+
+    def __init__(self, response):
+        self.response = response
+        self.feedback_steps = []
+        self.warnings = []
+
+    def create_client(self, *_args):
+        return FakeClient()
+
+    def get_parameter(self, name):
+        return SimpleNamespace(value={
+            "tts_service": "/voice/tts/synthesize",
+            "tts_timeout_s": 20.0,
+        }[name])
+
+    def wait_future(self, _goal_handle, _future, timeout):
+        return self.response
+
+    def feedback(self, _goal_handle, current_step):
+        self.feedback_steps.append(current_step)
+
+    def get_logger(self):
+        return SimpleNamespace(warning=self.warnings.append)
+
+
 def test_speak_waits_for_estimated_playback_before_next_step():
     runner = FakeRunner()
     goal_handle = object()
@@ -55,6 +83,67 @@ def test_speak_waits_for_estimated_playback_before_next_step():
         "timeout_s": 2.0,
     })
     assert runner.wait_calls == [(goal_handle, {"wait_ms": 1630})]
+
+
+@pytest.mark.parametrize("response", [
+    None,
+    SimpleNamespace(accepted=False, error_message="音频设备不可用"),
+])
+def test_speak_runtime_failure_is_skipped_and_routine_continues(response):
+    runner = FakeTtsFailureRunner(response)
+
+    assert RoutineRunnerNode.speak(runner, object(), {"text": "播报失败也继续"})
+
+    assert runner.feedback_steps == ["speak:skipped"]
+    assert len(runner.warnings) == 1
+    assert "speech was skipped" in runner.warnings[0]
+
+
+def test_speak_uses_twenty_second_default_timeout():
+    rclpy.init()
+    runner = RoutineRunnerNode()
+    try:
+        assert runner.get_parameter("tts_timeout_s").value == 20.0
+    finally:
+        runner.destroy_node()
+        rclpy.shutdown()
+
+
+def test_speak_missing_text_remains_invalid_routine_content():
+    runner = FakeTtsFailureRunner(None)
+
+    with pytest.raises(ValueError, match="speak 缺少 text"):
+        RoutineRunnerNode.speak(runner, object(), {})
+
+    assert runner.feedback_steps == []
+    assert runner.warnings == []
+
+
+def test_speak_nonnumeric_timeout_remains_invalid_routine_content():
+    runner = FakeTtsFailureRunner(None)
+
+    with pytest.raises(ValueError):
+        RoutineRunnerNode.speak(
+            runner, object(), {"text": "无效超时", "timeout_s": "not-a-number"}
+        )
+
+    assert runner.feedback_steps == []
+    assert runner.warnings == []
+
+
+@pytest.mark.parametrize("timeout_s", [0, -1, float("nan"), float("inf")])
+def test_speak_nonpositive_or_nonfinite_timeout_remains_invalid_routine_content(
+    timeout_s,
+):
+    runner = FakeTtsFailureRunner(None)
+
+    with pytest.raises(ValueError):
+        RoutineRunnerNode.speak(
+            runner, object(), {"text": "无效超时", "timeout_s": timeout_s}
+        )
+
+    assert runner.feedback_steps == []
+    assert runner.warnings == []
 
 
 class FakeGripperRunner:

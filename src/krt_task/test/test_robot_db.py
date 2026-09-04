@@ -163,7 +163,7 @@ def test_gripper_action_storage_and_schema_migration(tmp_path):
     assert database.list_gripper_actions()[0]["name"] == "左手张开"
     assert "targets_json" not in database.list_gripper_actions()[0]
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
 
 
 def test_routine_configuration_saves_normalized_voice_trigger(tmp_path):
@@ -286,7 +286,7 @@ def test_schema_v5_migrates_existing_routine_to_voice_trigger_tables(tmp_path):
 
     assert database.get_routine("旧流程")["steps"][0]["wait_ms"] == 10
     with sqlite3.connect(path) as connection:
-        assert connection.execute("PRAGMA user_version").fetchone()[0] == 6
+        assert connection.execute("PRAGMA user_version").fetchone()[0] == 7
         assert {
             row[0]
             for row in connection.execute(

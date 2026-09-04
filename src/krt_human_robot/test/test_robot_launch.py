@@ -46,4 +46,5 @@ def test_routine_describe_uses_camera_select_and_surfaces_failure_message():
     assert '["head","头部"]' in compact
     assert '["left_palm","左手"]' in compact
     assert '["right_palm","右手"]' in compact
-    assert 'if(s.status==="failed"&&s.message)msg(s.message)' in compact
+    assert '["failed","canceled","cancelled"].includes(s.status)' in compact
+    assert "msg(s.message)" in compact

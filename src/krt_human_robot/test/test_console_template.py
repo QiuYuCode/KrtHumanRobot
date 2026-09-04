@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 TEMPLATE = Path(__file__).parents[1] / "templates" / "console.html"
@@ -6,6 +7,195 @@ MAP_EDITOR = Path(__file__).parents[1] / "static" / "map_editor.html"
 
 def compact(html: str) -> str:
     return "".join(html.split())
+
+
+def test_console_execution_terminal_states_are_idle_and_notified_once_per_run():
+    """A poll must not repeat a terminal error, but a later run may report one."""
+    html = TEMPLATE.read_text(encoding="utf-8")
+    start = html.find("function renderExecutionStatus")
+    assert start >= 0, "execution status rendering should be separately testable"
+    end = html.find("async function status", start)
+    renderer = html[start:end]
+
+    script = """
+const elements = {
+  execStatus: { textContent: "" },
+  cancelBtn: { disabled: true },
+};
+const notices = [];
+const $ = (id) => elements[id];
+const msg = (message) => notices.push(message);
+let terminalExecutionNotified = false;
+%s
+const poll = (status, message = "") => renderExecutionStatus({
+  status, mode: "routine", current_step: "步骤", message,
+});
+poll("running");
+if (elements.execStatus.textContent !== "routine · 步骤" || elements.cancelBtn.disabled)
+  throw new Error("running state was not rendered");
+poll("failed", "执行失败");
+if (elements.execStatus.textContent !== "空闲" || !elements.cancelBtn.disabled)
+  throw new Error("terminal state was not rendered as idle");
+poll("failed", "执行失败");
+if (notices.join("|") !== "执行失败")
+  throw new Error("terminal failure was notified more than once");
+poll("running");
+poll("canceled", "已取消");
+if (notices.join("|") !== "执行失败|已取消")
+  throw new Error("a later run did not reset terminal notification dedupe");
+""" % renderer
+
+    result = subprocess.run(
+        ["node", "-e", script], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_console_successful_start_resets_terminal_notification_without_polling_running():
+    """A short run can finish between polls and must still notify independently."""
+    html = TEMPLATE.read_text(encoding="utf-8")
+    renderer_start = html.find("function renderExecutionStatus")
+    start_execution = html.find("async function startExecution", renderer_start)
+    status_start = html.find("async function status", start_execution)
+    assert renderer_start >= 0 and start_execution >= 0 and status_start >= 0
+    renderer = html[renderer_start:start_execution]
+    starter = html[start_execution:status_start]
+
+    script = """
+const elements = {
+  execStatus: { textContent: "" },
+  cancelBtn: { disabled: true },
+};
+const $ = (id) => elements[id];
+const notices = [];
+const msg = (message) => notices.push(message);
+let terminalExecutionNotified = false;
+let executionEpoch = 0;
+%s
+%s
+const terminal = () => renderExecutionStatus({
+  status: "failed", mode: "routine", current_step: "", message: "执行失败",
+});
+terminal();
+let resolveStart;
+const start = startExecution(() => new Promise((resolve) => { resolveStart = resolve; }));
+terminal();
+if (notices.join("|") !== "执行失败")
+  throw new Error("a pending start reset terminal notification too early");
+resolveStart();
+await start;
+terminal();
+if (notices.join("|") !== "执行失败|执行失败")
+  throw new Error("a successful start did not reset terminal notification without a running poll");
+""" % (renderer, starter)
+
+    result = subprocess.run(
+        ["node", "-e", script], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_console_discards_pre_start_terminal_poll_response():
+    """A terminal response from before a successful start belongs to an old run."""
+    html = TEMPLATE.read_text(encoding="utf-8")
+    renderer_start = html.find("function renderExecutionStatus")
+    start_execution = html.find("async function startExecution", renderer_start)
+    status_start = html.find("async function status", start_execution)
+    status_end = html.find("document.querySelectorAll(\"[data-robot-control]\")", status_start)
+    assert renderer_start >= 0 and start_execution >= 0 and status_end >= 0
+    renderer = html[renderer_start:start_execution]
+    starter = html[start_execution:status_start]
+    status = html[status_start:status_end]
+
+    script = """
+const elements = {
+  execStatus: { textContent: "" },
+  cancelBtn: { disabled: true },
+  grippers: { classList: { contains: () => false } },
+  actionGroups: { classList: { contains: () => false } },
+  routines: { classList: { contains: () => false } },
+};
+const $ = (id) => elements[id];
+const notices = [];
+const msg = (message) => notices.push(message);
+let user = {};
+let terminalExecutionNotified = false;
+let executionStatusPolling = false;
+let executionEpoch = 0;
+const responses = [];
+const api = () => new Promise((resolve) => responses.push(resolve));
+const loadNavigationStatus = () => {};
+const loadGripperSystem = () => {};
+const loadRobotSystems = () => {};
+%s
+%s
+%s
+const oldPoll = status();
+await startExecution(() => Promise.resolve());
+responses[0]({ status: "failed", mode: "routine", current_step: "", message: "旧失败" });
+await oldPoll;
+const newPoll = status();
+responses[1]({ status: "failed", mode: "routine", current_step: "", message: "新失败" });
+await newPoll;
+if (notices.join("|") !== "新失败")
+  throw new Error("a pre-start terminal response was rendered instead of being discarded");
+""" % (renderer, starter, status)
+
+    result = subprocess.run(
+        ["node", "-e", script], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_console_status_polling_does_not_overlap_terminal_state_updates():
+    """An older running response must not reset terminal notification state."""
+    html = TEMPLATE.read_text(encoding="utf-8")
+    renderer_start = html.find("function renderExecutionStatus")
+    status_start = html.find("async function status", renderer_start)
+    status_end = html.find("document.querySelectorAll(\"[data-robot-control]\")", status_start)
+    assert renderer_start >= 0 and status_start >= 0 and status_end >= 0
+    renderer = html[renderer_start:status_start]
+    status = html[status_start:status_end]
+
+    script = """
+const elements = {
+  execStatus: { textContent: "" },
+  cancelBtn: { disabled: true },
+  grippers: { classList: { contains: () => false } },
+  actionGroups: { classList: { contains: () => false } },
+  routines: { classList: { contains: () => false } },
+};
+const $ = (id) => elements[id];
+const notices = [];
+const msg = (message) => notices.push(message);
+let user = {};
+let terminalExecutionNotified = false;
+let executionStatusPolling = false;
+let executionEpoch = 0;
+const responses = [];
+const api = () => new Promise((resolve) => responses.push(resolve));
+const loadNavigationStatus = () => {};
+const loadGripperSystem = () => {};
+const loadRobotSystems = () => {};
+%s
+%s
+const olderPoll = status();
+const overlappingPoll = status();
+if (responses.length !== 1)
+  throw new Error("an overlapping poll can let a stale running response reset a terminal notification");
+responses[0]({ status: "failed", mode: "routine", current_step: "", message: "执行失败" });
+await Promise.all([olderPoll, overlappingPoll]);
+const repeatPoll = status();
+responses[1]({ status: "failed", mode: "routine", current_step: "", message: "执行失败" });
+await repeatPoll;
+if (notices.join("|") !== "执行失败")
+  throw new Error("terminal failure was notified more than once");
+""" % (renderer, status)
+
+    result = subprocess.run(
+        ["node", "-e", script], text=True, capture_output=True, check=False
+    )
+    assert result.returncode == 0, result.stderr
 
 
 def test_console_uses_offline_material_sidebar():
@@ -93,6 +283,14 @@ def test_console_has_map_catalog_and_map_scoped_waypoints():
         "/map-editor?map_id=",
     ):
         assert path in html
+
+
+def test_waypoint_table_columns_match_rendered_rows():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    assert "<th>名称</th><th>坐标</th><th>编排动作</th><th>操作</th>" in html
+    assert '<td>${w.x.toFixed(2)}, ${w.y.toFixed(2)}</td><td><select data-bind=' in html
+    assert '<td>${esc(w.name)}</td><td>${esc(maps.find(' not in html
+    assert 'colspan="4" class="muted">当前地图暂无点位。' in html
 
 
 def test_console_supports_offline_waypoint_initialization_for_3d_navigation():
@@ -199,6 +397,23 @@ def test_console_uses_local_bootstrap_and_modal_editors():
     assert 'class="table table-hover list-table mb-0"' in html
     assert 'data-edit-routine' in html
     assert 'data-edit-gripper' in html
+
+
+def test_map_flow_isolated_by_page_mode_and_modal_is_root_level():
+    html = TEMPLATE.read_text(encoding="utf-8")
+    navigation = html.index('<section id="navigation"')
+    modal = html.index('<div id="mapCreatePanel"')
+    navigation_end = html.index("</section>", navigation)
+    assert modal > html.index("</main>")
+    assert modal > navigation_end
+    assert 'class="map-directory panel home-only"' in html
+    assert 'id="openMapCreate" class="primary home-only"' in html
+    assert 'body.home-mode .detail-only' in html
+    assert 'body.detail-mode .home-only' in html
+    assert 'body.detail-mode #mapCreatePanel' not in html
+    assert 'href="/" class="home-link">返回地图目录' in html
+    assert 'data-map-detail="${esc(map.id)}"' in html
+    assert 'event.stopPropagation()' in html
 
 
 def test_gripper_page_puts_monitoring_before_action_list_controls():

@@ -4,11 +4,14 @@ import os
 from pathlib import Path
 import subprocess
 
+import pytest
+
 
 WORKSPACE = Path(__file__).parents[3]
 X86_UNIT = WORKSPACE / "deploy" / "systemd" / "krt-x86.service"
 JETSON_UNIT = WORKSPACE / "deploy" / "systemd" / "krt-jetson.service"
 READINESS_SCRIPT = WORKSPACE / "deploy" / "systemd" / "krt-wait-ready.sh"
+RVIZ_ENV_SCRIPT = WORKSPACE / "deploy" / "systemd" / "krt-rviz-env.sh"
 X86_ENV_EXAMPLE = WORKSPACE / "deploy" / "env" / "x86.env.example"
 
 
@@ -23,11 +26,57 @@ def test_x86_unit_omits_empty_optional_tls_arguments():
     assert '"$${args[@]}"' in source
 
 
-def test_x86_unit_forwards_optional_rviz_display_environment():
+def test_x86_unit_does_not_resolve_rviz_before_the_web_launch():
     source = X86_UNIT.read_text(encoding="utf-8")
 
-    assert "KRT_RVIZ_DISPLAY" in source
-    assert "KRT_RVIZ_XAUTHORITY" in source
+    assert 'source "$KRT_WORKSPACE/deploy/systemd/krt-rviz-env.sh"' not in source
+
+
+@pytest.mark.parametrize("stale_socket", [False, True])
+def test_rviz_environment_falls_back_to_active_x11_session(tmp_path, stale_socket):
+    fake_bin = tmp_path / "bin"
+    fake_bin.mkdir()
+    (fake_bin / "loginctl").write_text(
+        "#!/bin/bash\n"
+        "if [[ $1 == list-sessions ]]; then printf '%s\n' '42 create -'; exit; fi\n"
+        "case $4 in Type) printf '%s\n' x11;; Remote) printf '%s\n' no;; "
+        "State) printf '%s\n' active;; Display) printf '%s\n' '';; esac\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "loginctl").chmod(0o755)
+    (fake_bin / "xdpyinfo").write_text(
+        "#!/bin/bash\n"
+        "[[ ${DISPLAY:-} == :1 ]]\n",
+        encoding="utf-8",
+    )
+    (fake_bin / "xdpyinfo").chmod(0o755)
+    socket_dir = tmp_path / ".X11-unix"
+    socket_dir.mkdir()
+    if stale_socket:
+        (socket_dir / "X0").symlink_to("/tmp/.X11-unix/X1")
+    (socket_dir / "X1").symlink_to("/tmp/.X11-unix/X1")
+    authority = tmp_path / "Xauthority"
+    authority.write_bytes(b"auth")
+    result = subprocess.run(
+        ["bash", str(RVIZ_ENV_SCRIPT)],
+        capture_output=True,
+        check=False,
+        env=os.environ | {
+            "PATH": f"{fake_bin}:{os.environ['PATH']}",
+            "USER": "create",
+            "HOME": str(tmp_path),
+            "UID": "1000",
+            "KRT_RVIZ_DISPLAY": ":0",
+            "KRT_RVIZ_XAUTHORITY": str(authority),
+            "KRT_X11_SOCKET_DIR": str(socket_dir),
+            "DISPLAY": "",
+            "XAUTHORITY": "",
+        },
+        cwd=tmp_path,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "DISPLAY=:1" in result.stdout
 
 
 def test_x86_readiness_accepts_the_configured_dds_bind_address(tmp_path):

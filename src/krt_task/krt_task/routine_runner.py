@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -21,7 +22,7 @@ from sensor_msgs.msg import CompressedImage, Image
 
 
 DEFAULT_TTS_SERVICE = "/voice/tts/synthesize"
-DEFAULT_TTS_TIMEOUT_S = 60.0
+DEFAULT_TTS_TIMEOUT_S = 20.0
 DEFAULT_VISION_SERVICE = "/krt_human_robot/vision/describe_scene"
 DEFAULT_PLAY_AUDIO_ACTION = "/voice/playback/play"
 DEFAULT_ARM_ACTION = "/agx_action_group/run_action_group"
@@ -252,25 +253,39 @@ class RoutineRunnerNode(LifecycleNode):
         text = str(args.get("text", "")).strip()
         if not text:
             raise ValueError("speak 缺少 text")
+        timeout_s = float(
+            args.get("timeout_s", self.get_parameter("tts_timeout_s").value)
+        )
+        if not math.isfinite(timeout_s) or timeout_s <= 0.0:
+            raise ValueError("speak timeout_s 必须是大于 0 的有限数")
         client = self.create_client(
             SynthesizeSpeech, str(args.get("service", self.get_parameter("tts_service").value))
         )
-        if not client.wait_for_service(timeout_sec=2.0):
-            raise RuntimeError(f"TTS 服务不可用: {client.srv_name}")
+        try:
+            if not client.wait_for_service(timeout_sec=2.0):
+                return self.skip_speech(goal_handle, f"TTS 服务不可用: {client.srv_name}")
+        except RoutineCanceled:
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            return self.skip_speech(goal_handle, f"TTS 服务等待异常: {exc}")
         req = SynthesizeSpeech.Request()
         req.text = text
         req.language = str(args.get("language", "zh"))
         req.style = str(args.get("style", ""))
         req.priority = int(args.get("priority", 5))
-        response = self.wait_future(
-            goal_handle,
-            client.call_async(req),
-            float(args.get("timeout_s", self.get_parameter("tts_timeout_s").value)),
-        )
+        try:
+            response = self.wait_future(
+                goal_handle,
+                client.call_async(req),
+                timeout_s,
+            )
+        except RoutineCanceled:
+            raise
+        except Exception as exc:  # pylint: disable=broad-except
+            return self.skip_speech(goal_handle, f"TTS 调用异常: {exc}")
         if response is None or not response.accepted:
             detail = getattr(response, "error_message", "") if response else ""
-            self.get_logger().error(f"TTS 播报失败: {detail}")
-            return False
+            return self.skip_speech(goal_handle, f"TTS 播报失败: {detail}")
         duration_s = max(0.0, float(response.estimated_duration_sec))
         # ponytail: estimated completion plus device drain; return the playback
         # action result from TTS if exact completion timing becomes necessary.
@@ -278,6 +293,11 @@ class RoutineRunnerNode(LifecycleNode):
             goal_handle,
             {"wait_ms": int(round((duration_s + 0.1) * 1000))},
         )
+
+    def skip_speech(self, goal_handle, detail: str) -> bool:
+        self.feedback(goal_handle, "speak:skipped")
+        self.get_logger().warning(f"TTS speech was skipped: {detail}")
+        return True
 
     def describe(self, goal_handle, args: dict[str, Any]) -> bool:
         from voice_interfaces.srv import DescribeScene

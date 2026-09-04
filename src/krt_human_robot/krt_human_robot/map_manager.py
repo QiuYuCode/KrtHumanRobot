@@ -147,6 +147,8 @@ class MapManager:
             if self._mapping_map_id is not None or self._saving:
                 raise RuntimeError("建图或保存期间不能删除地图")
             record = self.database.get_map(map_id)
+            if self.database.list_cruise_schedules(record.id):
+                raise RuntimeError("请先删除该地图的巡航计划")
             if record.selected:
                 raise RuntimeError("当前地图不能删除，请先选择其他地图")
             if self._navigation_map_id == record.id:
@@ -237,6 +239,15 @@ class MapManager:
                 self._safe_path(record.yaml_path),
                 self._safe_path(record.pgm_path),
             )
+
+    def preview_path(self, map_id: str) -> Path:
+        record = self.database.get_map(map_id)
+        if record.status != "ready":
+            raise ValueError("只能预览已就绪的地图")
+        path = self._safe_path(record.pgm_path)
+        if not path.is_file():
+            raise FileNotFoundError("地图 PGM 文件不存在")
+        return path
 
     def replace_edited_map(
         self, map_id: str, yaml_bytes: bytes, pgm_bytes: bytes
