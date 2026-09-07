@@ -184,8 +184,8 @@ def generate_launch_description():
     rviz_node = Node(
         package='rviz2',
         executable='rviz2',
-        arguments=['-d', os.path.join(
-            nav2_share, 'rviz', 'nav2_default_view.rviz')],
+        arguments=['-d', LaunchConfiguration('rviz_config')],
+        parameters=[{'use_sim_time': use_sim_time}],
         condition=IfCondition(use_rviz),
     )
 
@@ -194,6 +194,11 @@ def generate_launch_description():
         DeclareLaunchArgument('pcd_map_path', default_value=''),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('rviz', default_value='true'),
+        DeclareLaunchArgument(
+            'rviz_config',
+            default_value=os.path.join(
+                ranger_nav_share, 'rviz', 'navigation_3dloc.rviz'),
+            description='RViz configuration for 3D localization navigation'),
         DeclareLaunchArgument('set_initial_pose', default_value='false'),
         DeclareLaunchArgument('initial_pose_x', default_value='0.0'),
         DeclareLaunchArgument('initial_pose_y', default_value='0.0'),

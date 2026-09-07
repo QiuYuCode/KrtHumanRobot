@@ -137,6 +137,32 @@ Web 控制台使用地图点位提供该初始位姿。
 
 默认语音“开始导航”通过 `krt_human_robot` 启动 3D Localization 模式。
 
+此模式默认加载 `rviz/navigation_3dloc.rviz`，以 Orbit 斜视角显示
+三维雷达地图（`/initial_map`，按高度着色）、实时点云
+（`/cloud_registered_body`，白色）、机器人以及全局/局部导航路径。
+无需 RGB 相机或相机与雷达标定。二维地图和代价地图默认关闭，
+可在 Displays 中勾选 `2D Map`、`Global Costmap`、`Local Costmap`。
+Views 面板中可选择保存的 `Navigation Top Down` 俯视视角，
+方便使用 **2D Pose Estimate** 和 **Nav2 Goal**；切换 Type 为 Orbit 可恢复旋转观察。
+
+通过 `rviz:=false` 关闭 RViz，或通过 `rviz_config:=/absolute/path/custom.rviz`
+覆盖显示配置。新增配置后先执行 `colcon build --packages-select ranger_nav --symlink-install`
+并加载 `install/setup.bash`。已有导航运行时，可单独打开新视图，无需重启导航：
+
+```bash
+rviz2 -d "$(ros2 pkg prefix ranger_nav)/share/ranger_nav/rviz/navigation_3dloc.rviz"
+```
+
+三维显示排查：
+
+- 静态地图为空：检查 `ros2 topic info -v /initial_map`；RViz 订阅应为
+  Reliable、Transient Local，以接收定位节点已经发布的地图。
+- 实时点云或机器人为空：先完成初始定位，确认 `map -> odom -> camera_init -> body`
+  TF 连通；Fixed Frame 保持 `map`。用 `ros2 topic hz /cloud_registered_body`
+  检查数据流，实时点云订阅使用 Best Effort、Volatile。
+- 地图不在视野内：选择地图上的点后使用 **Focus Camera**，或调整 Views 的
+  Focal Point 和 Distance。路径在规划发生后才会出现。
+
 ```bash
 ros2 run ranger_nav nav_tf_diagnostics
 ```
