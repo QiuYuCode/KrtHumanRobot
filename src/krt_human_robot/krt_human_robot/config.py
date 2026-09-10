@@ -76,8 +76,8 @@ ASR_DIR = MODELS_BASE / "sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02
 # sherpa-onnx 关键词检测
 KWS_DIR = MODELS_BASE / "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
 
-# sherpa-onnx VITS TTS
-TTS_DIR = MODELS_BASE / "vits-zh-hf-fanchen-C"
+# sherpa-onnx MeloTTS（VITS，中英文）
+TTS_DIR = MODELS_BASE / "vits-melo-tts-zh_en"
 
 # Silero VAD 模型
 VAD_DIR = MODELS_BASE / "silero_vad.onnx"
@@ -142,7 +142,7 @@ class RobotConfig:
     cloud_asr_preroll_seconds: float = 0.3
 
     # --- TTS 音色 ---
-    # fanchen-C 单说话人模型，sid 固定为 0
+    # MeloTTS 中英文单说话人模型，sid 固定为 0
     tts_speaker_id: int = 0
     tts_speed: float = 1.2
     tts_volume: float = 1.0  # 本地 TTS 音量增益，1.0=原始，>1.0 放大，超出 [-1,1] 自动截断

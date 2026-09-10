@@ -623,3 +623,50 @@ def test_local_pcm_conversion_timeout_returns_before_service_deadline():
     assert response.accepted is False
     assert response.error_message == "TTS 合成超时"
     assert submitted_goals == []
+
+
+@pytest.mark.parametrize("standard_model", [True, False])
+def test_local_model_prefers_standard_onnx_and_supports_legacy_names(
+    tmp_path, standard_model
+):
+    """A sidecar INT8 LFS pointer must not shadow the full standard model."""
+    (tmp_path / "model.int8.onnx").write_text(
+        "version https://git-lfs.github.com/spec/v1\n"
+    )
+    if standard_model:
+        (tmp_path / "model.onnx").write_bytes(b"test model")
+    else:
+        (tmp_path / "model.int8.onnx").unlink()
+        (tmp_path / "legacy.onnx").write_bytes(b"test model")
+    node = _cloud_node()
+    values = {
+        "tts_model_dir": str(tmp_path),
+        "num_threads": 2,
+        "onnx_provider": "cpu",
+    }
+    node.get_parameter = lambda name: _Parameter(values[name])
+    with patch.multiple(
+        tts_node.sherpa_onnx,
+        OfflineTtsConfig=lambda **kwargs: types.SimpleNamespace(**kwargs),
+        OfflineTtsModelConfig=lambda **kwargs: types.SimpleNamespace(**kwargs),
+        OfflineTtsVitsModelConfig=lambda **kwargs: types.SimpleNamespace(**kwargs),
+        OfflineTts=lambda config: config,
+        create=True,
+    ):
+        config = node._init_local_tts()
+    expected = "model.onnx" if standard_model else "legacy.onnx"
+    assert config.model.vits.model == str(tmp_path / expected)
+
+
+def test_text_split_preserves_english_word_boundaries():
+    node = tts_node.VoiceTtsNode.__new__(tts_node.VoiceTtsNode)
+    node.get_parameter = lambda name: _Parameter(
+        80 if name == "tts_max_chars_per_chunk" else None
+    )
+
+    segments = node._split_text("Hello   robot,\n how are you?")
+
+    assert [text for text, _pause in segments] == [
+        "Hello robot,",
+        "how are you?",
+    ]

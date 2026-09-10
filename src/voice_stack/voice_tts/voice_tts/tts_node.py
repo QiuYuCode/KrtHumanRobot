@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import re
 import threading
 import time
 import uuid
@@ -106,7 +107,11 @@ class VoiceTtsNode(Node):
             onnx_files = sorted(model_path.glob("*.onnx"))
             if not onnx_files:
                 raise FileNotFoundError(f"未找到 ONNX 模型: {model_dir}/*.onnx")
-            onnx_model = str(onnx_files[0])
+            # Prefer the standard model over optional quantized sidecars.
+            standard_model = model_path / "model.onnx"
+            onnx_model = str(
+                standard_model if standard_model.is_file() else onnx_files[0]
+            )
             config = sherpa_onnx.OfflineTtsConfig(
                 model=sherpa_onnx.OfflineTtsModelConfig(
                     vits=sherpa_onnx.OfflineTtsVitsModelConfig(
@@ -126,7 +131,16 @@ class VoiceTtsNode(Node):
     def _split_text(self, text: str) -> list[tuple[str, str]]:
         sentence_end = set("。！？.!?\n")
         clause_sep = set(",，;；:：、—")
-        cleaned = "".join(text.strip().split())
+        # Collapse formatting whitespace while retaining English word
+        # boundaries.  Spaces between adjacent CJK characters are removed so
+        # Chinese input keeps the pronunciation behavior of the old path.
+        cleaned = re.sub(r"\s+", " ", text.strip())
+        cleaned = re.sub(
+            r"(?<=[\u3400-\u4dbf\u4e00-\u9fff]) "
+            r"(?=[\u3400-\u4dbf\u4e00-\u9fff])",
+            "",
+            cleaned,
+        )
         if not cleaned:
             return []
         max_len = int(self.get_parameter("tts_max_chars_per_chunk").value)

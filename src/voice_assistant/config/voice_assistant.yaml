@@ -7,7 +7,7 @@
 # Paths are relative to voice_assistant/voice_assistant.
 asr_model_dir: model/voice_models/sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20
 kws_model_dir: model/voice_models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01
-tts_model_dir: model/voice_models/vits-zh-hf-fanchen-C
+tts_model_dir: model/voice_models/vits-melo-tts-zh_en
 vad_model_path: model/voice_models/silero_vad.onnx
 kws_keywords_file: model/voice_models/sherpa-onnx-kws-zipformer-wenetspeech-3.3M-2024-01-01/keywords.txt
 

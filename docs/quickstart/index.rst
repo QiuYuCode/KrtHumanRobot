@@ -243,6 +243,15 @@
 
 各模块可以独立启动并在另一个终端运行测试客户端：
 
+.. important::
+
+   完整语音栈与下面的单模块 launch **二选一**。完整语音栈已启动时，直接在
+   另一个终端运行测试客户端，不要再启动对应模块的 launch。否则会重复创建
+   TTS 服务和播放 action 服务端，出现请求或播放冲突。
+   单独运行 launch 只会启动服务；需要运行客户端才会合成并播放文字。
+
+   两个终端应加载相同的 ROS 环境和工作区，使用相同的 ``ROS_DOMAIN_ID``。
+
 .. code-block:: bash
 
    # KWS：说出配置文件中的唤醒词
@@ -261,6 +270,24 @@
    ros2 launch voice_assistant tts_test.launch.py
    ros2 run voice_test_tools tts_test_client --ros-args \
      -p text:="你好，这是语音合成测试"
+
+TTS 默认使用讯飞在线合成，本地 MeloTTS 是失败时的备用模型。要专门测试
+MeloTTS，先停止已启动的语音 launch，再从工作区根目录执行：
+
+.. code-block:: bash
+
+   # 终端 1：临时切换为离线合成，保留原配置
+   sed 's/^tts_backend:.*/tts_backend: local/' \
+     src/voice_assistant/config/voice_assistant.yaml > /tmp/voice_melotts_test.yaml
+   ros2 launch voice_assistant tts_test.launch.py \
+     config_file:=/tmp/voice_melotts_test.yaml
+
+   # 终端 2：提交一次合成和播放请求
+   ros2 run voice_test_tools tts_test_client --ros-args \
+     -p text:="你好，这是 MeloTTS 离线语音合成测试"
+
+合成节点日志应显示 ``backend=local``。客户端成功仅表示已提交播放；实际播放
+还应检查 ``voice_playback`` 的 ``playback finished`` 或 ``playback failed`` 日志。
 
 也可以直接观察事件或调用接口：
 

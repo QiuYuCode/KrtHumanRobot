@@ -29,8 +29,8 @@ download_and_extract \
   "sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20"
 
 download_and_extract \
-  "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2" \
-  "vits-zh-hf-fanchen-C"
+  "https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2" \
+  "vits-melo-tts-zh_en"
 
 if [[ ! -f silero_vad.onnx ]]; then
   echo "[warn] 请手动下载 silero_vad.onnx 到 $MODEL_DIR"

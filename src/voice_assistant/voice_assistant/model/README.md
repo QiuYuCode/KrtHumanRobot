@@ -12,10 +12,15 @@ voice_assistant/voice_assistant/model/voice_models/
 |------|-----------|------|
 | ASR | `sherpa-onnx-streaming-zipformer-bilingual-zh-en-2023-02-20/` | [sherpa-onnx ASR 模型](https://github.com/k2-fsa/sherpa-onnx/releases) |
 | KWS | `sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20/` | [KWS zh-en 3M](https://github.com/k2-fsa/sherpa-onnx/releases/download/kws-models/sherpa-onnx-kws-zipformer-zh-en-3M-2025-12-20.tar.bz2) |
-| TTS | `vits-zh-hf-fanchen-C/` | [vits-zh-hf-fanchen-C](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-zh-hf-fanchen-C.tar.bz2) |
+| TTS | `vits-melo-tts-zh_en/` | [vits-melo-tts-zh_en](https://github.com/k2-fsa/sherpa-onnx/releases/download/tts-models/vits-melo-tts-zh_en.tar.bz2) |
 | VAD | `silero_vad.onnx` | 放入 `voice_models/` 根目录 |
 
 ## 快速安装脚本
+
+离线备用 TTS 使用 sherpa-onnx 的 MeloTTS 中英文模型，说话人 ID 为 `0`。
+默认仍优先使用讯飞在线合成，失败后按现有策略回退本地。
+加载时优先使用 `model.onnx`，避免同目录的可选量化模型影响标准模型加载。
+已有旧模型可以保留；模型目录仍可通过 `tts_model_dir` 覆盖。
 
 ```bash
 # 从源码目录
