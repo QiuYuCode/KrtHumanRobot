@@ -57,6 +57,20 @@ ros2 run teleop_twist_keyboard teleop_twist_keyboard
 底层 launch：`mapping_spark.launch.py`（spark + livox + 底盘）。SAM 订阅 `/odometry` + `/cloud_registered`（世界系）。
 回环参数：`config/kiss_matcher_sam.yaml`；LIO 参数：`config/spark_fast_lio_mid360.yaml`。
 
+**MID360 机身 / 双臂自身点云过滤：**
+
+当前 Livox CustomMsg 非特征提取链路在 SPARK 预处理阶段剔除距离雷达原点
+不超过 `preprocess.blind` 的点（当前为 0.5 m，按 XYZ 三维距离计算），
+在里程计估计和 SAM 累积地图之前生效。双臂固定下垂时，先检查自身回波
+是否落在该范围内；不要直接屏蔽整个后半圈或扩大盲区，以免丢失真实环境点。
+`preprocess.blind_for_human_pilots` 仅用于其他雷达的特定处理分支，
+不作用于当前 MID360 CustomMsg 链路。
+
+旧版 SPARK 的距离判断存在 `&&` / `||` 优先级问题，X 或 Y 变化的近点
+可能绕过距离过滤；更新后需重新构建 `spark_fast_lio` 并重启建图进程。
+已有地图中的自身残影不会自动清除，需要重新建图或用原始雷达 / IMU bag
+重新生成地图。机械臂姿态改变后应重新验证自身回波范围。
+
 **RViz 无点云 / Global Status: Error 排查：**
 
 1. 确认 spark 在跑：`ros2 topic hz /odometry`、`ros2 topic hz /cloud_registered` 应有数据。
