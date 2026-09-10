@@ -397,17 +397,16 @@
         justify-content: center;
         overflow: auto;
       }
-      .map-preview-modal .modal-dialog {
+      .editor-modal.map-preview-modal .modal-dialog {
         max-width: min(92vw, 1400px);
       }
-      .map-preview-modal .modal-body {
-        display: flex;
-        justify-content: center;
+      .editor-modal.map-preview-modal .modal-body {
         max-height: 78vh;
         overflow: auto;
       }
       .map-preview-modal canvas {
         display: block;
+        margin: 0 auto;
         image-rendering: pixelated;
         cursor: crosshair;
       }
@@ -1761,10 +1760,11 @@
       }
       function fitMapCanvas(canvas, maxWidth, maxHeight) {
         if (!mapPreview) return;
-        const scale = Math.max(0.01, Math.min(
+        if (maxWidth <= 0 || maxHeight <= 0) return;
+        const scale = Math.min(
           maxWidth / mapPreview.width,
           maxHeight / mapPreview.height,
-        ));
+        );
         canvas.style.width = `${Math.floor(mapPreview.width * scale)}px`;
         canvas.style.height = `${Math.floor(mapPreview.height * scale)}px`;
       }
@@ -1816,7 +1816,14 @@
         fitMapCanvas(inlineCanvas, inlineCanvas.parentElement.clientWidth, 320);
         const modalCanvas = $("mapCanvasModal");
         redrawMapPreview(modalCanvas);
-        fitMapCanvas(modalCanvas, window.innerWidth * 0.84, window.innerHeight * 0.7);
+        const modalBody = modalCanvas.parentElement;
+        const bodyStyle = getComputedStyle(modalBody);
+        fitMapCanvas(
+          modalCanvas,
+          modalBody.clientWidth - parseFloat(bodyStyle.paddingLeft) - parseFloat(bodyStyle.paddingRight),
+          Math.min(parseFloat(bodyStyle.maxHeight), window.innerHeight * 0.7)
+            - parseFloat(bodyStyle.paddingTop) - parseFloat(bodyStyle.paddingBottom),
+        );
       }
       function mapCanvasPoint(event, canvas) {
         const rect = canvas.getBoundingClientRect();
@@ -2858,7 +2865,10 @@
       addEventListener("keydown", (e) => {
         if (e.key === "Escape") drawer(false);
       });
-      addEventListener("resize", () => drawer(false));
+      addEventListener("resize", () => {
+        drawer(false);
+        redrawMapPreviews();
+      });
       addEventListener("visibilitychange", () => {
         if (document.hidden) stopGripperMonitor();
       });
