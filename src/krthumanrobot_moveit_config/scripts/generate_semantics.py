@@ -2,6 +2,7 @@
 """Generate SRDF groups and structural collision exemptions from the URDF."""
 
 import argparse
+import math
 from itertools import combinations
 from pathlib import Path
 import xml.etree.ElementTree as ET
@@ -10,6 +11,7 @@ import xml.etree.ElementTree as ET
 ROOT = Path(__file__).resolve().parents[1]
 MODEL = ROOT.parent / "krthumanrobot_urdf" / "config" / "robot_moveit.urdf"
 OUTPUT = ROOT / "config" / "robot.srdf"
+INITIAL_SHOULDER_PITCH = math.pi / 2.0
 
 
 def build():
@@ -32,7 +34,7 @@ def build():
                 state,
                 "joint",
                 name=f"{side}_arm_link{index}_joint",
-                value="0",
+                value=str(INITIAL_SHOULDER_PITCH if index == 2 else 0.0),
             )
     both = ET.SubElement(robot, "group", name="both_arms")
     ET.SubElement(both, "group", name="left_arm")
@@ -44,7 +46,7 @@ def build():
                 state,
                 "joint",
                 name=f"{side}_arm_link{index}_joint",
-            value="0",
+            value=str(INITIAL_SHOULDER_PITCH if index == 2 else 0.0),
             )
 
     # Linked bodies share a joint frame; those collision pairs are structural.

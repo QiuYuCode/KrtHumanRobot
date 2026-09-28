@@ -61,3 +61,8 @@ TEST(CollisionModel, HorizontalShoulderPoseIsValidForWholeRobot)
 {
   check_pose(0.0);
 }
+
+TEST(CollisionModel, VerticalShoulderPoseIsValidForWholeRobot)
+{
+  check_pose(1.5707963267948966);
+}

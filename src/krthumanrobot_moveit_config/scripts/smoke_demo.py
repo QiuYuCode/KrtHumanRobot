@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Headless end-to-end planning and mock execution check."""
 
+import math
 import os
 import signal
 import subprocess
@@ -77,6 +78,16 @@ def main():
                 rclpy.spin_once(node, timeout_sec=0.2)
             if not states:
                 raise TimeoutError("joint states missing")
+            current = states[-1]
+            for side in ("left", "right"):
+                for index in range(1, 8):
+                    name = f"{side}_arm_link{index}_joint"
+                    expected = math.pi / 2.0 if index == 2 else 0.0
+                    actual = current.position[current.name.index(name)]
+                    assert abs(actual - expected) < 1e-6, (
+                        f"{name} initial state {actual} != {expected}"
+                    )
+            print("home joint state verified", flush=True)
             deadline = time.monotonic() + 5
             while not tf_buffer.can_transform(
                 "base_footprint", "base_link", rclpy.time.Time()
@@ -156,7 +167,7 @@ def main():
                         if target == "zero":
                             position = 0.0
                         elif target == "home":
-                            position = 0.0
+                            position = math.pi / 2.0 if index == 2 else 0.0
                         elif index == 7:
                             position += 0.05
                         targets[name] = position

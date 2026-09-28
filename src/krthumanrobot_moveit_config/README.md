@@ -13,6 +13,19 @@ source install/setup.bash
 ros2 launch krthumanrobot_moveit_config demo.launch.py
 ```
 
+使用本包自己的整机 URDF 控制两台 Nero 实机时，使用独立命名空间和 CAN
+端口启动官方驱动桥接：
+
+```bash
+ros2 launch krthumanrobot_moveit_config demo.launch.py \
+  execution_backend:=agx_topic \
+  left_can_port:=can_left right_can_port:=can_right
+```
+
+该模式使用本包的 `left_arm_link*_joint` / `right_arm_link*_joint` 规划关节，
+桥接到官方 Nero 驱动的 `joint1` 至 `joint7`。两臂独立规划；当前不接末端
+执行器，也不提供双臂联合规划的碰撞约束。
+
 无图形环境可用 `launch_rviz:=false`。演示使用地面根坐标系
 `base_footprint` 作为模型规划坐标系和 RViz Fixed Frame，网格平面为
 `z=0`；`base_link` 位于其上方约 0.667698 米，四轮轮底与地面对齐。
@@ -25,7 +38,8 @@ ros2 launch krthumanrobot_moveit_config demo.launch.py
 
 验收时先选择 `left_arm`，将 Start State 设为当前状态，再拖动末端小幅改变
 Goal State，点击 Plan，成功后再 Execute。`both_arms` 支持双臂联合规划；
-全零关节目标及 `home` 姿态均已验证。更新模型和 SRDF 后必须退出旧的
+全零关节目标和垂直向下的 `home` 姿态均已验证。`home` 姿态中左右第二关节为
+`+pi/2`，其余关节为零；全零目标仍表示第二关节水平零位。更新模型和 SRDF 后必须退出旧的
 演示进程并重新启动，已运行的节点不会自动重新加载文件。
 
 RViz 的碰撞着色会检查整机。SRDF 排除同一固定连接组件内部的安装接触，

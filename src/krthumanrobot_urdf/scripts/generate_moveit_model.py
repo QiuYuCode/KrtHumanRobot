@@ -2,6 +2,7 @@
 """Create a portable planning URDF and one convex collision mesh per link."""
 
 import argparse
+import math
 from pathlib import Path
 import struct
 import xml.etree.ElementTree as ET
@@ -27,6 +28,7 @@ DETAILED_COLLISION_LINKS = {
 # The CAD export uses -1.5 rad for the horizontal shoulder-pitch pose. MoveIt
 # exposes that pose as zero while preserving the same physical transform.
 ARM_LINK2_ZERO_OFFSET = 1.5
+INITIAL_SHOULDER_PITCH = math.pi / 2.0
 
 
 def stl_vertices(path):
@@ -211,7 +213,11 @@ def build():
         item = ET.SubElement(control, "joint", name=joint.get("name"))
         ET.SubElement(item, "command_interface", name="position")
         state = ET.SubElement(item, "state_interface", name="position")
-        initial = 0.0
+        initial = (
+            INITIAL_SHOULDER_PITCH
+            if joint.get("name", "").endswith("arm_link2_joint")
+            else 0.0
+        )
         ET.SubElement(state, "param", name="initial_value").text = str(initial)
         ET.SubElement(item, "state_interface", name="velocity")
     ET.indent(robot, space="  ")
