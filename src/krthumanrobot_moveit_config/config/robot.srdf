@@ -1,0 +1,231 @@
+<?xml version='1.0' encoding='utf-8'?>
+<robot name="eAI2810_dual_arm_review">
+  <group name="left_arm">
+    <chain base_link="left_arm_base_link" tip_link="left_hand_base_link" />
+  </group>
+  <group_state name="home" group="left_arm">
+    <joint name="left_arm_link1_joint" value="0" />
+    <joint name="left_arm_link2_joint" value="0" />
+    <joint name="left_arm_link3_joint" value="0" />
+    <joint name="left_arm_link4_joint" value="0" />
+    <joint name="left_arm_link5_joint" value="0" />
+    <joint name="left_arm_link6_joint" value="0" />
+    <joint name="left_arm_link7_joint" value="0" />
+  </group_state>
+  <group name="right_arm">
+    <chain base_link="right_arm_base_link" tip_link="right_hand_base_link" />
+  </group>
+  <group_state name="home" group="right_arm">
+    <joint name="right_arm_link1_joint" value="0" />
+    <joint name="right_arm_link2_joint" value="0" />
+    <joint name="right_arm_link3_joint" value="0" />
+    <joint name="right_arm_link4_joint" value="0" />
+    <joint name="right_arm_link5_joint" value="0" />
+    <joint name="right_arm_link6_joint" value="0" />
+    <joint name="right_arm_link7_joint" value="0" />
+  </group_state>
+  <group name="both_arms">
+    <group name="left_arm" />
+    <group name="right_arm" />
+  </group>
+  <group_state name="home" group="both_arms">
+    <joint name="left_arm_link1_joint" value="0" />
+    <joint name="left_arm_link2_joint" value="0" />
+    <joint name="left_arm_link3_joint" value="0" />
+    <joint name="left_arm_link4_joint" value="0" />
+    <joint name="left_arm_link5_joint" value="0" />
+    <joint name="left_arm_link6_joint" value="0" />
+    <joint name="left_arm_link7_joint" value="0" />
+    <joint name="right_arm_link1_joint" value="0" />
+    <joint name="right_arm_link2_joint" value="0" />
+    <joint name="right_arm_link3_joint" value="0" />
+    <joint name="right_arm_link4_joint" value="0" />
+    <joint name="right_arm_link5_joint" value="0" />
+    <joint name="right_arm_link6_joint" value="0" />
+    <joint name="right_arm_link7_joint" value="0" />
+  </group_state>
+  <disable_collisions link1="base_footprint" link2="base_link" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_bottom_screw_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_color_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_color_optical_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_depth_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_depth_optical_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_infra1_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_infra1_optical_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="base_footprint" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_bottom_screw_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_color_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_color_optical_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_depth_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_depth_optical_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_infra1_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_infra1_optical_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="front_left_wheel_link" reason="Adjacent" />
+  <disable_collisions link1="base_link" link2="front_right_wheel_link" reason="Adjacent" />
+  <disable_collisions link1="base_link" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="base_link" link2="rear_left_wheel_link" reason="Adjacent" />
+  <disable_collisions link1="base_link" link2="rear_right_wheel_link" reason="Adjacent" />
+  <disable_collisions link1="base_link" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_color_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_color_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_depth_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_depth_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_infra1_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_infra1_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_bottom_screw_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="camera_color_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="camera_depth_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="camera_depth_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="camera_infra1_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="camera_infra1_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="camera_depth_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="camera_depth_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="camera_infra1_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="camera_infra1_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_color_optical_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="camera_depth_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="camera_infra1_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="camera_infra1_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="camera_infra1_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="camera_infra1_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_depth_optical_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="camera_infra1_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_optical_frame" link2="camera_infra2_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_optical_frame" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_optical_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_optical_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_optical_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_optical_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_optical_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra1_optical_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_frame" link2="camera_infra2_optical_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_optical_frame" link2="camera_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_optical_frame" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_optical_frame" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_optical_frame" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_optical_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_infra2_optical_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_link" link2="head_link" reason="Fixed" />
+  <disable_collisions link1="camera_link" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="camera_link" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="camera_link" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="camera_link" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="head_link" link2="left_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="head_link" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="head_link" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="head_link" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="left_arm_base_link" link2="left_arm_link1" reason="Adjacent" />
+  <disable_collisions link1="left_arm_base_link" link2="livox_frame" reason="Fixed" />
+  <disable_collisions link1="left_arm_base_link" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="left_arm_base_link" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="left_arm_link1" link2="left_arm_link2" reason="Adjacent" />
+  <disable_collisions link1="left_arm_link2" link2="left_arm_link3" reason="Adjacent" />
+  <disable_collisions link1="left_arm_link3" link2="left_arm_link4" reason="Adjacent" />
+  <disable_collisions link1="left_arm_link4" link2="left_arm_link5" reason="Adjacent" />
+  <disable_collisions link1="left_arm_link5" link2="left_arm_link6" reason="Adjacent" />
+  <disable_collisions link1="left_arm_link5" link2="left_arm_link7" reason="Never" />
+  <disable_collisions link1="left_arm_link6" link2="left_arm_link7" reason="Adjacent" />
+  <disable_collisions link1="left_arm_link7" link2="left_hand_base_link" reason="Fixed" />
+  <disable_collisions link1="left_arm_link7" link2="left_palm_camera_link" reason="Fixed" />
+  <disable_collisions link1="left_arm_link7" link2="left_palm_camera_optical_frame" reason="Fixed" />
+  <disable_collisions link1="left_hand_base_link" link2="left_hand_link_f_1_2" reason="Adjacent" />
+  <disable_collisions link1="left_hand_base_link" link2="left_hand_link_f_2_1" reason="Adjacent" />
+  <disable_collisions link1="left_hand_base_link" link2="left_hand_link_f_3_1" reason="Adjacent" />
+  <disable_collisions link1="left_hand_base_link" link2="left_palm_camera_link" reason="Fixed" />
+  <disable_collisions link1="left_hand_base_link" link2="left_palm_camera_optical_frame" reason="Fixed" />
+  <disable_collisions link1="left_hand_link_f_1_2" link2="left_hand_link_f_1_3" reason="Adjacent" />
+  <disable_collisions link1="left_hand_link_f_2_1" link2="left_hand_link_f_2_2" reason="Adjacent" />
+  <disable_collisions link1="left_hand_link_f_2_2" link2="left_hand_link_f_2_3" reason="Adjacent" />
+  <disable_collisions link1="left_hand_link_f_3_1" link2="left_hand_link_f_3_2" reason="Adjacent" />
+  <disable_collisions link1="left_hand_link_f_3_2" link2="left_hand_link_f_3_3" reason="Adjacent" />
+  <disable_collisions link1="left_palm_camera_link" link2="left_palm_camera_optical_frame" reason="Fixed" />
+  <disable_collisions link1="livox_frame" link2="neck_link" reason="Fixed" />
+  <disable_collisions link1="livox_frame" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="neck_link" link2="right_arm_base_link" reason="Fixed" />
+  <disable_collisions link1="right_arm_base_link" link2="right_arm_link1" reason="Adjacent" />
+  <disable_collisions link1="right_arm_link1" link2="right_arm_link2" reason="Adjacent" />
+  <disable_collisions link1="right_arm_link2" link2="right_arm_link3" reason="Adjacent" />
+  <disable_collisions link1="right_arm_link3" link2="right_arm_link4" reason="Adjacent" />
+  <disable_collisions link1="right_arm_link4" link2="right_arm_link5" reason="Adjacent" />
+  <disable_collisions link1="right_arm_link5" link2="right_arm_link6" reason="Adjacent" />
+  <disable_collisions link1="right_arm_link5" link2="right_arm_link7" reason="Never" />
+  <disable_collisions link1="right_arm_link6" link2="right_arm_link7" reason="Adjacent" />
+  <disable_collisions link1="right_arm_link7" link2="right_hand_base_link" reason="Fixed" />
+  <disable_collisions link1="right_arm_link7" link2="right_palm_camera_link" reason="Fixed" />
+  <disable_collisions link1="right_arm_link7" link2="right_palm_camera_optical_frame" reason="Fixed" />
+  <disable_collisions link1="right_hand_base_link" link2="right_hand_link_f_1_2" reason="Adjacent" />
+  <disable_collisions link1="right_hand_base_link" link2="right_hand_link_f_2_1" reason="Adjacent" />
+  <disable_collisions link1="right_hand_base_link" link2="right_hand_link_f_3_1" reason="Adjacent" />
+  <disable_collisions link1="right_hand_base_link" link2="right_palm_camera_link" reason="Fixed" />
+  <disable_collisions link1="right_hand_base_link" link2="right_palm_camera_optical_frame" reason="Fixed" />
+  <disable_collisions link1="right_hand_link_f_1_2" link2="right_hand_link_f_1_3" reason="Adjacent" />
+  <disable_collisions link1="right_hand_link_f_2_1" link2="right_hand_link_f_2_2" reason="Adjacent" />
+  <disable_collisions link1="right_hand_link_f_2_2" link2="right_hand_link_f_2_3" reason="Adjacent" />
+  <disable_collisions link1="right_hand_link_f_3_1" link2="right_hand_link_f_3_2" reason="Adjacent" />
+  <disable_collisions link1="right_hand_link_f_3_2" link2="right_hand_link_f_3_3" reason="Adjacent" />
+  <disable_collisions link1="right_palm_camera_link" link2="right_palm_camera_optical_frame" reason="Fixed" />
+</robot>
