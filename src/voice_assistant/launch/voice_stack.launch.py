@@ -239,6 +239,27 @@ def _launch_setup(context, *args, **kwargs):
                 "cloud_tts_fallback_to_local": bool(
                     cfg.get("cloud_tts_fallback_to_local", True)
                 ),
+                "cloud_tts_timeout_chars_per_step": int(
+                    cfg.get("cloud_tts_timeout_chars_per_step", 15)
+                ),
+                "cloud_tts_attempt_timeout_base_sec": float(
+                    cfg.get("cloud_tts_attempt_timeout_base_sec", 5.0)
+                ),
+                "cloud_tts_attempt_timeout_per_step_sec": float(
+                    cfg.get("cloud_tts_attempt_timeout_per_step_sec", 1.0)
+                ),
+                "cloud_tts_attempt_timeout_max_sec": float(
+                    cfg.get("cloud_tts_attempt_timeout_max_sec", 18.0)
+                ),
+                "cloud_tts_request_timeout_base_sec": float(
+                    cfg.get("cloud_tts_request_timeout_base_sec", 20.0)
+                ),
+                "cloud_tts_request_timeout_per_step_sec": float(
+                    cfg.get("cloud_tts_request_timeout_per_step_sec", 2.0)
+                ),
+                "cloud_tts_request_timeout_max_sec": float(
+                    cfg.get("cloud_tts_request_timeout_max_sec", 50.0)
+                ),
                 "tts_model_dir": cfg.get("tts_model_dir", ""),
                 "tts_speaker_id": int(cfg.get("tts_speaker_id", 0)),
                 "tts_speed": float(cfg.get("tts_speed", 1.0)),

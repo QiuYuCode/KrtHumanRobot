@@ -46,6 +46,15 @@ iflytek_iat_encoding: raw
 
 tts_backend: iflytek_cloud
 cloud_tts_fallback_to_local: true
+# 云端 TTS 时限按清洗后的文本长度扩展：每 15 字增加一个阶梯，
+# 以减少长播报因固定时限而过早回退本地的情况。
+cloud_tts_timeout_chars_per_step: 15
+cloud_tts_attempt_timeout_base_sec: 5.0
+cloud_tts_attempt_timeout_per_step_sec: 1.0
+cloud_tts_attempt_timeout_max_sec: 18.0
+cloud_tts_request_timeout_base_sec: 20.0
+cloud_tts_request_timeout_per_step_sec: 2.0
+cloud_tts_request_timeout_max_sec: 50.0
 tts_speaker_id: 0
 tts_speed: 1.0
 tts_volume: 1.5

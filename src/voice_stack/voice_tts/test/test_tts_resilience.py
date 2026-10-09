@@ -206,12 +206,49 @@ def _cloud_node():
         "iflytek_tts_vcn": "speaker",
         "iflytek_tts_speed": 50,
         "iflytek_tts_tte": "UTF8",
+        "cloud_tts_timeout_chars_per_step": 15,
+        "cloud_tts_attempt_timeout_base_sec": 5.0,
+        "cloud_tts_attempt_timeout_per_step_sec": 1.0,
+        "cloud_tts_attempt_timeout_max_sec": 18.0,
+        "cloud_tts_request_timeout_base_sec": 20.0,
+        "cloud_tts_request_timeout_per_step_sec": 2.0,
+        "cloud_tts_request_timeout_max_sec": 50.0,
     }
     node.get_parameter = lambda name: _Parameter(values[name])
     node.get_logger = lambda: _Logger()
     node._split_text_by_cloud_limit = lambda _text: ["你好"]
     node._build_ws_url = lambda _key, _secret: "wss://example.invalid/tts"
     return node
+
+
+@pytest.mark.parametrize(
+    ("text", "expected_attempt", "expected_request"),
+    [
+        ("你好", 6.0, 22.0),
+        ("测" * 150, 15.0, 40.0),
+        ("测" * 1000, 18.0, 50.0),
+    ],
+)
+def test_cloud_timeouts_expand_with_cleaned_text_length(
+    text, expected_attempt, expected_request
+):
+    """Removing text-length scaling would prematurely abandon long speech."""
+    node = _cloud_node()
+
+    attempt_timeout, request_timeout = node._cloud_timeouts_for_text(text)
+
+    assert attempt_timeout == expected_attempt
+    assert request_timeout == expected_request
+
+
+def test_cloud_timeouts_count_cleaned_text_without_cjk_spacing():
+    """CJK formatting spaces do not inflate the calculated timeout."""
+    node = _cloud_node()
+
+    attempt_timeout, request_timeout = node._cloud_timeouts_for_text("你 好")
+
+    assert attempt_timeout == 6.0
+    assert request_timeout == 22.0
 
 
 def test_cloud_transport_failure_retries_until_audio_is_synthesized():
@@ -244,7 +281,7 @@ def test_cloud_transport_failure_retries_until_audio_is_synthesized():
     assert pcm == b"pcm"
     assert sample_rate == 16000
     assert len(attempts) == 3
-    assert all(3.9 < attempt["timeout"] <= 4.0 for attempt in attempts)
+    assert all(5.9 < attempt["timeout"] <= 6.0 for attempt in attempts)
     assert _stubs["tenacity"].sleep_delays == [1.0, 2.0]
 
 
@@ -291,7 +328,7 @@ def test_expired_synthesis_deadline_rejects_request_without_playback():
 
     node._play_client = _PlayClient()
     node._synthesize_pcm16 = lambda _text, _deadline: (b"pcm", 16000, "cloud")
-    with patch.object(tts_node.time, "monotonic", side_effect=[0.0, 18.0]):
+    with patch.object(tts_node.time, "monotonic", side_effect=[0.0, 22.0]):
         response = node._handle_synthesize(_Request(), _Response())
 
     assert response.accepted is False
@@ -324,10 +361,18 @@ def test_cloud_failure_falls_back_to_local_with_remaining_deadline():
 
 def test_expired_cloud_deadline_does_not_extend_for_local_fallback():
     node = _cloud_node()
-    node.get_parameter = lambda name: _Parameter({
+    values = {
         "tts_backend": "iflytek_cloud",
         "cloud_tts_fallback_to_local": True,
-    }[name])
+        "cloud_tts_timeout_chars_per_step": 15,
+        "cloud_tts_attempt_timeout_base_sec": 5.0,
+        "cloud_tts_attempt_timeout_per_step_sec": 1.0,
+        "cloud_tts_attempt_timeout_max_sec": 18.0,
+        "cloud_tts_request_timeout_base_sec": 20.0,
+        "cloud_tts_request_timeout_per_step_sec": 2.0,
+        "cloud_tts_request_timeout_max_sec": 50.0,
+    }
+    node.get_parameter = lambda name: _Parameter(values[name])
     node.get_logger = _Logger
     node._generate_iflytek_tts = lambda *_args: (_ for _ in ()).throw(
         tts_node.SynthesisDeadlineExceeded("TTS 合成超时")
@@ -367,7 +412,7 @@ def test_cloud_cleanup_receives_the_remaining_attempt_timeout():
         pcm, _sample_rate = node._generate_iflytek_tts("你好")
 
     assert pcm == b"pcm"
-    assert 0.0 < connection.close_timeout <= 4.0
+    assert 0.0 < connection.close_timeout <= 6.0
 
 
 def test_expiry_during_goal_building_does_not_submit_playback():
@@ -398,7 +443,7 @@ def test_expiry_during_goal_building_does_not_submit_playback():
         pass
 
     def build_goal(*_args):
-        _Clock.value = 18.0
+        _Clock.value = 22.0
         return object()
 
     node._play_client = _PlayClient()
@@ -444,7 +489,7 @@ def test_recv_timeout_at_attempt_deadline_retries_after_cleanup():
             self.sock = _Socket()
 
         def recv(self):
-            _Clock.value = 4.0
+            _Clock.value = 6.0
             raise tts_node.websocket.WebSocketTimeoutException(
                 "receive timed out"
             )
@@ -504,7 +549,16 @@ def test_local_generation_timeout_returns_before_service_deadline():
     node = _cloud_node()
     release_generation = threading.Event()
     submitted_goals = []
-    values = {"tts_backend": "local"}
+    values = {
+        "tts_backend": "local",
+        "cloud_tts_timeout_chars_per_step": 15,
+        "cloud_tts_attempt_timeout_base_sec": 5.0,
+        "cloud_tts_attempt_timeout_per_step_sec": 1.0,
+        "cloud_tts_attempt_timeout_max_sec": 18.0,
+        "cloud_tts_request_timeout_base_sec": 0.02,
+        "cloud_tts_request_timeout_per_step_sec": 0.0,
+        "cloud_tts_request_timeout_max_sec": 0.02,
+    }
     node.get_parameter = lambda name: _Parameter(values[name])
     node._ensure_tts_ready = lambda: True
 
@@ -530,8 +584,7 @@ def test_local_generation_timeout_returns_before_service_deadline():
     node._play_client = _PlayClient()
     start = wall_time.monotonic()
     try:
-        with patch.object(tts_node, "CLOUD_REQUEST_TIMEOUT_SEC", 0.02):
-            response = node._handle_synthesize(_Request(), _Response())
+        response = node._handle_synthesize(_Request(), _Response())
     finally:
         release_generation.set()
 
@@ -566,13 +619,22 @@ def test_goal_preparation_timeout_returns_before_service_deadline():
         release_goal_build.wait(1.0)
         return object()
 
+    values = {
+        "cloud_tts_timeout_chars_per_step": 15,
+        "cloud_tts_attempt_timeout_base_sec": 5.0,
+        "cloud_tts_attempt_timeout_per_step_sec": 1.0,
+        "cloud_tts_attempt_timeout_max_sec": 18.0,
+        "cloud_tts_request_timeout_base_sec": 0.02,
+        "cloud_tts_request_timeout_per_step_sec": 0.0,
+        "cloud_tts_request_timeout_max_sec": 0.02,
+    }
+    node.get_parameter = lambda name: _Parameter(values[name])
     node._play_client = _PlayClient()
     node._synthesize_pcm16 = lambda _text, _deadline: (b"pcm", 16000, "cloud")
     node._build_play_goal_from_pcm = slow_goal_build
     start = wall_time.monotonic()
     try:
-        with patch.object(tts_node, "CLOUD_REQUEST_TIMEOUT_SEC", 0.02):
-            response = node._handle_synthesize(_Request(), _Response())
+        response = node._handle_synthesize(_Request(), _Response())
     finally:
         release_goal_build.set()
 
@@ -587,7 +649,16 @@ def test_local_pcm_conversion_timeout_returns_before_service_deadline():
     node = _cloud_node()
     release_conversion = threading.Event()
     submitted_goals = []
-    values = {"tts_backend": "local"}
+    values = {
+        "tts_backend": "local",
+        "cloud_tts_timeout_chars_per_step": 15,
+        "cloud_tts_attempt_timeout_base_sec": 5.0,
+        "cloud_tts_attempt_timeout_per_step_sec": 1.0,
+        "cloud_tts_attempt_timeout_max_sec": 18.0,
+        "cloud_tts_request_timeout_base_sec": 0.02,
+        "cloud_tts_request_timeout_per_step_sec": 0.0,
+        "cloud_tts_request_timeout_max_sec": 0.02,
+    }
     node.get_parameter = lambda name: _Parameter(values[name])
     node._ensure_tts_ready = lambda: True
     node._generate_local_tts = lambda _text: (object(), 16000)
@@ -614,8 +685,7 @@ def test_local_pcm_conversion_timeout_returns_before_service_deadline():
     node._play_client = _PlayClient()
     start = wall_time.monotonic()
     try:
-        with patch.object(tts_node, "CLOUD_REQUEST_TIMEOUT_SEC", 0.02):
-            response = node._handle_synthesize(_Request(), _Response())
+        response = node._handle_synthesize(_Request(), _Response())
     finally:
         release_conversion.set()
 

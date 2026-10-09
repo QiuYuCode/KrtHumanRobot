@@ -4,6 +4,7 @@ import base64
 import hashlib
 import hmac
 import json
+import math
 import re
 import threading
 import time
@@ -24,7 +25,6 @@ from tenacity import (
     retry,
     retry_if_exception_type,
     stop_after_attempt,
-    stop_after_delay,
     wait_chain,
     wait_fixed,
 )
@@ -33,8 +33,6 @@ from voice_interfaces.msg import VoiceAudioFrame
 from voice_interfaces.srv import SynthesizeSpeech
 
 
-CLOUD_ATTEMPT_TIMEOUT_SEC = 4.0
-CLOUD_REQUEST_TIMEOUT_SEC = 18.0
 CLOUD_TRANSPORT_EXCEPTIONS = (
     websocket.WebSocketAddressException,
     websocket.WebSocketConnectionClosedException,
@@ -55,6 +53,13 @@ class VoiceTtsNode(Node):
         super().__init__("voice_tts")
         self.declare_parameter("tts_backend", "iflytek_cloud")
         self.declare_parameter("cloud_tts_fallback_to_local", True)
+        self.declare_parameter("cloud_tts_timeout_chars_per_step", 15)
+        self.declare_parameter("cloud_tts_attempt_timeout_base_sec", 5.0)
+        self.declare_parameter("cloud_tts_attempt_timeout_per_step_sec", 1.0)
+        self.declare_parameter("cloud_tts_attempt_timeout_max_sec", 18.0)
+        self.declare_parameter("cloud_tts_request_timeout_base_sec", 20.0)
+        self.declare_parameter("cloud_tts_request_timeout_per_step_sec", 2.0)
+        self.declare_parameter("cloud_tts_request_timeout_max_sec", 50.0)
         self.declare_parameter("tts_model_dir", "")
         self.declare_parameter("tts_speaker_id", 0)
         self.declare_parameter("tts_speed", 1.0)
@@ -128,19 +133,23 @@ class VoiceTtsNode(Node):
             self.get_logger().error(f"本地 TTS 初始化失败: {exc}")
             return None
 
-    def _split_text(self, text: str) -> list[tuple[str, str]]:
-        sentence_end = set("。！？.!?\n")
-        clause_sep = set(",，;；:：、—")
+    @staticmethod
+    def _clean_text(text: str) -> str:
         # Collapse formatting whitespace while retaining English word
         # boundaries.  Spaces between adjacent CJK characters are removed so
         # Chinese input keeps the pronunciation behavior of the old path.
         cleaned = re.sub(r"\s+", " ", text.strip())
-        cleaned = re.sub(
+        return re.sub(
             r"(?<=[\u3400-\u4dbf\u4e00-\u9fff]) "
             r"(?=[\u3400-\u4dbf\u4e00-\u9fff])",
             "",
             cleaned,
         )
+
+    def _split_text(self, text: str) -> list[tuple[str, str]]:
+        sentence_end = set("。！？.!?\n")
+        clause_sep = set(",，;；:：、—")
+        cleaned = self._clean_text(text)
         if not cleaned:
             return []
         max_len = int(self.get_parameter("tts_max_chars_per_chunk").value)
@@ -288,6 +297,44 @@ class VoiceTtsNode(Node):
                 chunks.append("".join(buf))
         return chunks
 
+    def _cloud_timeouts_for_text(self, text: str) -> tuple[float, float]:
+        """Calculate bounded cloud timeouts from normalized text length."""
+        char_count = len(self._clean_text(text))
+        chars_per_step = max(
+            1,
+            int(self.get_parameter("cloud_tts_timeout_chars_per_step").value),
+        )
+        steps = max(1, math.ceil(char_count / chars_per_step))
+        attempt_timeout = min(
+            float(
+                self.get_parameter("cloud_tts_attempt_timeout_max_sec").value
+            ),
+            float(
+                self.get_parameter("cloud_tts_attempt_timeout_base_sec").value
+            )
+            + steps
+            * float(
+                self.get_parameter(
+                    "cloud_tts_attempt_timeout_per_step_sec"
+                ).value
+            ),
+        )
+        request_timeout = min(
+            float(
+                self.get_parameter("cloud_tts_request_timeout_max_sec").value
+            ),
+            float(
+                self.get_parameter("cloud_tts_request_timeout_base_sec").value
+            )
+            + steps
+            * float(
+                self.get_parameter(
+                    "cloud_tts_request_timeout_per_step_sec"
+                ).value
+            ),
+        )
+        return attempt_timeout, request_timeout
+
     @staticmethod
     def _remaining_timeout(deadline: float) -> float:
         remaining = deadline - time.monotonic()
@@ -337,10 +384,7 @@ class VoiceTtsNode(Node):
 
     @retry(
         retry=retry_if_exception_type(CLOUD_TRANSPORT_EXCEPTIONS),
-        stop=(
-            stop_after_attempt(3)
-            | stop_after_delay(CLOUD_REQUEST_TIMEOUT_SEC)
-        ),
+        stop=stop_after_attempt(3),
         wait=wait_chain(wait_fixed(1.0), wait_fixed(2.0)),
         reraise=True,
     )
@@ -364,10 +408,10 @@ class VoiceTtsNode(Node):
         if not text_chunks:
             return b"", sample_rate
 
-        attempt_deadline = min(
-            deadline,
-            time.monotonic() + CLOUD_ATTEMPT_TIMEOUT_SEC,
+        attempt_timeout, _request_timeout = self._cloud_timeouts_for_text(
+            text
         )
+        attempt_deadline = min(deadline, time.monotonic() + attempt_timeout)
         for text_chunk in text_chunks:
             ws = websocket.create_connection(
                 self._build_ws_url(api_key, api_secret),
@@ -432,7 +476,7 @@ class VoiceTtsNode(Node):
         deadline: float | None = None,
     ) -> tuple[bytes, int]:
         request_deadline = deadline or (
-            time.monotonic() + CLOUD_REQUEST_TIMEOUT_SEC
+            time.monotonic() + self._cloud_timeouts_for_text(text)[1]
         )
         self._remaining_timeout(request_deadline)
         return self._generate_iflytek_tts_once(text, request_deadline)
@@ -487,7 +531,14 @@ class VoiceTtsNode(Node):
                     self.get_parameter("cloud_tts_fallback_to_local").value
                 ):
                     raise
-                self.get_logger().warning("讯飞云 TTS 超时，回退本地 TTS")
+                timeouts = self._cloud_timeouts_for_text(text)
+                attempt_timeout, request_timeout = timeouts
+                self.get_logger().warning(
+                    "讯飞云 TTS 超时，回退本地 TTS: "
+                    f"chars={len(self._clean_text(text))} "
+                    f"attempt_timeout={attempt_timeout:.1f}s "
+                    f"request_timeout={request_timeout:.1f}s"
+                )
             except Exception as exc:
                 if not bool(
                     self.get_parameter("cloud_tts_fallback_to_local").value
@@ -523,7 +574,10 @@ class VoiceTtsNode(Node):
         response: SynthesizeSpeech.Response,
     ):
         try:
-            deadline = time.monotonic() + CLOUD_REQUEST_TIMEOUT_SEC
+            _attempt_timeout, request_timeout = self._cloud_timeouts_for_text(
+                request.text
+            )
+            deadline = time.monotonic() + request_timeout
             pcm_bytes, sample_rate, backend_used = self._synthesize_pcm16(
                 request.text,
                 deadline,
