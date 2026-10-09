@@ -36,6 +36,7 @@ def _hand_node(side, device_id, enabled):
             "realtime_response_enabled": ParameterValue(
                 LaunchConfiguration(f"{side}_hand_realtime_response"), value_type=bool
             ),
+            "control_topic": LaunchConfiguration(f"{side}_hand_control_topic"),
         }],
     )
 
@@ -81,6 +82,12 @@ def generate_launch_description():
         DeclareLaunchArgument("right_hand_listen", default_value="false"),
         DeclareLaunchArgument("left_hand_realtime_response", default_value="false"),
         DeclareLaunchArgument("right_hand_realtime_response", default_value="false"),
+        DeclareLaunchArgument(
+            "left_hand_control_topic", default_value="hand/control/joint_states"
+        ),
+        DeclareLaunchArgument(
+            "right_hand_control_topic", default_value="hand/control/joint_states"
+        ),
     ]
     left = _hand_node("left", "left_hand_device_id", "enable_left")
     right = _hand_node("right", "right_hand_device_id", "enable_right")
