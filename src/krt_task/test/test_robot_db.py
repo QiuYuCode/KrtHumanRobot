@@ -75,6 +75,20 @@ def test_action_group_storage_and_legacy_migration(tmp_path):
     assert database.get_action_group("敬礼")["arm_target"] == "unknown"
 
 
+def test_dual_arm_action_group_requires_paired_joint_samples(tmp_path):
+    database = RobotDatabase(str(tmp_path / "robot.db"))
+    samples = [{
+        "left": {"name": ["joint_1"], "position": [0.1]},
+        "right": {"name": ["joint_1"], "position": [0.2]},
+    }]
+
+    database.save_action_group("双臂挥手", "both", samples)
+    assert database.get_action_group("双臂挥手")["samples"] == samples
+
+    with pytest.raises(ValueError, match="双臂动作组关节采样无效"):
+        database.save_action_group("错误双臂", "both", [{"name": ["joint_1"]}])
+
+
 def test_rename_action_group_updates_routines(tmp_path):
     database = RobotDatabase(str(tmp_path / "robot.db"))
     database.save_action_group(

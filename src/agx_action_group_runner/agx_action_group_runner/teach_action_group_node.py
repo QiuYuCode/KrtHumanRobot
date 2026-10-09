@@ -34,13 +34,22 @@ class ArmRecorder:
         self.namespace = self._normalize_ns(namespace)
         self.min_joint_delta_rad = max(0.0, float(min_joint_delta_rad))
         self.latest: JointState | None = None
+        self.latest_feedback: JointState | None = None
         self.samples: list[dict] = []
         self.recording = False
+        self.remote_control = False
         self.lock = threading.Lock()
         self.sub = node.create_subscription(
             JointState,
             self._topic("feedback/leader_joint_states"),
             self._joint_cb,
+            qos_profile_sensor_data,
+            callback_group=callback_group,
+        )
+        self.feedback_sub = node.create_subscription(
+            JointState,
+            self._topic("feedback/joint_states"),
+            self._feedback_cb,
             qos_profile_sensor_data,
             callback_group=callback_group,
         )
@@ -74,40 +83,46 @@ class ArmRecorder:
         with self.lock:
             self.latest = copy.deepcopy(msg)
 
+    def _feedback_cb(self, msg: JointState):
+        with self.lock:
+            self.latest_feedback = copy.deepcopy(msg)
+
     def _sample_cb(self):
         with self.lock:
-            if not self.recording or self.latest is None:
+            source = self.latest_feedback if self.remote_control else self.latest
+            if not self.recording or source is None:
                 return
-            if not self.latest.name or not self.latest.position:
+            if not source.name or not source.position:
                 return
             arm_indices = [
                 index
-                for index, name in enumerate(self.latest.name)
-                if _is_arm_joint_name(name) and index < len(self.latest.position)
+                for index, name in enumerate(source.name)
+                if _is_arm_joint_name(name) and index < len(source.position)
             ]
             if not arm_indices:
                 return
             sample = {
-                "name": [str(self.latest.name[index]) for index in arm_indices],
+                "name": [str(source.name[index]) for index in arm_indices],
                 "position": [
-                    float(self.latest.position[index]) for index in arm_indices
+                    float(source.position[index]) for index in arm_indices
                 ],
                 "velocity": (
-                    [float(self.latest.velocity[index]) for index in arm_indices]
-                    if self.latest.velocity
+                    [float(source.velocity[index]) for index in arm_indices]
+                    if source.velocity
                     else []
                 ),
                 "effort": (
-                    [float(self.latest.effort[index]) for index in arm_indices]
-                    if self.latest.effort
+                    [float(source.effort[index]) for index in arm_indices]
+                    if source.effort
                     else []
                 ),
             }
             self.samples.append(sample)
 
-    def start(self):
+    def start(self, remote_control: bool = False):
         with self.lock:
             self.samples = []
+            self.remote_control = remote_control
             self.recording = True
 
     def stop(self) -> list[dict]:
@@ -134,6 +149,7 @@ class TeachActionGroupNode(LifecycleNode):
         self.recorders = {}
         self.active_arm = None
         self.active_group = None
+        self.active_remote = False
         self.lock = threading.Lock()
         self._active = False
         self._start_service = None
@@ -201,6 +217,7 @@ class TeachActionGroupNode(LifecycleNode):
     def on_cleanup(self, _state: State) -> TransitionCallbackReturn:
         for recorder in self.recorders.values():
             self.destroy_subscription(recorder.sub)
+            self.destroy_subscription(recorder.feedback_sub)
             self.destroy_timer(recorder.timer)
             self.destroy_client(recorder.client)
         if self._start_service is not None:
@@ -234,25 +251,42 @@ class TeachActionGroupNode(LifecycleNode):
             response.message = "teach service is inactive"
             return response
         arm = str(request.arm_target).strip().lower()
-        if arm not in self.recorders:
+        if arm not in {"left", "right", "both"}:
             response.success = False
-            response.message = "arm_target must be left or right"
+            response.message = "arm_target must be left, right, or both"
             return response
         with self.lock:
             if self.active_arm is not None:
                 response.success = False
                 response.message = f"{self.active_arm} is already recording"
                 return response
-            ok, message = self._call_teach_mode(self.recorders[arm], True)
-            if not ok:
-                response.success = False
-                response.message = message
-                return response
-            self.recorders[arm].start()
+            remote_control = bool(getattr(request, "remote_control", False))
+            recorders = (
+                [self.recorders[arm]] if arm in self.recorders
+                else [self.recorders["left"], self.recorders["right"]]
+            )
+            if not remote_control:
+                enabled = []
+                for recorder in recorders:
+                    ok, message = self._call_teach_mode(recorder, True)
+                    if not ok:
+                        for active_recorder in enabled:
+                            self._call_teach_mode(active_recorder, False)
+                        response.success = False
+                        response.message = message
+                        return response
+                    enabled.append(recorder)
+            for recorder in recorders:
+                recorder.start(remote_control)
             self.active_arm = arm
             self.active_group = str(request.group_name).strip() or None
+            self.active_remote = remote_control
         response.success = True
-        response.message = f"{arm} entered teach mode"
+        response.message = (
+            f"{arm} started remote recording"
+            if remote_control
+            else f"{arm} entered teach mode"
+        )
         return response
 
     def _stop_cb(self, request, response):
@@ -262,22 +296,40 @@ class TeachActionGroupNode(LifecycleNode):
             return response
         with self.lock:
             arm = str(request.arm_target).strip().lower() or self.active_arm
-            if arm not in self.recorders or arm != self.active_arm:
+            if arm not in {"left", "right", "both"} or arm != self.active_arm:
                 response.success = False
                 response.message = "no matching active recording"
                 return response
             group_name = str(request.group_name).strip() or self.active_group
             if not group_name:
-                side_name = "左臂" if arm == "left" else "右臂"
+                side_name = {"left": "左臂", "right": "右臂", "both": "双臂"}[arm]
                 group_name = f"未命名-{side_name}-{datetime.now().strftime('%Y%m%d-%H%M%S-%f')}"
-            samples = self.recorders[arm].stop()
-            ok, message = self._call_teach_mode(self.recorders[arm], False)
+            recorders = (
+                [self.recorders[arm]] if arm in self.recorders
+                else [self.recorders["left"], self.recorders["right"]]
+            )
+            raw_samples = [recorder.stop() for recorder in recorders]
+            results = (
+                [(True, "ok")]
+                if getattr(self, "active_remote", False)
+                else [self._call_teach_mode(recorder, False) for recorder in recorders]
+            )
+            ok = all(result[0] for result in results)
+            message = next((result[1] for result in results if not result[0]), "ok")
             self.active_arm = None
             self.active_group = None
+            self.active_remote = False
         if not ok:
             response.success = False
             response.message = message
             return response
+        if arm == "both":
+            samples = [
+                {"left": raw_samples[0][index], "right": raw_samples[1][index]}
+                for index in range(min(len(raw_samples[0]), len(raw_samples[1])))
+            ]
+        else:
+            samples = raw_samples[0]
         if not samples:
             response.success = True
             response.message = "exited teach mode; no joint samples recorded"

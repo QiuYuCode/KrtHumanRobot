@@ -1,0 +1,75 @@
+# Applied only when use_voxel_obstacles:=true. Heights here are in odom.
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      footprint: "[[0.30, 0.295], [0.30, -0.295], [-0.30, -0.295], [-0.30, 0.295]]"
+      plugins: [voxel_layer, inflation_layer]
+      voxel_layer:
+        plugin: nav2_costmap_2d::VoxelLayer
+        enabled: true
+        footprint_clearing_enabled: true
+        origin_z: -1.0
+        z_resolution: 0.20
+        z_voxels: 16
+        max_obstacle_height: 2.2
+        mark_threshold: 0
+        unknown_threshold: 15
+        combination_method: 1
+        publish_voxel_map: true
+        observation_sources: marking clearing
+        marking:
+          topic: /navigation/obstacle_points
+          data_type: PointCloud2
+          sensor_frame: navigation_lidar_origin
+          marking: true
+          clearing: false
+          min_obstacle_height: -1.0
+          max_obstacle_height: 2.2
+          obstacle_min_range: 0.0
+          obstacle_max_range: 2.5
+          observation_persistence: 0.0
+          expected_update_rate: 0.5
+        clearing:
+          topic: /navigation/clearing_points
+          data_type: PointCloud2
+          sensor_frame: navigation_lidar_origin
+          marking: false
+          clearing: true
+          # Retain ground/overhead endpoints; VoxelLayer clips rays to its bounds.
+          min_obstacle_height: -100.0
+          max_obstacle_height: 100.0
+          raytrace_min_range: 0.0
+          raytrace_max_range: 3.0
+          observation_persistence: 0.0
+          expected_update_rate: 0.5
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      footprint: "[[0.30, 0.295], [0.30, -0.295], [-0.30, -0.295], [-0.30, 0.295]]"
+collision_monitor:
+  ros__parameters:
+    cmd_vel_out_topic: /navigation/collision_cmd_vel
+    observation_sources: [scan, obstacle_points]
+    obstacle_points:
+      type: pointcloud
+      topic: /navigation/obstacle_points
+      min_height: 0.08
+      max_height: 1.60
+      enabled: true
+    # Existing widths (0.35/0.45) already cover the full-body half-width 0.295.
+    FrontStop:
+      points: [0.5, 0.35, 0.5, -0.35, 0.30, -0.35, 0.30, 0.35]
+    FrontSlow:
+      points: [0.8, 0.45, 0.8, -0.45, 0.30, -0.45, 0.30, 0.45]
+navigation_obstacle_cloud:
+  ros__parameters:
+    input_topic: /cloud_registered_body
+    marking_topic: /navigation/obstacle_points
+    clearing_topic: /navigation/clearing_points
+    filter_frame: base_footprint
+    min_height: 0.08
+    max_height: 1.60
+    self_half_length: 0.276
+    self_half_width: 0.275
+    self_height: 1.50
+    max_cloud_age: 0.5

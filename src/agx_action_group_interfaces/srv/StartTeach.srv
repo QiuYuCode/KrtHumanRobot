@@ -1,5 +1,6 @@
 string arm_target
 string group_name
+bool remote_control
 ---
 bool success
 string message

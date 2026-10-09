@@ -489,6 +489,12 @@ class FakeNavigationAdapter:
     def stop_cruise(self):
         return self._result("stop_cruise")
 
+    def pause_cruise(self):
+        return self._result("pause_cruise")
+
+    def resume_cruise(self):
+        return self._result("resume_cruise")
+
     def continue_waypoint_input(self):
         return self._result("continue_waypoint_input")
 
@@ -552,8 +558,8 @@ def test_navigation_control_api_dispatches_all_commands(tmp_path):
         "start_navigation",
         "stop_navigation",
         "start_cruise",
-        "stop_cruise",
-        "continue_waypoint_input",
+        "pause_cruise",
+        "resume_cruise",
     ]
     assert adapter.navigation_rviz == [True]
 
@@ -845,11 +851,14 @@ class FakeRobotSystem:
     def __init__(self):
         self.controls = []
         self.teach_calls = []
+        self.teleop_calls = []
+        self._teleop_active = False
 
     def status(self):
         return {
             "components": {"left_arm": {"active": False}},
             "teaching": {"active": False},
+            "teleop": {"active": self._teleop_active, "error": ""},
         }
 
     def control(self, component, enabled):
@@ -863,6 +872,14 @@ class FakeRobotSystem:
     def stop_teach(self, group_name=""):
         self.teach_calls.append(("stop", group_name))
         return {"active": False, "group_name": group_name, "sample_count": 3}
+
+    def control_teleop(self, enabled):
+        self.teleop_calls.append(enabled)
+        self._teleop_active = enabled
+        return {"active": enabled, "error": ""}
+
+    def teleop_active(self):
+        return self._teleop_active
 
     def ensure_providers(self, requirements):
         self.requirements = requirements
@@ -896,6 +913,53 @@ def test_robot_system_and_teach_api(tmp_path):
         json={"group_name": "挥手"},
     )
     assert stopped.get_json()["sample_count"] == 3
+
+    dual_started = client.post(
+        "/api/arm/teach/start",
+        headers=headers,
+        json={"arm_target": "both", "group_name": "双臂挥手"},
+    )
+    assert dual_started.status_code == 200
+    assert system.teach_calls[-1] == ("start", "both", "双臂挥手")
+
+
+def test_teleop_api_controls_service_and_blocks_action_group_replay(tmp_path):
+    app, client, headers = authenticated_app(tmp_path)
+    system = FakeRobotSystem()
+    app.extensions["robot_system"] = system
+    app.extensions["runtime"].bridge = FakeGripperBridge()
+    app.extensions["robot_db"].save_action_group(
+        "双臂挥手",
+        "both",
+        [{
+            "left": {"name": ["joint1"], "position": [0.0]},
+            "right": {"name": ["joint1"], "position": [0.0]},
+        }],
+    )
+
+    app.extensions["runtime"].active = lambda: True
+    busy = client.post("/api/teleop/control", headers=headers, json={"enabled": True})
+    assert busy.status_code == 400
+    assert "已有动作组" in busy.get_json()["error"]
+    app.extensions["runtime"].active = lambda: False
+
+    started = client.post(
+        "/api/teleop/control", headers=headers, json={"enabled": True}
+    )
+
+    assert started.status_code == 200
+    assert system.teleop_calls == [True]
+    blocked = client.post(
+        "/api/action-groups/%E5%8F%8C%E8%87%82%E6%8C%A5%E6%89%8B/run",
+        headers=headers,
+        json={"arm_target": "both", "repeat_count": 1},
+    )
+    assert blocked.status_code == 400
+    assert "遥操作" in blocked.get_json()["error"]
+
+    routine = client.post("/api/routines/%E6%B5%8B%E8%AF%95/run", headers=headers)
+    assert routine.status_code == 400
+    assert "遥操作" in routine.get_json()["error"]
 
 
 def test_web_app_cli_dispatches_teach(monkeypatch):

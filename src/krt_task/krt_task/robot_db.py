@@ -803,6 +803,15 @@ class RobotDatabase:
         if not samples:
             raise ValueError("动作组至少需要一个关节采样")
         for sample in samples:
+            if arm_target == "both":
+                if not isinstance(sample, dict) or not all(
+                    isinstance(sample.get(side), dict)
+                    and sample[side].get("name")
+                    and sample[side].get("position")
+                    for side in ("left", "right")
+                ):
+                    raise ValueError("双臂动作组关节采样无效")
+                continue
             if (
                 not isinstance(sample, dict)
                 or not sample.get("name")

@@ -205,6 +205,7 @@ mkdir -p ~/.config/systemd/user ~/.config/krt
 
 # x86
 install -m 0644 deploy/systemd/krt-x86.service ~/.config/systemd/user/
+install -m 0644 deploy/systemd/krt-quest-teleop.service ~/.config/systemd/user/
 test -f ~/.config/krt/x86.env || \
   install -m 0600 deploy/env/x86.env.example ~/.config/krt/x86.env
 
@@ -220,6 +221,11 @@ systemctl --user daemon-reload
 `KRT_DDS_BIND_ADDRESS` 必须与 `deploy/cyclonedds/x86.xml` 的
 `NetworkInterface` 地址一致；两个服务默认最多等待 90 秒设备就绪，
 可通过 `KRT_STARTUP_TIMEOUT_S` 调整。
+
+`krt-x86.service` 保持 `PYTHONNOUSERSITE=1`，以隔离 Quest 环境的 Python
+依赖。DexHand SDK 不应依赖用户级 editable 安装；在 `~/.config/krt/x86.env`
+设置 `KRT_DEXHAND_SDK_PYTHONPATH` 指向 `dexhand_sdk_python` 源码目录。若不设置，
+默认使用 `KRT_WORKSPACE` 同级的 `dexhand_sdk_python`。
 
 Web 启动导航时，`krt-x86.service` 会自动选择当前用户活动的本地 X11 会话
 并启动 RViz；不需要填写机器相关的 display。若自动选择失败，可在
@@ -270,3 +276,40 @@ sudo systemctl status ollama.service
 
 两个 ROS unit 使用 `Restart=on-failure`、五秒重启间隔、SIGINT 停止和二十秒
 停止超时。Ollama 是独立 system service；相机服务不等待模型加载。
+
+### Quest 双臂遥操作
+
+`krt-quest-teleop.service` 是按需服务：Web 控制台的“开启 Quest 遥操作”会先确保
+Web 已管理的 `/left`、`/right` 机械臂驱动存在，然后启动该服务；它只启动 Quest
+位姿、增量位姿和 IK 节点，绝不重复启动 CAN 驱动。关闭遥操作会停止该服务。
+
+普通 x86 机械臂驱动使用系统 SciPy/NumPy，但会从
+`~/.local/lib/python3.10/arm_sdk` 读取单独安装的 `pyAgxArm` SDK；不要将整个
+`~/.local/lib/python3.10/site-packages` 加回 `PYTHONPATH`，否则会重新引入 Quest
+环境的 NumPy ABI 冲突。
+
+在 `~/.config/krt/x86.env` 中设置 `KRT_QUEST_VT_BIN` 为 Quest 专用 conda 环境的
+`bin` 目录。该环境必须安装包含 CasADi 支持的 Pinocchio 以及 ADB Python 客户端：
+
+```bash
+conda run -n vt python -m pip install --ignore-installed --no-user pure-python-adb casadi
+conda run -n vt python -c 'from pinocchio import casadi; from ppadb.client import Client'
+```
+
+首次使用前仍须在头显授权 USB 调试并安装 APK；服务会通过 ADB 自动检查/安装 APK，
+无需手工提前打开。更新 Quest unit 后执行：
+
+```bash
+systemctl --user daemon-reload
+systemctl --user enable krt-quest-teleop.service
+systemctl --user start krt-quest-teleop.service
+journalctl --user -u krt-quest-teleop.service -f
+```
+
+Quest 运行中，Web 会拒绝启动动作组回放和 Routine。若要录制 Quest 动作，在 Web 的
+“示教录制”选择“左臂”“右臂”或“双臂同步”；录制将直接采集机械臂反馈关节，不进入
+Nero 手拖示教模式。双臂样本逐帧配对并在回放时同时发送给 `/left` 和 `/right`。
+
+Quest 服务默认在本机 X11 桌面打开三个 RViz 窗口：手柄坐标、左臂模型、右臂模型。
+可在 `x86.env` 中设置 `KRT_QUEST_RVIZ=false` 关闭；未找到可用桌面时服务会自动以
+无界面模式继续运行。

@@ -44,6 +44,57 @@ def config(tmp_path, **changes):
     return SimpleNamespace(adapters={"navigation": navigation})
 
 
+def test_cruise_pause_resume_controls_same_session(tmp_path):
+    calls = []
+    adapter = RangerNavAdapter(
+        config(tmp_path),
+        popen=lambda *args, **kwargs: FakeProcess(),
+        run=lambda cmd, **kwargs: calls.append(cmd) or CompletedProcess(cmd, 0, "", ""),
+    )
+    assert adapter.start_cruise(["入口"], repeat=2).success
+    process = adapter._cruise_process
+    assert adapter.pause_cruise().success
+    assert process.poll() is None
+    assert adapter.resume_cruise().success
+    assert calls[0][-2:] == ["control", "pause"]
+    assert calls[1][-2:] == ["control", "resume"]
+    assert calls[0][:-2] == calls[1][:-2]
+
+
+def test_resume_without_cruise_does_not_publish_input(tmp_path):
+    adapter = RangerNavAdapter(
+        config(tmp_path), run=lambda *a, **k: pytest.fail("unexpected command"),
+    )
+    assert not adapter.resume_cruise().success
+
+
+def test_cancel_failure_does_not_kill_client_or_stop_navigation(tmp_path):
+    adapter = RangerNavAdapter(
+        config(tmp_path),
+        popen=lambda *args, **kwargs: FakeProcess(),
+        run=lambda cmd, **kwargs: CompletedProcess(cmd, 1, "", "cancel timeout"),
+    )
+    adapter.start_cruise(["入口"])
+    adapter._navigation_process = FakeProcess()
+    assert not adapter.stop_navigation().success
+    assert adapter._cruise_process.poll() is None
+    assert adapter._navigation_process.poll() is None
+
+
+def test_cancel_uses_owned_session_and_waits_for_exit(tmp_path):
+    calls = []
+    adapter = RangerNavAdapter(
+        config(tmp_path),
+        popen=lambda *args, **kwargs: FakeProcess(),
+        run=lambda cmd, **kwargs: calls.append(cmd) or CompletedProcess(cmd, 0, "", ""),
+    )
+    adapter.start_cruise(["入口"])
+    assert adapter.stop_cruise().success
+    assert calls[0][-2:] == ["control", "cancel"]
+    assert adapter._cruise_process.poll() == 0
+    assert not adapter.resume_cruise().success
+
+
 def test_mapping_launch_keeps_backend_rviz_argument(tmp_path):
     calls = []
 

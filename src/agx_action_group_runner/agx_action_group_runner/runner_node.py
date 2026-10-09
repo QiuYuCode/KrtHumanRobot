@@ -299,8 +299,10 @@ class ActionGroupRunnerNode(LifecycleNode):
                         f"{step_name} did not reach target in {timeout_sec}s"
                     )
         else:
-            left_msg = self._build_msg(step_type, step)
-            right_msg = self._build_msg(step_type, step)
+            left_payload = step.get("left", step)
+            right_payload = step.get("right", step)
+            left_msg = self._build_msg(step_type, left_payload)
+            right_msg = self._build_msg(step_type, right_payload)
             self.left_arm.publish(step_type, left_msg)
             self.right_arm.publish(step_type, right_msg)
             if wait_reach:

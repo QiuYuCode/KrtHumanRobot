@@ -683,8 +683,8 @@ class CruiseScheduler:
             owned_cruise = True
             while self.adapter._running(self.adapter._cruise_process):
                 if cancel.wait(1.0):
-                    self.adapter.stop_cruise()
-                    result_text = "已取消"
+                    result = self.adapter.stop_cruise()
+                    result_text = "已取消" if result.success else result.message
                     return
             result_text = "执行成功" if self.adapter._cruise_process.poll() == 0 else "巡航进程失败"
         except Exception as exc:
@@ -1107,6 +1107,10 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             raise RuntimeError("ROS bridge 未启用")
         return system
 
+    def quest_teleop_active() -> bool:
+        system = app.extensions.get("robot_system")
+        return bool(system is not None and system.teleop_active())
+
     def navigation_response(command: str, object_name: str, result):
         return audited(
             auth,
@@ -1257,12 +1261,12 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.post("/api/navigation/cruise/stop")
     @protected(auth)
     def stop_cruise():
-        return run_navigation_command("stop_cruise", "cruise")
+        return run_navigation_command("pause_cruise", "cruise")
 
     @app.post("/api/navigation/cruise/resume")
     @protected(auth)
     def resume_cruise():
-        return run_navigation_command("continue_waypoint_input", "cruise")
+        return run_navigation_command("resume_cruise", "cruise")
 
     @app.get("/api/navigation/cruise/schedules")
     @protected(auth, csrf=False)
@@ -1327,6 +1331,15 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             result["success"],
             data={"components": result["components"]},
         )
+
+    @app.post("/api/teleop/control")
+    @protected(auth)
+    def control_teleop():
+        enabled = bool((request.get_json() or {}).get("enabled", False))
+        if enabled and runtime.active():
+            raise RuntimeError("已有动作组或例行任务在运行，不能开启 Quest 遥操作")
+        result = require_robot_system().control_teleop(enabled)
+        return audited(auth, "control_teleop", "quest", True, data=result)
 
     @app.post("/api/arm/teach/start")
     @protected(auth)
@@ -1476,6 +1489,9 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
             raise ValueError("请选择回放机械臂")
         if repeat_count < 1 or repeat_count > 100:
             raise ValueError("repeat_count 必须在 1 到 100 之间")
+        system = require_robot_system()
+        if system.teleop_active():
+            raise RuntimeError("Quest 遥操作运行中，不能启动动作组回放")
         requirements = {"action_group_stack"}
         if arm_target in {"left", "both"}:
             requirements.add("left_arm")
@@ -1556,6 +1572,8 @@ def create_app(test_config: dict[str, Any] | None = None) -> Flask:
     @app.post("/api/routines/<name>/run")
     @protected(auth)
     def run_routine(name: str):
+        if quest_teleop_active():
+            raise RuntimeError("Quest 遥操作运行中，不能启动例行任务")
         spec = database.get_routine(name)
         ensure_motion_requirements(collect_routine_requirements(spec))
         runtime.run_routine(name)

@@ -10,6 +10,27 @@ import pytest
 WORKSPACE = Path(__file__).parents[3]
 X86_UNIT = WORKSPACE / "deploy" / "systemd" / "krt-x86.service"
 JETSON_UNIT = WORKSPACE / "deploy" / "systemd" / "krt-jetson.service"
+QUEST_TELEOP_UNIT = WORKSPACE / "deploy" / "systemd" / "krt-quest-teleop.service"
+QUEST_TELEOP_SCRIPT = WORKSPACE / "deploy" / "systemd" / "krt-quest-teleop.sh"
+QUEST_DELTA_EXECUTABLE = (
+    WORKSPACE
+    / "src"
+    / "QuestArmTeleop"
+    / "src"
+    / "oculus_reader"
+    / "scripts"
+    / "pub_delta_pose.py"
+)
+QUEST_WEB_LAUNCH = (
+    WORKSPACE
+    / "src"
+    / "QuestArmTeleop"
+    / "src"
+    / "oculus_reader"
+    / "launch"
+    / "teleop_double_nero_web.launch.py"
+)
+HANDS_LAUNCH = WORKSPACE / "src" / "hands_control" / "launch" / "hand_control_launch.py"
 READINESS_SCRIPT = WORKSPACE / "deploy" / "systemd" / "krt-wait-ready.sh"
 RVIZ_ENV_SCRIPT = WORKSPACE / "deploy" / "systemd" / "krt-rviz-env.sh"
 X86_ENV_EXAMPLE = WORKSPACE / "deploy" / "env" / "x86.env.example"
@@ -30,6 +51,55 @@ def test_x86_unit_does_not_resolve_rviz_before_the_web_launch():
     source = X86_UNIT.read_text(encoding="utf-8")
 
     assert 'source "$KRT_WORKSPACE/deploy/systemd/krt-rviz-env.sh"' not in source
+
+
+def test_quest_teleop_has_an_isolated_python_environment():
+    source = QUEST_TELEOP_UNIT.read_text(encoding="utf-8")
+    script = QUEST_TELEOP_SCRIPT.read_text(encoding="utf-8")
+
+    assert "krt-quest-teleop.sh" in source
+    assert "PYTHONPATH" in script
+    assert "PYTHONHOME" in script
+    assert "KRT_QUEST_VT_BIN" in script
+    assert "from pinocchio import casadi" in script
+    assert "from ppadb.client import Client" in script
+    assert "set -u" not in script
+    assert "teleop_double_nero_web.launch.py" in script
+
+
+def test_quest_delta_pose_node_is_executable():
+    assert os.access(QUEST_DELTA_EXECUTABLE, os.X_OK)
+
+
+def test_quest_web_launch_restores_optional_rviz_visualization():
+    source = QUEST_WEB_LAUNCH.read_text(encoding="utf-8")
+
+    assert 'DeclareLaunchArgument("rviz", default_value="true")' in source
+    assert "agx_arm_description" in source
+    assert "oculus_reader.rviz" in source
+
+
+def test_quest_and_dexhand_use_dedicated_control_topics():
+    quest_source = QUEST_WEB_LAUNCH.read_text(encoding="utf-8")
+    hands_source = HANDS_LAUNCH.read_text(encoding="utf-8")
+
+    assert '"hand_control_topic": "/left/hand/control/joint_states"' in quest_source
+    assert '"hand_control_topic": "/right/hand/control/joint_states"' in quest_source
+    assert '"left_hand_control_topic", default_value="hand/control/joint_states"' in hands_source
+    assert '"right_hand_control_topic", default_value="hand/control/joint_states"' in hands_source
+
+
+def test_x86_unit_clears_external_python_environment():
+    source = X86_UNIT.read_text(encoding="utf-8")
+
+    assert "unset PYTHONPATH PYTHONHOME CONDA_PREFIX CONDA_DEFAULT_ENV" in source
+    assert "KRT_ARM_SDK_PYTHONPATH=%h/.local/lib/python3.10/arm_sdk" in source
+    assert "KRT_DEXHAND_SDK_PYTHONPATH" in source
+    expected_pythonpath = (
+        'export PYTHONPATH="$${KRT_ARM_SDK_PYTHONPATH}:'
+        '$${KRT_DEXHAND_SDK_PYTHONPATH}:$${PYTHONPATH:-}"'
+    )
+    assert expected_pythonpath in source
 
 
 @pytest.mark.parametrize("stale_socket", [False, True])

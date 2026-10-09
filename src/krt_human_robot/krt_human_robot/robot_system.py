@@ -10,6 +10,36 @@ import time
 from typing import Any, Callable
 
 from agx_action_group_interfaces.srv import StartTeach, StopTeach
+
+
+class QuestTeleopController:
+    """Manage the isolated Quest teleoperation user service."""
+
+    def __init__(self, service_name: str = "krt-quest-teleop.service") -> None:
+        self.service_name = service_name
+
+    def _run(self, *args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["systemctl", "--user", *args, self.service_name],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=15,
+        )
+
+    def status(self) -> dict[str, object]:
+        result = self._run("is-active")
+        active = result.returncode == 0 and result.stdout.strip() == "active"
+        return {
+            "active": active,
+            "error": "" if active or result.returncode == 3 else result.stderr.strip() or result.stdout.strip(),
+        }
+
+    def control(self, enabled: bool) -> dict[str, object]:
+        result = self._run("start" if enabled else "stop")
+        if result.returncode != 0:
+            raise RuntimeError(result.stderr.strip() or result.stdout.strip() or "Quest 遥操作服务操作失败")
+        return self.status()
 from lifecycle_msgs.msg import Transition
 from lifecycle_msgs.srv import ChangeState, GetState
 from rclpy.action import ActionClient
@@ -224,7 +254,8 @@ class RobotSystemController:
         self.vision_client = node.create_client(
             DescribeScene, "/krt_human_robot/vision/describe_scene"
         )
-        self.teaching = {"active": False, "arm_target": "", "group_name": ""}
+        self.teaching = {"active": False, "arm_target": "", "group_name": "", "remote_control": False}
+        self.teleop = QuestTeleopController()
 
     def _topic_ready(self, topic: str) -> bool:
         return bool(topic and self.node.get_publishers_info_by_topic(topic))
@@ -313,8 +344,11 @@ class RobotSystemController:
         if any(item not in self.endpoints for item in selected):
             raise ValueError("未知机器人系统组件")
         if not enabled and self.teaching["active"]:
-            teaching_component = f"{self.teaching['arm_target']}_arm"
-            if component in {"arms", "action_group_stack", teaching_component}:
+            targets = {self.teaching["arm_target"]}
+            if self.teaching["arm_target"] == "both":
+                targets = {"left", "right"}
+            teaching_components = {f"{target}_arm" for target in targets}
+            if component in {"arms", "action_group_stack", *teaching_components}:
                 self.stop_teach()
         with self.lock:
             results = {}
@@ -360,13 +394,31 @@ class RobotSystemController:
         }
         return {
             "components": components, "teaching": dict(self.teaching),
+            "teleop": self.teleop.status(),
             "providers": providers,
         }
 
+    def teleop_active(self) -> bool:
+        return bool(self.teleop.status()["active"])
+
+    def control_teleop(self, enabled: bool) -> dict[str, object]:
+        if enabled:
+            arms = self.control("arms", True)
+            if not arms["success"]:
+                raise RuntimeError("双臂驱动启动失败")
+        if not enabled and self.teaching["active"]:
+            self.stop_teach()
+        return self.teleop.control(enabled)
+
     def start_teach(self, arm_target: str, group_name: str) -> dict[str, Any]:
-        if arm_target not in {"left", "right"}:
-            raise ValueError("arm_target 必须是 left 或 right")
-        for component in (f"{arm_target}_arm", "action_group_stack"):
+        if arm_target not in {"left", "right", "both"}:
+            raise ValueError("arm_target 必须是 left、right 或 both")
+        components = ["action_group_stack"]
+        if arm_target in {"left", "both"}:
+            components.insert(0, "left_arm")
+        if arm_target in {"right", "both"}:
+            components.insert(0, "right_arm")
+        for component in components:
             result = self.control(component, True)
             if not result["success"]:
                 detail = result["components"][component]["message"]
@@ -374,6 +426,7 @@ class RobotSystemController:
         request = StartTeach.Request()
         request.arm_target = arm_target
         request.group_name = group_name.strip()
+        request.remote_control = self.teleop_active()
         if not self.start_teach_client.wait_for_service(timeout_sec=2.0):
             raise RuntimeError("示教启动服务不可用")
         response = self._future_result(
@@ -383,7 +436,7 @@ class RobotSystemController:
             raise RuntimeError(response.message)
         self.teaching = {
             "active": True, "arm_target": arm_target,
-            "group_name": request.group_name,
+            "group_name": request.group_name, "remote_control": request.remote_control,
         }
         return dict(self.teaching)
 
@@ -398,7 +451,7 @@ class RobotSystemController:
         )
         if not response.success:
             raise RuntimeError(response.message)
-        self.teaching = {"active": False, "arm_target": "", "group_name": ""}
+        self.teaching = {"active": False, "arm_target": "", "group_name": "", "remote_control": False}
         return {
             "active": False, "group_name": response.group_name,
             "sample_count": int(response.sample_count),

@@ -10,6 +10,7 @@ import signal
 import subprocess
 import threading
 import time
+import uuid
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -51,6 +52,7 @@ class RangerNavAdapter:
         self._navigation_process: Any | None = None
         self._cruise_process: Any | None = None
         self._cruise_lock = threading.Lock()
+        self._cruise_control_prefix: str | None = None
         self._mapping_backend: str | None = None
 
     def start_mapping(
@@ -279,7 +281,9 @@ class RangerNavAdapter:
 
     def stop_navigation(self) -> NavigationResult:
         if self._running(self._cruise_process):
-            self.stop_cruise()
+            result = self.stop_cruise()
+            if not result.success:
+                return result
         if not self._running(self._navigation_process):
             launch_files = {
                 self._cfg.get("navigation_launch", "navigation.launch.py"),
@@ -351,7 +355,11 @@ class RangerNavAdapter:
         with self._cruise_lock:
             if self._running(self._cruise_process):
                 return NavigationResult(False, "巡航已经在执行。")
-            cmd = self._waypoint_cmd(["cruise"], map_id=map_id)
+            self._cruise_control_prefix = f"/krt_cruise/session_{uuid.uuid4().hex}"
+            cmd = self._waypoint_cmd(
+                ["--control-prefix", self._cruise_control_prefix, "cruise"],
+                map_id=map_id,
+            )
             if repeat is not None:
                 cmd.extend(["--repeat", str(repeat)])
             if loop:
@@ -367,19 +375,39 @@ class RangerNavAdapter:
             logger.info(f"已启动 waypoint 巡航: pid={process.pid}")
             return NavigationResult(True, "已开始巡航。")
 
+    def _control_cruise(self, operation: str) -> NavigationResult:
+        if not self._running(self._cruise_process) or not self._cruise_control_prefix:
+            return NavigationResult(False, "没有可控制的巡航，请先开始巡航。")
+        return self._call(self._waypoint_cmd([
+            "--control-prefix", self._cruise_control_prefix, "control", operation,
+        ]))
+
+    def pause_cruise(self) -> NavigationResult:
+        with self._cruise_lock:
+            result = self._control_cruise("pause")
+            if result.success:
+                return NavigationResult(True, "巡航已暂停，可恢复当前进度。")
+            return result
+
+    def resume_cruise(self) -> NavigationResult:
+        with self._cruise_lock:
+            result = self._control_cruise("resume")
+            if result.success:
+                return NavigationResult(True, "巡航已从暂停位置继续。")
+            return result
+
     def stop_cruise(self) -> NavigationResult:
-        process = self._cruise_process
-        if process is None or not self._running(process):
-            return NavigationResult(False, "巡航未启动，无法停止。")
-        logger.info(f"正在停止 waypoint 巡航: pid={process.pid}")
-        self._terminate_process_tree(process)
-        try:
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            logger.warning(f"巡航未及时退出，强制结束: pid={process.pid}")
-            self._kill_process_tree(process)
-            process.wait(timeout=3)
-        return NavigationResult(True, "巡航已停止。")
+        with self._cruise_lock:
+            result = self._control_cruise("cancel")
+            if not result.success:
+                return result
+            try:
+                self._cruise_process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                return NavigationResult(False, "取消巡航超时，尚未确认目标已停止。")
+            if self._cruise_process.poll() != 0:
+                return NavigationResult(False, "巡航异常退出，未确认安全取消。")
+            return NavigationResult(True, "巡航已取消。")
 
     def _convert_pcd(self, pcd_path: Path, session_dir: Path) -> NavigationResult:
         map_prefix = str(self._cfg.get("session_map_prefix", "map"))
@@ -502,9 +530,15 @@ class RangerNavAdapter:
     def _wait_for_file(self, path: Path) -> bool:
         timeout_s = self._config_float("map_save_wait_s", 30.0)
         deadline = time.monotonic() + timeout_s
+        previous = -1
+        stable = 0
         while time.monotonic() < deadline:
             if path.is_file() and path.stat().st_size > 0:
-                return True
+                size = path.stat().st_size
+                stable = stable + 1 if size == previous else 0
+                previous = size
+                if stable >= 2:
+                    return True
             self._sleep(0.2)
         return False
 

@@ -14,10 +14,14 @@ from agx_action_group_runner.teach_action_group_node import ArmRecorder
 class Recorder:
     def __init__(self):
         self.stopped = False
+        self.sample = {"name": ["joint1"], "position": [0.0]}
 
     def stop(self):
         self.stopped = True
-        return [object()]
+        return [self.sample]
+
+    def start(self, *_args):
+        self.started = True
 
 
 def test_stop_without_group_saves_unnamed_action_group():
@@ -42,6 +46,51 @@ def test_stop_without_group_saves_unnamed_action_group():
     assert recorder.stopped
     assert node.active_arm is None
     assert saved[0][0] == response.group_name
+
+
+def test_dual_arm_recording_saves_synchronized_samples():
+    node = object.__new__(TeachActionGroupNode)
+    left = Recorder()
+    right = Recorder()
+    node.lock = threading.Lock()
+    node.recorders = {"left": left, "right": right}
+    node.active_arm = "both"
+    node.active_group = "双臂挥手"
+    node.database = SimpleNamespace(path="/tmp/robot.db")
+    node._active = True
+    node._call_teach_mode = lambda _recorder, _enabled: (True, "ok")
+    saved = []
+    node._write_group = lambda *args: saved.append(args)
+
+    response = node._stop_cb(
+        SimpleNamespace(arm_target="both", group_name=""), SimpleNamespace()
+    )
+
+    assert response.success
+    assert response.sample_count == 1
+    assert saved[0][1] == "both"
+    assert saved[0][2] == [{"left": left.sample, "right": right.sample}]
+
+
+def test_remote_recording_does_not_enter_nereo_teach_mode():
+    node = object.__new__(TeachActionGroupNode)
+    recorder = Recorder()
+    node.lock = threading.Lock()
+    node.recorders = {"left": recorder}
+    node.active_arm = None
+    node.active_group = None
+    node._active = True
+    calls = []
+    node._call_teach_mode = lambda *_args: calls.append(_args) or (True, "ok")
+
+    response = node._start_cb(
+        SimpleNamespace(arm_target="left", group_name="Quest", remote_control=True),
+        SimpleNamespace(),
+    )
+
+    assert response.success
+    assert recorder.started
+    assert calls == []
 
 
 class FakeRecorderNode:
@@ -128,6 +177,34 @@ def test_runner_build_msg_ignores_gripper_fields_and_non_arm_joints():
 
     assert msg.name == ["joint_1"]
     assert list(msg.position) == [0.2]
+
+
+def test_runner_dispatches_synchronized_dual_arm_step():
+    node = object.__new__(ActionGroupRunnerNode)
+    node.default_step_timeout_sec = 0.0
+    node.stream_step_interval_sec = 0.0
+    node.poll_interval_sec = 0.001
+    node.left_arm = RecordingArm(None)
+    node.right_arm = RecordingArm(None)
+    goal_handle = RecordingGoalHandle()
+
+    node._run_single_step(
+        goal_handle,
+        {
+            "left": {"name": ["joint1"], "position": [0.1]},
+            "right": {"name": ["joint1"], "position": [0.2]},
+            "wait_reach": False,
+            "hold_sec": 0.0,
+        },
+        0,
+        1,
+        1,
+        1,
+        "both",
+    )
+
+    assert list(node.left_arm.published[0][1].position) == [0.1]
+    assert list(node.right_arm.published[0][1].position) == [0.2]
 
 
 def test_runner_keeps_status_based_reach_wait_for_explicit_steps():

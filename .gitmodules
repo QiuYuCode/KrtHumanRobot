@@ -36,3 +36,6 @@
 [submodule "src/pcd2pgm"]
 	path = src/pcd2pgm
 	url = https://github.com/LihanChen2004/pcd2pgm.git
+[submodule "src/QuestArmTeleop"]
+	path = src/QuestArmTeleop
+	url = https://github.com/QiuYuCode/QuestArmTeleop.git

@@ -22,6 +22,7 @@ from rclpy.node import Node
 from rclpy.task import Future
 from rclpy.time import Time as RclpyTime
 from std_msgs.msg import Empty
+from std_srvs.srv import Trigger
 from tf2_ros import Buffer, TransformListener
 
 DEFAULT_ROBOT_DB = "~/maps/krt_robot.db"
@@ -141,6 +142,93 @@ class WaypointNode(Node):
         self.input_seen = False
         self.input_sub = None
         self.accuracy_samples: list[AccuracySample] = []
+        self.pause_requested = False
+        self.paused = False
+        self.cancel_requested = False
+        self.control_services = []
+        if args.command == "cruise":
+            for operation in ("pause", "resume", "cancel", "status"):
+                self.control_services.append(self.create_service(
+                    Trigger, f"{args.control_prefix}/{operation}",
+                    lambda request, response, op=operation:
+                    self.control_request(op, response),
+                ))
+
+    def control_request(self, operation: str, response: Any) -> Any:
+        response.success = True
+        if operation == "status":
+            response.message = (
+                "canceling" if self.cancel_requested else
+                "paused" if self.paused else
+                "pausing" if self.pause_requested else "running"
+            )
+        elif operation == "cancel":
+            self.cancel_requested = True
+            response.message = "已请求取消巡航。"
+        elif self.cancel_requested:
+            response.success = False
+            response.message = "巡航正在取消。"
+        elif operation == "pause":
+            self.pause_requested = True
+            response.message = "已请求暂停巡航。"
+        elif not self.paused:
+            response.success = False
+            response.message = "巡航尚未暂停，无法恢复。"
+        else:
+            self.pause_requested = False
+            self.paused = False
+            response.message = "已恢复巡航。"
+        return response
+
+    def control(self, operation: str) -> int:
+        def call(op: str) -> Any:
+            client = self.create_client(Trigger, f"{self.args.control_prefix}/{op}")
+            try:
+                if not client.wait_for_service(timeout_sec=3.0):
+                    raise RuntimeError("巡航控制服务不可用")
+                result = self.wait_future(client.call_async(Trigger.Request()), "巡航控制超时", 5.0)
+                if result is None or not result.success:
+                    raise RuntimeError(result.message if result else "巡航控制超时")
+                return result
+            finally:
+                self.destroy_client(client)
+
+        result = call(operation)
+        if operation == "pause":
+            deadline = time.monotonic() + 20.0
+            while call("status").message != "paused":
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("暂停尚未完成；当前动作可能仍在执行，请稍后重试。")
+                time.sleep(0.1)
+            result.message = "巡航已暂停，可从当前进度恢复。"
+        self.get_logger().info(result.message)
+        return 0
+
+    def wait_until_resumed(self) -> bool:
+        while rclpy.ok() and self.pause_requested and not self.cancel_requested:
+            self.paused = True
+            rclpy.spin_once(self, timeout_sec=0.1)
+        self.paused = False
+        return rclpy.ok() and not self.cancel_requested
+
+    def cancel_goal(self, handle: Any) -> Any:
+        response = self.wait_future(handle.cancel_goal_async(), "取消目标响应超时", 5.0)
+        if response is None:
+            raise RuntimeError("未确认目标取消，巡航不能恢复")
+        result = self.wait_future(handle.get_result_async(), "等待目标停止超时", 10.0)
+        if result is None or int(result.status) not in (4, 5, 6):
+            raise RuntimeError("未确认目标停止，巡航不能恢复")
+        return result
+
+    def wait_action(self, handle: Any, *, pause_navigation: bool) -> Any:
+        future = handle.get_result_async()
+        while rclpy.ok() and not future.done():
+            if self.cancel_requested or (pause_navigation and self.pause_requested):
+                return self.cancel_goal(handle)
+            rclpy.spin_once(self, timeout_sec=0.1)
+        if not future.done() or future.result() is None:
+            raise RuntimeError("未确认目标终止，不能报告巡航已停止")
+        return future.result()
 
     def mark(self, name: str | None, routine: str) -> int:
         map_id = self.store.resolve_map_id(self.args.map_id, required=True)
@@ -217,12 +305,18 @@ class WaypointNode(Node):
             rounds_done += 1
             self.get_logger().info(f"开始第 {rounds_done} 轮巡航。")
             for wp in selected:
+                if not self.wait_until_resumed():
+                    return 0 if self.cancel_requested else 1
                 if not self.navigate_to(wp):
                     self.report_accuracy()
-                    return 1
+                    return 0 if self.cancel_requested else 1
+                if not self.wait_until_resumed():
+                    return 0 if self.cancel_requested else 1
                 if not self.run_task(wp):
                     self.report_accuracy()
-                    return 1
+                    return 0 if self.cancel_requested else 1
+                if not self.wait_until_resumed():
+                    return 0 if self.cancel_requested else 1
             if loop:
                 continue
         self.get_logger().info("巡航完成。")
@@ -300,25 +394,31 @@ class WaypointNode(Node):
         return pose
 
     def send_nav_goal(self, pose: PoseStamped, name: str, phase: str) -> bool:
+        while self.wait_until_resumed():
+            result = self.send_nav_attempt(pose, name, phase)
+            if self.cancel_requested:
+                return False
+            if result is not None and int(result.status) == 5 and self.pause_requested:
+                continue
+            if result is None or int(result.status) != 4:
+                self.get_logger().error(f"导航失败: {name}")
+                return False
+            return True
+        return False
+
+    def send_nav_attempt(self, pose: PoseStamped, name: str, phase: str) -> Any:
         goal = NavigateToPose.Goal()
         goal.pose = copy.deepcopy(pose)
         goal.pose.header.stamp = self.get_clock().now().to_msg()
         self.get_logger().info(f"导航到点位: {name} ({phase})")
         future = self.nav_client.send_goal_async(goal)
         goal_handle = self.wait_future(future, "发送导航目标超时")
-        if goal_handle is None or not goal_handle.accepted:
+        if goal_handle is None:
+            raise RuntimeError("未确认导航目标是否接受，不能确认巡航已停止")
+        if not goal_handle.accepted:
             self.get_logger().error(f"导航目标被拒绝: {name}")
-            return False
-        result = self.wait_future(
-            goal_handle.get_result_async(), "等待导航结果超时", timeout=None
-        )
-        if result is None:
-            return False
-        status = int(result.status)
-        if status != 4:
-            self.get_logger().error(f"导航失败: {name}, status={status}")
-            return False
-        return True
+            return None
+        return self.wait_action(goal_handle, pause_navigation=True)
 
     def arrival_reached(self, wp: Waypoint) -> bool:
         current = self.current_pose()
@@ -418,15 +518,15 @@ class WaypointNode(Node):
             self.routine_client.send_goal_async(goal),
             "发送 routine 目标超时",
         )
-        if goal_handle is None or not goal_handle.accepted:
+        if goal_handle is None:
+            raise RuntimeError("未确认 routine 目标是否接受，不能确认巡航已停止")
+        if not goal_handle.accepted:
             self.get_logger().error(f"routine 目标被拒绝: {routine}")
             return False
-        result = self.wait_future(
-            goal_handle.get_result_async(),
-            "等待 routine 结果超时",
-            timeout=None,
-        )
+        result = self.wait_action(goal_handle, pause_navigation=False)
         if result is None:
+            return False
+        if self.cancel_requested:
             return False
         if not result.result.success:
             self.get_logger().error(f"routine 执行失败: {result.result.message}")
@@ -494,6 +594,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--navigate-action", default=DEFAULT_NAVIGATE_ACTION)
     parser.add_argument("--routine-action", default=DEFAULT_ROUTINE_ACTION)
     parser.add_argument("--input-topic", default=DEFAULT_INPUT_TOPIC)
+    parser.add_argument("--control-prefix", default="/ranger_nav/cruise")
     parser.add_argument("--default-wait-ms", type=int, default=DEFAULT_WAIT_MS)
     parser.add_argument(
         "--accuracy-report",
@@ -538,6 +639,8 @@ def build_parser() -> argparse.ArgumentParser:
     mode.add_argument("--loop", action="store_true")
 
     subparsers.add_parser("continue_input")
+    control = subparsers.add_parser("control")
+    control.add_argument("operation", choices=("pause", "resume", "cancel", "status"))
     return parser
 
 
@@ -561,6 +664,8 @@ def main() -> None:
             exit_code = node.cruise(args.names, args.repeat, args.loop)
         elif args.command == "continue_input":
             exit_code = node.continue_input()
+        elif args.command == "control":
+            exit_code = node.control(args.operation)
         else:
             parser.error(f"未知命令: {args.command}")
             exit_code = 2

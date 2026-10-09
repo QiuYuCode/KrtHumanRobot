@@ -1,0 +1,16 @@
+[Unit]
+Description=KrtHumanRobot Quest dual-arm teleoperation
+After=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=%h/.config/krt/x86.env
+WorkingDirectory=%h/WorkSpace/KrtHumanRobot
+ExecStart=/bin/bash %h/WorkSpace/KrtHumanRobot/deploy/systemd/krt-quest-teleop.sh
+Restart=on-failure
+RestartSec=3
+KillSignal=SIGINT
+TimeoutStopSec=20
+
+[Install]
+WantedBy=default.target

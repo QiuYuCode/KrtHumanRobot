@@ -181,6 +181,137 @@ rviz2 -d "$(ros2 pkg prefix ranger_nav)/share/ranger_nav/rviz/navigation_3dloc.r
 ros2 run ranger_nav nav_tf_diagnostics
 ```
 
+## 可选三维局部避障（完整机器人，室内平地）
+
+`navigation_3dloc.launch.py` 新增 `use_voxel_obstacles`，默认 `false`。
+开启后局部 costmap 使用 VoxelLayer，碰撞监控增加三维点云源；
+全局规划仍使用原二维地图和 `/scan`。导航几何按机械臂下垂、
+长 0.552 m、宽 0.55 m、高 1.50 m，双 costmap footprint 为
+`x=±0.30, y=±0.295 m`（另有 Nav2 自身的 footprint_padding）。
+关闭开关时完整恢复原配置。
+
+本次构建使用工作区内的持久目录，避免 symlink-install 指向可被清理的 `/tmp`：
+
+```bash
+source /opt/ros/humble/setup.bash
+colcon build --build-base build/voxel_nav --packages-select ranger_nav --symlink-install
+source install/setup.bash
+```
+
+```bash
+ros2 launch ranger_nav navigation_3dloc.launch.py \
+  map:=$HOME/maps/map.yaml pcd_map_path:=$HOME/maps/scans.pcd \
+  use_voxel_obstacles:=true
+```
+
+上述命令会启动真实导航及硬件节点，不要与已有导航重复运行。
+未做静止验收前不要发送行驶目标。回退时退出该次 launch，
+使用 `use_voxel_obstacles:=false` 重启。
+
+参数集中在 `config/nav2_voxel_overrides.yaml`，运行时与原 Nav2 参数合并到
+临时文件，正常退出删除；原文件不被覆盖。无需 OctoMap 或 RGB 相机。
+
+数据流：`/cloud_registered_body` → `navigation_obstacle_cloud` →
+`/navigation/obstacle_points`（标记、碰撞监控）及
+`/navigation/clearing_points`（仅清除）。节点用原始时间戳的 TF 在
+`base_footprint` 下过滤：障碍高度为离地 0.08～1.60 m，自身外廓内的回波剔除；
+地面、高处有效回波保留给清除源。输出保留原 frame、stamp 和字段。
+无效点不生成射线；TF 缺失、点云超过 0.5 秒或时间戳无效时丢弃帧并限频报警。
+有效空点云仍作为新观测发布，但不会凭空清除未观测区域。
+
+局部体素为 16 层、每层 0.20 m，odom 下 Z 范围 [-1.0, 2.2)，
+水平分辨率保持 0.05 m，标记/清除距离分别为 2.5/3.0 m。
+高度筛选与体素原点是不同坐标概念；现场须确认雷达原点、离地 1.60 m 范围
+都在体素网格中，不能把 RViz 的 map 零平面直接当作地面。
+VoxelLayer 标记阈值为 0，不使用局部 denoise 删除孤立栅格。
+碰撞监控保留 `/scan` 并增加点云。Humble 1.1.20 的 Collision Monitor
+会忽略超时来源，而不会自动停车，因此三维模式增加 `navigation_obstacle_guard`：
+`/cmd_vel` → Collision Monitor → `/navigation/collision_cmd_vel` →
+速度门控 → `/cmd_vel_safe`。点云、scan 或速度超过 0.5 秒未更新时，
+门控通过 20 Hz 单调时钟定时器输出零速度；即使 ROS 时钟停止也继续检查。
+观测时间戳与对应 TF 必须有效，数据恢复后仅放行新收到的速度命令。
+这不替代底盘控制器自身的通信看门狗：门控进程被强制杀死时无法保证发送零速度。
+
+`navigation_lidar_origin` 从当前 FAST-LIO 参数的 `mapping.extrinsic_T/R`
+发布名义雷达到 IMU 变换。FAST-LIO 当前开启在线外参估计，估计值没有发布，
+此静态原点不会跟随在线估计；启用时会提醒验证射线清除。
+现有 URDF 的雷达/IMU 高度近似也没有自动改动，现场应对照实测地面检查。
+预处理不会补足 MID360 的盲区（当前 FAST-LIO `preprocess.blind=0.5`），
+不承诺检测低于 8 cm 的障碍，也不覆盖机械臂展开、坡道和楼梯。
+
+### 检查与验收
+
+```bash
+ros2 topic hz /navigation/obstacle_points
+ros2 topic info -v /navigation/clearing_points
+ros2 run tf2_ros tf2_echo odom navigation_lidar_origin
+ros2 run tf2_ros tf2_echo odom base_footprint
+ros2 param get /local_costmap/local_costmap plugins
+```
+
+RViz 可勾选 `Navigation Obstacle Points`、`Navigation Clearing Points` 和
+`Local Costmap`，检查地面不标记、自身回波不标记、桌沿及高处物体进入代价地图。
+原始体素消息在 `/local_costmap/voxel_grid`（`nav2_msgs/msg/VoxelGrid`）。
+附加 `voxel_visualization:=true` 启动 Nav2 自带转换节点后，可勾选
+`Local Obstacle Voxels`，显示 `/local_costmap/voxel_marked_cloud`。
+方块用于表示已占据体素中心，显示边长为 5 cm，不代表实际 20 cm 的垂直层厚度。
+移动物体离开后必须有后续有效射线穿过原位置，才会清除；没有回波不能保证消失。
+静止检查通过后，再由现场人员进行低速绕行与停车验收。
+
+自动测试使用仓库虚拟环境：
+
+```bash
+PYTHONPATH=src/ranger_nav:$PYTHONPATH \
+  src/voice_assistant/.venv/bin/python -m pytest -q src/ranger_nav/test
+```
+
+真实 Nav2 节点隔离测试（不启动硬件，域 91、仅本机通信，速度输出为测试专用话题）：
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+env ROS_DOMAIN_ID=91 ROS_LOCALHOST_ONLY=1 RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  ROS_LOG_DIR=/tmp/krt-voxel-test-logs KRT_VOXEL_RUNTIME_TEST=1 \
+  PYTHONPATH=src/ranger_nav:$PYTHONPATH \
+  src/voice_assistant/.venv/bin/python -m pytest -q -s \
+  src/ranger_nav/test/test_voxel_runtime.py
+```
+
+测试覆盖非零地面高度、高处障碍、射线清除、桌沿减速停车、TF 缺失和点云超时。
+这些检查不代替实机传感器、外参和制动距离验收。
+
+## 巡航控制
+
+`waypoint_manager cruise` 提供独立的 Trigger 服务：
+`<control-prefix>/pause`、`resume`、`cancel`、`status`，默认前缀为
+`/ranger_nav/cruise`；Web 为每次巡航分配唯一前缀，避免控制其他进程。
+服务回执表示请求已接收，`status` 返回 `running`、`pausing`、`paused`
+或 `canceling`；`control pause` 命令会等待 `paused` 后才成功返回。
+
+```bash
+ros2 run ranger_nav waypoint_manager cruise --repeat 2 入口 走廊
+# 另一个终端，使用相同的 ROS 环境和 control-prefix
+ros2 run ranger_nav waypoint_manager control pause
+ros2 run ranger_nav waypoint_manager control resume
+ros2 run ranger_nav waypoint_manager control cancel
+```
+
+暂停会取消并等待当前导航目标终止，保留当前轮次，恢复时重发未完成的目标。
+正在执行的点位 Routine 会完成后再暂停，不会在恢复时重放；取消则取消当前
+导航或 Routine 并退出。控制服务失联、取消超时会报错，不以杀客户端代替停车确认。
+进程退出后不保留恢复进度。
+
+无硬件隔离验证：
+
+```bash
+source /opt/ros/humble/setup.bash
+source install/setup.bash
+env ROS_DOMAIN_ID=91 ROS_LOCALHOST_ONLY=1 RMW_IMPLEMENTATION=rmw_fastrtps_cpp \
+  ROS_LOG_DIR=/tmp/krt-cruise-test-logs KRT_CRUISE_RUNTIME_TEST=1 \
+  PYTHONPATH=src/ranger_nav:$PYTHONPATH \
+  src/voice_assistant/.venv/bin/python -m pytest -q src/ranger_nav/test/test_cruise_runtime.py
+```
+
 ## 地图去噪调参
 
 地图或代价地图上出现杂乱孤立点时，按「现象 → 参数」对照调整。

@@ -96,6 +96,25 @@ RViz 不会显示在远程浏览器中。
 ros2 launch ranger_nav navigation.launch.py map:=$HOME/maps/map.yaml
 ```
 
+## 巡航停止与恢复
+
+导航页巡航区域的“停止”会暂停当前巡航：先取消当前 Nav2 目标并确认目标
+终止，保留点位和轮次进度；“恢复”重新前往未完成的目标，继续剩余点位及轮次。
+如果正在执行点位绑定的 Routine，等待该动作完成后暂停，恢复时不重复该动作。
+暂停等待超时会提示尚未完成，暂停请求仍有效，可稍后重试。暂停中不能启动新巡航。
+
+“停止导航”、任务取消和每日计划取消会彻底取消巡航，不能再恢复。
+暂停进度只在当前巡航进程内保留，进程退出或服务重启后需重新开始巡航。
+Web 接口 `/api/navigation/cruise/stop` 表示暂停，`/api/navigation/cruise/resume`
+表示恢复；旧的点位 `continue_input` 命令不用于巡航恢复。
+
+更新后构建两个包并重启 Web 控制台。以下构建目录避免旧构建缓存中的残留链接：
+
+```bash
+colcon build --build-base build/cruise_control --packages-select ranger_nav krt_human_robot --symlink-install
+source install/setup.bash
+```
+
 ## Web 语音触发动作编排
 
 “动作编排”页面的 Routine 编辑弹窗支持配置多个语音触发关键词和执行成功播报。

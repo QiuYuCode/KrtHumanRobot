@@ -1028,6 +1028,8 @@
             <h2>机械臂动作</h2>
             <button class="primary" data-robot-control="arms:1">开启双臂</button
             ><button data-robot-control="arms:0">关闭双臂</button
+            ><button class="primary" data-teleop="1">开启 Quest 遥操作</button
+            ><button data-teleop="0">关闭 Quest 遥操作</button
             ><button data-robot-control="action_group_stack:1">
               开启动作服务</button
             ><button data-robot-control="action_group_stack:0">
@@ -1044,7 +1046,8 @@
               <h3 style="margin: 0 auto 0 0">示教录制</h3>
               <select id="teachArm">
                 <option value="left">左臂</option>
-                <option value="right">右臂</option></select
+                <option value="right">右臂</option>
+                <option value="both">双臂同步</option></select
               ><input
                 id="teachGroupName"
                 maxlength="80"
@@ -1963,8 +1966,12 @@
           )
           .join("");
         const teaching = robotSystems.teaching || {};
+        const teleop = robotSystems.teleop || {};
+        const teleopState = teleop.active ? "Quest 遥操作运行中" : "Quest 遥操作已关闭";
+        htmlTarget("robotSystemCards").content += `<p class="muted">${teleopState}${teleop.error ? `：${esc(teleop.error)}` : ""}</p>`;
+        const teachArmName = { left: "左臂", right: "右臂", both: "双臂同步" };
         $("teachState").textContent = teaching.active
-          ? `${teaching.arm_target === "left" ? "左臂" : "右臂"}正在示教：${teaching.group_name || "未命名"}`
+          ? `${teachArmName[teaching.arm_target] || teaching.arm_target}正在${teaching.remote_control ? "Quest 录制" : "示教"}：${teaching.group_name || "未命名"}`
           : "未在示教";
         $("startTeach").disabled = !!teaching.active;
         $("stopTeach").disabled = !teaching.active;
@@ -2600,6 +2607,16 @@
             const [component, enabled] = button.dataset.robotControl.split(":");
             controlRobotSystem(component, enabled === "1");
           }),
+      );
+      document.querySelectorAll("[data-teleop]").forEach(
+        (button) =>
+          (button.onclick = () =>
+            api("/api/teleop/control", {
+              method: "POST",
+              json: { enabled: button.dataset.teleop === "1" },
+            })
+              .then(loadRobotSystems)
+              .catch((e) => msg(e.message))),
       );
       $("startTeach").onclick = () =>
         api("/api/arm/teach/start", {
